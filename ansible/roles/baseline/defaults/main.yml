@@ -1,0 +1,8 @@
+---
+# True when Packer is building an image from a fresh droplet as root. The role then
+# skips the admin account and everything that needs a password to escalate
+# (Ansible decision #7).
+baseline_image_build: false
+
+# The admin account on real boxes. Key-only login, password to sudo.
+baseline_admin_user: keepbreath0

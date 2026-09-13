@@ -1,0 +1,31 @@
+# Terraform state and working directories. State lives in MinIO on the hub.
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform/
+.terraform.lock.hcl
+crash.log
+
+# Packer
+packer_cache/
+*.pkrvars.hcl
+!example.pkrvars.hcl
+
+# Anything that looks like a secret. Secrets come from OpenBao, never from a file here.
+*.env
+.env*
+secrets*
+*.pem
+*.key
+*_ed25519
+*_rsa
+
+# Ansible
+*.retry
+.ansible/
+
+# Editor and OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store

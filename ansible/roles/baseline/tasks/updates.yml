@@ -1,0 +1,31 @@
+---
+# Bootstrap step 5. Security patches apply on a timer when nobody is watching; the risk
+# of a broken update is smaller than the risk of an unpatched hole. dnf-automatic
+# reads its config on each run, so changing the file needs no restart.
+
+- name: updates | Install dnf-automatic
+  ansible.builtin.dnf:
+    name: dnf-automatic
+    state: present
+
+- name: updates | Apply security updates only
+  ansible.builtin.lineinfile:
+    path: /etc/dnf/automatic.conf
+    regexp: '^upgrade_type\s*='
+    line: upgrade_type = security
+    insertafter: '^\[commands\]'
+
+
+- name: updates | Apply updates rather than only downloading them
+  ansible.builtin.lineinfile:
+    path: /etc/dnf/automatic.conf
+    regexp: '^apply_updates\s*='
+    line: apply_updates = yes
+    insertafter: '^\[commands\]'
+
+
+- name: updates | Enable the timer
+  ansible.builtin.systemd_service:
+    name: dnf-automatic.timer
+    enabled: true
+    state: started

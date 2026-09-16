@@ -17,8 +17,6 @@
       changed_when: false
       check_mode: false
 
-
-
     - name: Store the become password as a fact
       ansible.builtin.set_fact:
         ansible_become_password: "{{ ansible_become_password }}"

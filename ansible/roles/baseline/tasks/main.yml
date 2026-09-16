@@ -9,8 +9,8 @@
   ansible.builtin.import_tasks: packages.yml
 
 - name: Enable automatic security updates
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 5)"
+  ansible.builtin.import_tasks: updates.yml
+
 
 - name: Harden SSH
   ansible.builtin.debug:

@@ -11,10 +11,8 @@
 - name: Enable automatic security updates
   ansible.builtin.import_tasks: updates.yml
 
-
 - name: Harden SSH
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 6: sshd_config.d/10-hardening.conf)"
+  ansible.builtin.import_tasks: sshd.yml
 
 - name: Add swap
   ansible.builtin.debug:

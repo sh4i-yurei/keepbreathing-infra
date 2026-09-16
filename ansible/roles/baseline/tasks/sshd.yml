@@ -1,0 +1,15 @@
+---
+# Bootstrap step 6. Password and keyboard-interactive login are already off on the
+# image; stating them keeps a future image from turning them back on. Root login
+# stays key-only for Packer, which builds as root. validate runs sshd against a
+# temporary copy first, so a broken file is never written.
+
+- name: sshd | Install the hardening drop-in
+  ansible.builtin.copy:
+    src: 10-hardening.conf
+    dest: /etc/ssh/sshd_config.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: sshd -t -f %s
+  notify: Reload sshd

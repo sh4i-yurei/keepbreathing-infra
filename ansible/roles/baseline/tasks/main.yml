@@ -1,13 +1,12 @@
 ---
-# Skeleton. Each step below is one from the server-bootstrap procedure, in the order
+# Each step below is one from the server-bootstrap procedure, in the order
 # it is done by hand. They become real tasks one at a time, each proven against the
 # hub before it is trusted on a droplet. Steps 1, 2, 11 and 12 of the procedure are
 # not here: creating the droplet and its cloud firewall is Terraform's job,
 # verifying from outside is a test, and recording the machine is a note.
 
-- name: Update everything and install the packages the base image lacks
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 4)"
+- name: Install the packages the base image lacks
+  ansible.builtin.import_tasks: packages.yml
 
 - name: Enable automatic security updates
   ansible.builtin.debug:

@@ -20,9 +20,8 @@
 - name: Install fail2ban with the sshd jail
   ansible.builtin.import_tasks: fail2ban.yml
 
-- name: Install firewalld with rules matching the cloud firewall
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 8)"
+- name: Install and enable the host firewall
+  ansible.builtin.import_tasks: firewalld.yml
 
 - name: Install Podman and prepare it for rootless containers
   ansible.builtin.debug:

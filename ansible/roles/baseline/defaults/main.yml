@@ -9,3 +9,10 @@ baseline_admin_user: keepbreath0
 
 # Swap file size. 1G is enough to get dnf through EPEL's metadata on a 1 GB droplet.
 baseline_swap_size: 1G
+
+# Take cockpit out of the firewall's default zone. Cockpit is Red Hat's web admin panel on
+# port 9090; nothing here runs it, and the stock zone permits it whether it is installed or
+# not. It is socket-activated, so if cockpit is ever installed on a box whose baseline
+# removed this rule, it will run but be unreachable with nothing obviously wrong. Set this
+# to false on a machine that is meant to serve cockpit.
+baseline_firewalld_remove_cockpit: true

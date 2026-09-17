@@ -1,0 +1,26 @@
+---
+# Bootstrap step 8. The host firewall: installed, running, and starting at boot.
+# No ports here on purpose. Which ports are open is what makes one machine different
+# from another, so ports belong to the per-machine roles (decision #17).
+# Firewalld tasks set permanent and immediate together rather than notifying a reload
+# handler (decision #19).
+
+- name: firewalld | Ensure firewalld is installed
+  ansible.builtin.dnf:
+    name: firewalld
+    state: present
+
+- name: firewalld | Ensure firewalld is running and enabled
+  ansible.builtin.systemd_service:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: firewalld | Remove cockpit service from the default zone
+  ansible.posix.firewalld:
+    service: cockpit
+    zone: public
+    state: disabled
+    immediate: true
+    permanent: true
+  when: baseline_firewalld_remove_cockpit

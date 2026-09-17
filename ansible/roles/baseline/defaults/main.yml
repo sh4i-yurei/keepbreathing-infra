@@ -6,3 +6,6 @@ baseline_image_build: false
 
 # The admin account on real boxes. Key-only login, password to sudo.
 baseline_admin_user: keepbreath0
+
+# Swap file size. 1G is enough to get dnf through EPEL's metadata on a 1 GB droplet.
+baseline_swap_size: 1G

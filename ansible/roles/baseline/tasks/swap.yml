@@ -1,0 +1,53 @@
+---
+# Bootstrap step 6a. Droplets come with no swap, and dnf parsing EPEL's metadata on a
+# 1 GB box gets killed for memory without it. Every command here carries its own
+# "already done?" test, because a command cannot tell Ansible that by itself.
+# Only for machines with no swap at all, which is the 1 GB droplets; the home VMs have
+# a swap partition from the installer and do not need a file beside it.
+
+- name: swap | Only on machines that have no swap at all
+  when: ansible_facts['swaptotal_mb'] == 0
+  block:
+    - name: swap | Allocate the swap file
+      ansible.builtin.command: fallocate -l {{ baseline_swap_size }} /swapfile
+      args:
+        creates: /swapfile
+      register: baseline_swap_allocated
+
+    - name: swap | Keep the swap file readable by root only
+      ansible.builtin.file:
+        path: /swapfile
+        owner: root
+        group: root
+        mode: "0600"
+      when: not (ansible_check_mode and baseline_swap_allocated is changed)
+
+    - name: swap | Check whether the file is formatted as swap
+      ansible.builtin.command: blkid -o value -s TYPE /swapfile
+      register: baseline_swap_type
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: swap | Format the swap file
+      ansible.builtin.command: mkswap /swapfile
+      when: baseline_swap_type.stdout != "swap"
+      changed_when: true
+
+    - name: swap | Bring it back after a reboot
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: '^/swapfile\s'
+        line: /swapfile none swap sw 0 0
+
+    - name: swap | Check whether it is active
+      ansible.builtin.command: grep -q ^/swapfile /proc/swaps
+      register: baseline_swap_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: swap | Switch it on
+      ansible.builtin.command: swapon /swapfile
+      when: baseline_swap_active.rc != 0
+      changed_when: true

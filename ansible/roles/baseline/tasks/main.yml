@@ -15,8 +15,8 @@
   ansible.builtin.import_tasks: sshd.yml
 
 - name: Add swap
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 6a)"
+  ansible.builtin.import_tasks: swap.yml
+
 
 - name: Install fail2ban with the sshd jail
   ansible.builtin.debug:

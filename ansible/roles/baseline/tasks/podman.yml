@@ -1,0 +1,22 @@
+---
+# Podman installed and configured for rootless containers on every machine.
+# Port sysctl is absent from the base image and is defined per role runbook.
+# It lets any unprivileged account on the box bind low ports, so it belongs
+# with the workload that needs it rather than on every machine.
+
+- name: podman | Ensure podman is installed
+  ansible.builtin.dnf:
+    name: podman
+    state: present
+
+- name: podman | Make network-online.target active at boot
+  ansible.builtin.file:
+    state: link
+    src: /usr/lib/systemd/system/network-online.target
+    dest: /etc/systemd/system/multi-user.target.wants/network-online.target
+
+- name: podman | Set lingering for the container account
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ baseline_container_user | quote }}
+    creates: /var/lib/systemd/linger/{{ baseline_container_user }}
+  when: baseline_container_user is defined

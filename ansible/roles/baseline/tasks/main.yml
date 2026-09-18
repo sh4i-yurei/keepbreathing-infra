@@ -24,8 +24,7 @@
   ansible.builtin.import_tasks: firewalld.yml
 
 - name: Install Podman and prepare it for rootless containers
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 9)"
+  ansible.builtin.import_tasks: podman.yml
 
 - name: Make the journal persistent
   ansible.builtin.debug:

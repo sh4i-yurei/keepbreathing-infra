@@ -1,8 +1,8 @@
 ---
-# Podman installed and configured for rootless containers on every machine.
-# Port sysctl is absent from the base image and is defined per role runbook.
-# It lets any unprivileged account on the box bind low ports, so it belongs
-# with the workload that needs it rather than on every machine.
+# Bootstrap step 9. Podman for rootless containers, on every machine.
+# net.ipv4.ip_unprivileged_port_start is not set here (decision #22). It lets every
+# unprivileged account on the machine bind ports 80 to 1023, so it is set by the role
+# for machines that serve those ports.
 
 - name: podman | Ensure podman is installed
   ansible.builtin.dnf:
@@ -15,8 +15,31 @@
     src: /usr/lib/systemd/system/network-online.target
     dest: /etc/systemd/system/multi-user.target.wants/network-online.target
 
+- name: podman | Look for the container account's subordinate ID ranges
+  ansible.builtin.command: grep -q "^{{ baseline_container_user }}:" {{ item }}
+  register: baseline_subids
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  loop:
+    - /etc/subuid
+    - /etc/subgid
+  when: baseline_container_user | length > 0
+
+- name: podman | Check the container account has subordinate ID ranges
+  ansible.builtin.assert:
+    that: baseline_subids.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: >-
+      {{ baseline_container_user }} has no entry in /etc/subuid or /etc/subgid.
+      Rootless Podman maps container users onto host IDs with those ranges and
+      cannot run without them. useradd allocates them; an account made with
+      useradd -r, or one from an identity provider, does not get them.
+  when: baseline_container_user | length > 0
+
 - name: podman | Set lingering for the container account
   ansible.builtin.command:
     cmd: loginctl enable-linger {{ baseline_container_user | quote }}
     creates: /var/lib/systemd/linger/{{ baseline_container_user }}
-  when: baseline_container_user is defined
+  when:
+    - baseline_container_user | length > 0
+    - not baseline_image_build

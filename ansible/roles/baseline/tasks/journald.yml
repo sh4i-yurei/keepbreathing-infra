@@ -1,0 +1,25 @@
+---
+# Bootstrap step 10. AlmaLinux runs journald with Storage=auto, so with no
+# /var/log/journal directory the journal lives in memory and is destroyed on reboot.
+# This states persistence outright and caps the size in the same file.
+
+
+- name: journald | Make the drop in directory for journald.conf.d
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: journald | Make the journal persistent and capped
+  ansible.builtin.copy:
+    src: journald-persistent-capped.conf
+    dest: /etc/systemd/journald.conf.d/10-persistent-capped.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Restart systemd-journald
+    - Flush the journal to disk
+    - Restart rsyslog

@@ -27,8 +27,7 @@
   ansible.builtin.import_tasks: podman.yml
 
 - name: Make the journal persistent
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 10: journald, then rsyslog restart, then journalctl --flush)"
+  ansible.builtin.import_tasks: journald.yml
 
 - name: Create the admin account
   ansible.builtin.debug:

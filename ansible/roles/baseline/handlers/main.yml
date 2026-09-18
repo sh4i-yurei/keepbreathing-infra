@@ -11,3 +11,18 @@
   ansible.builtin.systemd_service:
     name: fail2ban
     state: reloaded
+
+- name: Restart systemd-journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+
+- name: Flush the journal to disk
+  ansible.builtin.command:
+    cmd: journalctl --flush
+  changed_when: true
+
+- name: Restart rsyslog
+  ansible.builtin.systemd_service:
+    name: rsyslog
+    state: restarted

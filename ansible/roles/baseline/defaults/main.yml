@@ -1,10 +1,13 @@
 ---
-# True when Packer is building an image from a fresh droplet as root. The role then
-# skips the admin account and everything that needs a password to escalate
-# (Ansible decision #7).
+# True when this run is baking an image rather than configuring a live machine. An image
+# carries no secrets, ever, so anything secret-applying is skipped during a bake and
+# applied by the delta run on the live box (decisions #6 and #32). Nothing in this role
+# applies a secret yet, so nothing reads this; the access role will.
 baseline_image_build: false
 
-# The admin account on real boxes. Key-only login, password to sudo.
+# The admin account. Empty means the machine has none, which is the case for an image and
+# for an ephemeral staging box (decision #32). How Ansible logs in is a separate question
+# and lives in the inventory, not here.
 baseline_admin_user: keepbreath0
 
 # Swap file size. 1G is enough to get dnf through EPEL's metadata on a 1 GB droplet.

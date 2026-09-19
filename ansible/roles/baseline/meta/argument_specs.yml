@@ -6,12 +6,15 @@ argument_specs:
       baseline_image_build:
         type: bool
         default: false
-        description: true when Packer builds image
-          from new droplet as root, in this case it skips admin.
+        description: True when this run is baking an image rather than configuring a
+          live machine. An image carries no secrets, so anything secret-applying is
+          skipped during a bake. Nothing in this role reads it yet.
       baseline_admin_user:
         type: str
         default: keepbreath0
-        description: The admin account on real boxes. Key-only login, password to sudo.
+        description: The admin account. Key-only login, password to sudo. An empty
+          value means the machine has none, which is the case for an image and for an
+          ephemeral staging box.
       baseline_swap_size:
         type: str
         default: 1G

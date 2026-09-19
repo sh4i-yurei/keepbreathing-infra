@@ -5,6 +5,47 @@
 # not here: creating the droplet and its cloud firewall is Terraform's job,
 # verifying from outside is a test, and recording the machine is a note.
 
+- name: Check an image build was not also given an admin account
+  ansible.builtin.assert:
+    that:
+      - not (baseline_image_build | bool and baseline_admin_user | default('', true) | length > 0)
+    fail_msg: >-
+      baseline_image_build is true and baseline_admin_user is
+      "{{ baseline_admin_user }}". An image carries no accounts and no secrets
+      (decision #6), so a build inventory must set baseline_admin_user to an empty
+      string. baseline_container_user is required and fails by name when forgotten;
+      baseline_admin_user has a default and would otherwise fail silently.
+    quiet: true
+
+- name: Check the account variables are not null
+  ansible.builtin.assert:
+    that:
+      - baseline_container_user is not none
+      - baseline_admin_user is not none
+    fail_msg: >-
+      An account variable is YAML null. A bare "key:" with nothing after it passes
+      argument validation as a string and then behaves like an empty value, which
+      silently means "this machine has no such account" — rootless containers would
+      never get lingering and nothing would report it. Write an empty value as "".
+    quiet: true
+
+- name: Check the account names and the swap size are well formed
+  ansible.builtin.assert:
+    that:
+      - baseline_container_user is match('^[a-z_][a-z0-9_-]*\\Z|^\\Z')
+      - baseline_admin_user is match('^[a-z_][a-z0-9_-]*\\Z|^\\Z')
+      - baseline_swap_size is match('^[0-9]+[KMGT]?\\Z')
+    fail_msg: >-
+      baseline_container_user "{{ baseline_container_user }}", baseline_admin_user
+      "{{ baseline_admin_user }}" and baseline_swap_size "{{ baseline_swap_size }}"
+      must each be well formed. The account names reach a `creates:` path, which is
+      glob-expanded, so a name containing a wildcard or a slash would silently test
+      the wrong file and the task would run on every pass. The swap size reaches a
+      command argument list unquoted. The patterns end with an absolute end-of-string
+      anchor rather than $, because $ also matches before a trailing newline and a name
+      with one would pass and then behave as if it had not.
+    quiet: true
+
 - name: Install the packages the base image lacks
   ansible.builtin.import_tasks: packages.yml
 
@@ -32,4 +73,4 @@
 - name: Create the admin account
   ansible.builtin.debug:
     msg: "TODO: {{ baseline_admin_user }}, wheel, key-only, password to sudo"
-  when: not baseline_image_build
+  when: baseline_admin_user | default('', true) | length > 0

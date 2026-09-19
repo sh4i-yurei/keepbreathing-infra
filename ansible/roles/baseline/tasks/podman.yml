@@ -10,18 +10,26 @@
     state: present
 
 # Two halves of one mechanism, and both are needed. Quadlet orders every rootless
-# container behind a helper that waits for network-online.target and gives up after ninety
-# seconds. Something has to pull the target into the boot sequence, which is the symlink,
-# and something has to make it actually reach active, which is the wait-online service.
-# With only the symlink the target is wanted and never activates, and every container
-# starts ninety seconds late with nothing looking wrong.
+# container behind a helper that waits for network-online.target. The symlink pulls that
+# target into the boot sequence; the wait-online service is what makes waiting for it mean
+# anything.
 #
-# The trade: boot now waits on the network where it previously did not. nm-online has a
-# 30 second timeout, so a machine with a configured interface that never gets carrier
-# stalls for that long on every boot. Ninety seconds of late containers is worse. Both
-# machines in the inventory already have this service enabled by the NetworkManager
-# preset, so the task is a no-op today; it exists so a machine where someone disabled it
-# does not silently lose the fix.
+# Without the service the target still activates, and almost immediately: it has an empty
+# Requires= and only a Wants= on NetworkManager-wait-online, so with that disabled there is
+# nothing to wait for. The helper sees it active on its first poll and containers start on
+# time, with no guarantee the network is up. The ninety seconds is the helper's
+# TimeoutStartSec, and it only applies when the target never activates at all.
+#
+# The trade: boot now waits on the network where it previously did not. The shipped unit
+# runs nm-online with NM_ONLINE_TIMEOUT=60, so a machine with a configured interface that
+# never gets carrier stalls a minute on every boot; `systemctl edit
+# NetworkManager-wait-online` changes that. Every machine in the inventory already has the
+# service enabled by NetworkManager's own preset, so this task is a no-op today. It exists
+# so a machine where someone disabled it does not silently lose the guarantee.
+#
+# It also hard-fails on a machine with no NetworkManager — systemd_service cannot enable a
+# unit that does not exist. Accepted: every machine here uses NetworkManager, and a box
+# that does not would need this step reconsidered rather than skipped.
 
 - name: podman | Make network-online.target active at boot
   ansible.builtin.file:

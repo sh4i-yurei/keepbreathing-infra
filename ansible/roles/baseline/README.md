@@ -83,3 +83,21 @@ On a machine reached over Tailscale SSH in check mode, approve the browser check
 output, so an unapproved check looks like a hang rather than a prompt.
 
 A second run must report no changes. That is the test, and it is run by hand.
+
+## What it checks before it finishes
+
+`tasks/verify.yml` runs last, after the handlers have been flushed, and fails the play if
+the machine is not in the state the role claims to have left it in. Three checks, each
+because the failure it catches is silent:
+
+- `sshd -T` proves the hardening drop-in is the configuration that wins on parse. It
+  cannot see the running daemon, and the failure message says so.
+- `fail2ban-client status sshd` proves the jail is loaded and reading the journal.
+  `systemctl reload fail2ban` returns success even when the jail is rejected, so a
+  `changed` from the copy task is not evidence.
+- The live `system.journal` must be on disk and none in `/run`. Both
+  `journalctl --disk-usage` and a path match in `journalctl --header` report a machine as
+  persistent when it has fallen back to volatile.
+
+Skipped under `--check` and during an image build, which means a rehearsal does not run
+them. That is a real gap in the run that would most benefit from them.

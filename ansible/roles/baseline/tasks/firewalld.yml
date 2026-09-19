@@ -20,7 +20,8 @@
 # forwarding with nothing in the output saying so. What makes this survivable rather than
 # urgent is that `state: started` is a no-op where firewalld is already running, and it is
 # running on every machine in the inventory today. The hazard fires on a machine where it
-# is stopped.
+# is stopped — or not installed at all, because the task above installs it and a fresh
+# install is inactive, so the start below is what first builds its ruleset.
 
 - name: firewalld | Ensure firewalld is installed
   ansible.builtin.dnf:

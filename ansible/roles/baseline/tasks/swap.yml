@@ -19,7 +19,6 @@
       ansible.builtin.command: fallocate -l {{ baseline_swap_size }} /swapfile
       args:
         creates: /swapfile
-      register: baseline_swap_allocated
 
     - name: swap | Close the window before the file is used
       ansible.builtin.file:
@@ -64,8 +63,10 @@
 # Two limits worth knowing. Under --check the file does not really get created, so on a
 # machine that does not yet have one these tasks skip and the rehearsal under-reports what
 # the real run will do. And an fstab entry is only written for a file that blkid confirms
-# is formatted as swap, so a stray /swapfile on a machine that should not have one is left
-# alone rather than being mounted at the next boot.
+# is formatted as swap, so a stray /swapfile on a machine that already has swap is left
+# alone rather than being mounted at the next boot. The create half does not have that
+# protection and should not: on a machine with no swap, an unformatted /swapfile is a
+# half-finished previous run, and mkswap overwriting it is the right outcome.
 
 - name: swap | Look for a swap file
   ansible.builtin.stat:

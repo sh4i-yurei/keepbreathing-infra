@@ -93,6 +93,15 @@
       register: baseline_journal_on_disk
       check_mode: false
 
+    # The healthy state is that /run/log/journal does not exist at all. `find` handles
+    # that correctly but warns about the unreadable path on every host on every run, and a
+    # warning on the correct outcome teaches people to ignore warnings.
+    - name: verify | Is there a runtime journal directory at all
+      ansible.builtin.stat:
+        path: /run/log/journal
+      register: baseline_runtime_journal_dir
+      check_mode: false
+
     - name: verify | Look for a live journal in memory
       ansible.builtin.find:
         paths: /run/log/journal
@@ -100,13 +109,14 @@
         recurse: true
         file_type: file
       register: baseline_journal_in_memory
+      when: baseline_runtime_journal_dir.stat.exists
       check_mode: false
 
     - name: verify | The journal is being written to disk, not to memory
       ansible.builtin.assert:
         that:
           - baseline_journal_on_disk.matched > 0
-          - baseline_journal_in_memory.matched == 0
+          - baseline_journal_in_memory.matched | default(0) == 0
         fail_msg: >-
           journald is writing to /run, so every log line dies on reboot. Note that
           `journalctl --disk-usage` does not catch this — it reports the volatile figure
@@ -115,5 +125,5 @@
           `journalctl --header`, because archived files keep that path after journald has
           fallen back.
           On disk: {{ baseline_journal_on_disk.matched }} live journal(s).
-          In memory: {{ baseline_journal_in_memory.matched }}.
+          In memory: {{ baseline_journal_in_memory.matched | default(0) }}.
         quiet: true

@@ -9,11 +9,30 @@
     name: podman
     state: present
 
+# Two halves of one mechanism, and both are needed. Quadlet orders every rootless
+# container behind a helper that waits for network-online.target and gives up after ninety
+# seconds. Something has to pull the target into the boot sequence, which is the symlink,
+# and something has to make it actually reach active, which is the wait-online service.
+# With only the symlink the target is wanted and never activates, and every container
+# starts ninety seconds late with nothing looking wrong.
+#
+# The trade: boot now waits on the network where it previously did not. nm-online has a
+# 30 second timeout, so a machine with a configured interface that never gets carrier
+# stalls for that long on every boot. Ninety seconds of late containers is worse. Both
+# machines in the inventory already have this service enabled by the NetworkManager
+# preset, so the task is a no-op today; it exists so a machine where someone disabled it
+# does not silently lose the fix.
+
 - name: podman | Make network-online.target active at boot
   ansible.builtin.file:
     state: link
     src: /usr/lib/systemd/system/network-online.target
     dest: /etc/systemd/system/multi-user.target.wants/network-online.target
+
+- name: podman | Enable the service that makes network-online.target reach active
+  ansible.builtin.systemd_service:
+    name: NetworkManager-wait-online.service
+    enabled: true
 
 - name: podman | Look for the container account's subordinate ID ranges
   ansible.builtin.command: grep -q "^{{ baseline_container_user }}:" {{ item }}

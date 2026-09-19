@@ -1,0 +1,119 @@
+---
+# The runbook ends every step with a check, because each failure these catch is silent.
+# The role translated the actions and dropped the checks, so "the playbook ran clean" was
+# weaker evidence than "I did the procedure". This puts them back.
+#
+# These run after `meta: flush_handlers` in main.yml, because two of the three are only
+# true once a handler has restarted something.
+#
+# Skipped in check mode and during an image build. A rehearsal changes nothing, so there
+# is nothing to verify, and on a machine the role has never touched the services do not
+# exist yet. The cost is real and worth knowing: the --check --diff rehearsal that is
+# meant to be the first contact with an unfamiliar machine does not run these.
+
+- name: verify | Only on a real run against a live machine
+  when:
+    - not ansible_check_mode
+    - not baseline_image_build | bool
+  block:
+    - name: verify | Ask sshd which configuration wins
+      ansible.builtin.command: sshd -T
+      register: baseline_sshd_effective
+      changed_when: false
+      check_mode: false
+
+    - name: verify | The hardening drop-in is the configuration that wins
+      ansible.builtin.assert:
+        that:
+          - "'permitrootlogin prohibit-password' in _settings or 'permitrootlogin without-password' in _settings"
+          - "'passwordauthentication no' in _settings"
+          - "'kbdinteractiveauthentication no' in _settings"
+        fail_msg: >-
+          Parsing /etc/ssh/sshd_config and its drop-ins does not produce the settings in
+          10-hardening.conf. sshd takes the FIRST occurrence of a keyword, and the
+          drop-in directory holds files from the distribution and from cloud-init, so a
+          file sorting earlier, or an Include placed below the main file's own settings,
+          silently wins. `validate` proves the file parses; this proves it is the one
+          that takes effect.
+          Note what this does NOT prove: `sshd -T` re-parses the files from disk in a new
+          process, so it cannot see the running daemon's loaded configuration. If the
+          reload handler failed, this still passes.
+          Parsed: {{ _settings | select('match', '^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication) ') | list }}
+        quiet: true
+      vars:
+        _settings: "{{ baseline_sshd_effective.stdout_lines | map('lower') | list }}"
+
+    # systemctl restart returns as soon as fail2ban-server is forked. The server then
+    # binds its socket and restores the ban database, which takes a second or three, so
+    # querying it immediately after the handler asks a socket that does not exist yet and
+    # reports a machine as broken when it is fine.
+    - name: verify | Wait for fail2ban to finish starting
+      ansible.builtin.command: fail2ban-client ping
+      register: baseline_fail2ban_ping
+      until: baseline_fail2ban_ping.rc == 0
+      retries: 10
+      delay: 2
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: verify | Ask fail2ban whether the sshd jail is loaded
+      ansible.builtin.command: fail2ban-client status sshd
+      register: baseline_fail2ban_jail
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: verify | The sshd jail is loaded and reading the journal
+      ansible.builtin.assert:
+        that:
+          - baseline_fail2ban_jail.rc == 0
+          - "'Journal matches' in baseline_fail2ban_jail.stdout"
+        fail_msg: >-
+          The sshd jail is not loaded. `systemctl reload fail2ban` returns success even
+          when fail2ban rejects a jail file and keeps running on its previous
+          configuration, so the copy task reporting changed is not evidence. Without the
+          jail, fail2ban runs, reports healthy and bans nobody.
+          "Journal matches" appears only with backend = systemd, which needs
+          python3-systemd on the target; if fail2ban is running but the jail is absent,
+          check that package first.
+          fail2ban-client said: {{ baseline_fail2ban_jail.stdout | default('') }}{{ baseline_fail2ban_jail.stderr | default('') }}
+        quiet: true
+
+    # The live system journal is the file named system.journal; anything with an @ in the
+    # name is archived. Looking for a /var/log/journal path in `journalctl --header` is not
+    # enough, because archived files from an earlier boot keep that path in the output
+    # after journald has fallen back to volatile.
+    - name: verify | Look for a live journal on disk
+      ansible.builtin.find:
+        paths: /var/log/journal
+        patterns: system.journal
+        recurse: true
+        file_type: file
+      register: baseline_journal_on_disk
+      check_mode: false
+
+    - name: verify | Look for a live journal in memory
+      ansible.builtin.find:
+        paths: /run/log/journal
+        patterns: system.journal
+        recurse: true
+        file_type: file
+      register: baseline_journal_in_memory
+      check_mode: false
+
+    - name: verify | The journal is being written to disk, not to memory
+      ansible.builtin.assert:
+        that:
+          - baseline_journal_on_disk.matched > 0
+          - baseline_journal_in_memory.matched == 0
+        fail_msg: >-
+          journald is writing to /run, so every log line dies on reboot. Note that
+          `journalctl --disk-usage` does not catch this — it reports the volatile figure
+          and looks unchanged whether or not the fix took, which is how it hid on the web
+          box on 2026-08-30 — and neither does looking for a /var/log/journal path in
+          `journalctl --header`, because archived files keep that path after journald has
+          fallen back.
+          On disk: {{ baseline_journal_on_disk.matched }} live journal(s).
+          In memory: {{ baseline_journal_in_memory.matched }}.
+        quiet: true

@@ -13,8 +13,10 @@ secrets in it, and its issues are a live feed of weak moments.
 
 ```
 tailscale/policy.hujson   the tailnet policy file, as it is in the admin console
-ansible/ansible.cfg       runs from the control plane; inventory below
-ansible/inventory.ini     the three droplets over the VPC, the two VMs over the tailnet
+ansible/ansible.cfg       runs from the laptop; inventory below
+ansible/inventory.ini     five machines: three on the tailnet, web and mail through the jump server
+ansible/group_vars/       what every machine shares, including the sudo password lookup
+ansible/host_vars/        one file per machine for what differs
 ansible/playbooks/        one playbook per job
 ansible/roles/baseline/   what every box gets before it gets a job
 ```

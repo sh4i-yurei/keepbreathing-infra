@@ -74,3 +74,12 @@
   ansible.builtin.debug:
     msg: "TODO: {{ baseline_admin_user }}, wheel, key-only, password to sudo"
   when: baseline_admin_user | default('', true) | length > 0
+
+# Two of the three checks below are only true once a handler has restarted something, and
+# handlers otherwise run after the whole play. Flushing them here means the role verifies
+# the state it actually left behind.
+- name: Run the handlers before verifying
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the machine is in the state the role claims
+  ansible.builtin.import_tasks: verify.yml

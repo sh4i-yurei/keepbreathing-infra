@@ -9,7 +9,13 @@
 
 - name: fail2ban | Install fail2ban
   ansible.builtin.dnf:
-    name: fail2ban
+    name:
+      # python3-systemd is what the jail's `backend = systemd` reads the journal with.
+      # It arrives as a weak dependency of fail2ban-server, so an image built with
+      # install_weak_deps=False — common on minimal cloud images — gets fail2ban running
+      # with no backend and a jail that never loads.
+      - fail2ban
+      - python3-systemd
     state: present
 
 - name: fail2ban | Install the sshd jail

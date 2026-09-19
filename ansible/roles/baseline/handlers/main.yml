@@ -1,6 +1,9 @@
 ---
-# Handlers run once at the end of the play, and only when a task that notifies them
-# reported a change. Reload rather than restart: existing sessions stay up.
+# Handlers run once at the end of the play, only when a task that notifies them reported
+# a change, and in the order they are DEFINED here rather than the order they are
+# notified. Reordering this file changes what happens. The journal sequence below depends
+# on it: journald restarts, then the journal is flushed to disk, then the two services
+# that read the journal are reconnected.
 
 - name: Reload sshd
   ansible.builtin.systemd_service:
@@ -25,4 +28,17 @@
 - name: Restart rsyslog
   ansible.builtin.systemd_service:
     name: rsyslog
+    state: restarted
+
+# fail2ban reads the journal with `backend = systemd`. What breaks it is the flush, not
+# the restart: fail2ban started when the journal was only in /run, so its reader watches
+# that directory, and `journalctl --flush` moves the journal to /var/log/journal where
+# fail2ban is not looking. The jail stays loaded and bans nobody — the silent failure step
+# 7 of the runbook warns about. A reload is not enough, because fail2ban's reload re-reads
+# jail configuration and does not re-open the journal. Defined after the flush so it runs
+# after it. Active bans survive: fail2ban restores them from
+# /var/lib/fail2ban/fail2ban.sqlite3 at startup.
+- name: Restart fail2ban after the journal moved
+  ansible.builtin.systemd_service:
+    name: fail2ban
     state: restarted

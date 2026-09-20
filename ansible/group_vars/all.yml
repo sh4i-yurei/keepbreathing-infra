@@ -1,4 +1,7 @@
 ---
 # Sudo password for every persistent box, read from the vault at run time.
 # Convention: one Login item per host, named "keepbreath0 sudo (<inventory name>)".
-ansible_become_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~ ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | quote) }}"
+# Lookup is skipped on a host with ansible_become=false (a robot build that is already root)
+
+ansible_become_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
+  ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | quote) if ansible_become | default(true) | bool else ''}}"

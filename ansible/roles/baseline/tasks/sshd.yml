@@ -12,4 +12,6 @@
     group: root
     mode: "0600"
     validate: sshd -t -f %s
-  notify: Reload sshd
+  notify:
+    - Check the merged sshd configuration
+    - Reload sshd

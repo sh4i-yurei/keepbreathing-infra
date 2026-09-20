@@ -5,6 +5,15 @@
 # on it: journald restarts, then the journal is flushed to disk, then the two services
 # that read the journal are reconnected.
 
+# validate on the copy task tests the drop-in on its own. This tests the whole configuration
+# sshd will actually load, main file and every drop-in together. It is defined above
+# Reload sshd on purpose: a failing handler fails the host, and later handlers do not run
+# for it, so sshd is never told to reload a configuration that does not parse.
+- name: Check the merged sshd configuration
+  ansible.builtin.command:
+    cmd: sshd -t
+  changed_when: false
+
 - name: Reload sshd
   ansible.builtin.systemd_service:
     name: sshd

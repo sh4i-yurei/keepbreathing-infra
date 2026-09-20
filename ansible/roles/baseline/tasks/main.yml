@@ -70,6 +70,9 @@
 - name: Make the journal persistent
   ansible.builtin.import_tasks: journald.yml
 
+- name: Install and enable chrony for time synchronization
+  ansible.builtin.import_tasks: chrony.yml
+
 - name: Create the admin account
   ansible.builtin.debug:
     msg: "TODO: {{ baseline_admin_user }}, wheel, key-only, password to sudo"

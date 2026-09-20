@@ -1,0 +1,36 @@
+---
+# Hardening assertions for the baseline role
+# SELinux enforcing and every repository checking package signatures
+# Switching SELinux from permissive to enforcing can break a machine,
+# and turning gpgcheck back on hides that it was ever off.
+
+- name: hardening-asserts | SELinux is enforcing now and after the next boot
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['selinux']['mode'] == 'enforcing'
+      - ansible_facts['selinux']['config_mode'] == 'enforcing'
+    fail_msg: >-
+      SELinux is {{ ansible_facts['selinux']['mode'] }} now and set to
+      {{ ansible_facts['selinux']['config_mode'] }} in /etc/selinux/config. The role
+      does not switch it to enforcing: files written while permissive can carry the
+      wrong labels, so enforcing can break the machine until it is relabelled and
+      rebooted, and if it is permissive because someone is debugging, flipping it back
+      mid-session is hostile. Look at why it was changed (decision #39).
+    quiet: true
+
+- name: hardening-asserts | Look for a repository with signature checking off
+  ansible.builtin.command: grep -rl '^gpgcheck\s*=\s*0' /etc/yum.repos.d/
+  register: baseline_gpgcheck_off
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: hardening-asserts | Every repository checks package signatures
+  ansible.builtin.assert:
+    that: baseline_gpgcheck_off.stdout | length == 0
+    fail_msg: >-
+      A repository has gpgcheck=0: {{ baseline_gpgcheck_off.stdout_lines }}. Packages
+      from it install without their signature being verified. The role does not turn
+      checking back on, because that would break installs from that repository and hide
+      that it was ever off; somebody turned it off on purpose (decision #39).
+    quiet: true

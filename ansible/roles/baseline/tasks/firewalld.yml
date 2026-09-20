@@ -5,23 +5,14 @@
 # Firewalld tasks set permanent and immediate together rather than notifying a reload
 # handler (decision #19).
 #
-# HAZARD, on a machine that routes for something else. firewalld flushes and rebuilds the
-# packet filter when it STARTS, not only when it reloads, and that discards the rules
-# tailscaled has written. On an ordinary tailnet client the connection survives and only
-# forwarding breaks. On a subnet router it takes out the route it is carrying — for
-# almaserv that is the whole 192.168.4.0/22 house network, over a connection that itself
-# runs on that network, so the run cannot recover itself. Recovery is `tailscale down`
-# then `tailscale up` at the VirtualBox console, not over the network. almaserv is
-# deliberately not in the inventory until that is arranged.
-#
-# control is subject to the same hazard and IS in the inventory: it advertises
-# 10.128.0.0/20, which is the only route to web and mail. The run itself survives, because
-# the laptop reaches control as an ordinary tailnet client, but the route would stop
-# forwarding with nothing in the output saying so. What makes this survivable rather than
-# urgent is that `state: started` is a no-op where firewalld is already running, and it is
-# running on every machine in the inventory today. The hazard fires on a machine where it
-# is stopped — or not installed at all, because the task above installs it and a fresh
-# install is inactive, so the start below is what first builds its ruleset.
+# On a subnet router, firewalld's start could in principle discard the rules tailscaled
+# writes, because firewalld flushes its rules when it STARTS, not only on reload. It does
+# not on the nftables backend with no direct rules: firewalld then deletes only its own
+# `inet firewalld` table and skips the iptables flush. Read off control on 2026-09-19,
+# the one subnet router in the inventory: FirewallBackend=nftables, no direct rules,
+# tailscale's 16 rules in the iptables compatibility tables, which firewalld does not
+# own. Not tested by restarting firewalld. A reload is a different path and is still
+# avoided (decision #19).
 
 - name: firewalld | Ensure firewalld is installed
   ansible.builtin.dnf:

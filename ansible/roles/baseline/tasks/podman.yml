@@ -23,9 +23,12 @@
 # The trade: boot now waits on the network where it previously did not. The shipped unit
 # runs nm-online with NM_ONLINE_TIMEOUT=60, so a machine with a configured interface that
 # never gets carrier stalls a minute on every boot; `systemctl edit
-# NetworkManager-wait-online` changes that. Every machine in the inventory already has the
-# service enabled by NetworkManager's own preset, so this task is a no-op today. It exists
-# so a machine where someone disabled it does not silently lose the guarantee.
+# NetworkManager-wait-online` changes that.
+#
+# Checked 2026-09-19: enabled on every machine in the inventory, so this task is a no-op
+# today. On AlmaLinux 10 the distribution's 90-default.preset (from almalinux-release)
+# enables it; on AlmaLinux 9 no preset names it and it arrived enabled with the image. It
+# exists so a machine where someone disabled it does not silently lose the guarantee.
 #
 # It also hard-fails on a machine with no NetworkManager — systemd_service cannot enable a
 # unit that does not exist. Accepted: every machine here uses NetworkManager, and a box

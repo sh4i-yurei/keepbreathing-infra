@@ -76,6 +76,9 @@
 - name: Assert SELinux is enforcing and every repository checks signatures
   ansible.builtin.import_tasks: hardening-asserts.yml
 
+- name: Bound how much disk core dumps may use
+  ansible.builtin.import_tasks: coredump.yml
+
 - name: Create the admin account
   ansible.builtin.debug:
     msg: "TODO: {{ baseline_admin_user }}, wheel, key-only, password to sudo"

@@ -1,0 +1,21 @@
+---
+# Bootstrap-style step for coredumps that puts a drop-in in /etc/systemd/coredump.conf.d/
+# capping at 1G used and 2G free so a crash can still be investigated (decision #40).
+# No handler, because systemd-coredump is not a running service: the kernel starts it
+# fresh for each crash and it reads its configuration then.
+
+- name: coredump | Make the drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/coredump.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: coredump | Bound how much disk core dumps may use
+  ansible.builtin.copy:
+    src: coredump-bounded.conf
+    dest: /etc/systemd/coredump.conf.d/10-bounded.conf
+    owner: root
+    group: root
+    mode: "0644"

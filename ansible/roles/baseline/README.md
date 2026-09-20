@@ -22,6 +22,14 @@ Until that happens, treat any run of this role as capable of touching SSH.
 Three of the five machines are AlmaLinux 9.8. A first run against one of those is a real
 test, not a formality, and should be rehearsed with `--check --diff`.
 
+**A rehearsal only works on a machine that already has the packages.** Under `--check`,
+`dnf` reports that it would install a package and does not, so a later task that edits
+that package's config file (`lineinfile` on `/etc/dnf/automatic.conf`) or asks systemd
+about its unit fails on a machine that has never had it. The three droplets were
+hand-built with every package and can be rehearsed. A machine the role has never touched,
+such as `vaultserv` or a fresh droplet, cannot: first contact there is a real run under
+`--limit`, and the rehearsal is the second run reporting no changes.
+
 ## Variables
 
 | Variable | Default | Meaning |
@@ -52,7 +60,7 @@ role's interface:
 | Setting | Value | Why |
 |---|---|---|
 | `ansible_user` | `root` | The machine has no admin account yet, or never will. |
-| `ansible_become` | `false` | Already root. This is also what stops the playbook's first play reaching for the vault, which a CI runner has no session for. `become = True` in `ansible.cfg` does not set this variable, so an inventory that omits it gets the vault lookup. |
+| `ansible_become` | `false` | Already root. The become-password lookup in `group_vars/all.yml` is conditional on this variable, so a host with it false never calls the vault, which a CI runner has no session for. Ansible templates that variable for every task whether or not become is in effect, so skipping the first play is not enough; the lookup itself has to be conditional. `become = True` in `ansible.cfg` does not set this variable, so an inventory that omits it gets the vault lookup. A Packer inventory kept outside `ansible/` never loads `group_vars/all.yml` at all. |
 | `baseline_admin_user` | `""` | An image and a staging box get no admin account. The role asserts this when `baseline_image_build` is true. |
 | `baseline_container_user` | `""` for an image; the account name for staging | An image does not know its container account yet; the name is assigned when a machine is created from it. A staging box is named for its pull request. |
 | `baseline_image_build` | `true` only when baking | Accepted and reserved. No task reads it; it exists for the secret-applying tasks that will live in `access`. |
@@ -91,7 +99,9 @@ the machine is not in the state the role claims to have left it in. Three checks
 because the failure it catches is silent:
 
 - `sshd -T` proves the hardening drop-in is the configuration that wins on parse. It
-  cannot see the running daemon, and the failure message says so.
+  cannot see the running daemon, and the failure message says so. It also reports only
+  global values, so a `Match` block that re-enabled password login for some address
+  would not show; no machine has one as of 2026-09-19.
 - `fail2ban-client status sshd` proves the jail is loaded and reading the journal.
   `systemctl reload fail2ban` returns success even when the jail is rejected, so a
   `changed` from the copy task is not evidence.

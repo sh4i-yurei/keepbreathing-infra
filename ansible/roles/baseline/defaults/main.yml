@@ -19,3 +19,13 @@ baseline_swap_size: 1G
 # removed this rule, it will run but be unreachable with nothing obviously wrong. Set this
 # to false on a machine that is meant to serve cockpit.
 baseline_firewalld_remove_cockpit: true
+
+# these are disk formats the AlmaLinux 9 and 10 kernels do not include; the file is
+# written so the oscap scan reports clean and to cover a kernel that does ship them;
+# udf and squashfs are left loadable because the VMs mount ISO images
+baseline_blacklist_fs_modules:
+  - cramfs
+  - freevxfs
+  - jffs2
+  - hfs
+  - hfsplus

@@ -79,6 +79,9 @@
 - name: Bound how much disk core dumps may use
   ansible.builtin.import_tasks: coredump.yml
 
+- name: Blacklist filesystem modules nothing here uses
+  ansible.builtin.import_tasks: modules.yml
+
 - name: Create the admin account
   ansible.builtin.debug:
     msg: "TODO: {{ baseline_admin_user }}, wheel, key-only, password to sudo"

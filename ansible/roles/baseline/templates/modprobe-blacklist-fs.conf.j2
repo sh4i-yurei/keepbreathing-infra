@@ -1,0 +1,9 @@
+# Managed by Ansible (roles/baseline). Edits here are overwritten.
+# These filesystem formats are not compiled into the AlmaLinux 9 and 10 kernels. The
+# entries exist so the CIS and STIG scanners report clean, and for a kernel that ships
+# them. install refuses an explicit load; blacklist stops automatic loading by alias.
+
+{% for module in baseline_blacklist_fs_modules %}
+install {{ module }} /bin/false
+blacklist {{ module }}
+{% endfor %}

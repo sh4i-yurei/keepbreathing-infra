@@ -1,0 +1,11 @@
+---
+# The five formats are not compiled into these kernels; the file exists for the scanner
+# and for kernels that ship them. No handler because modprobe reads the file on demand.
+
+- name: modules | Blacklist filesystem modules nothing here uses
+  ansible.builtin.template:
+    src: modprobe-blacklist-fs.conf.j2
+    dest: /etc/modprobe.d/baseline-blacklist-fs.conf
+    owner: root
+    group: root
+    mode: "0644"

@@ -3,7 +3,9 @@
 What every machine gets, whatever its job. Automatic security updates, an SSH hardening
 drop-in, swap where there is none, fail2ban with the sshd jail, firewalld installed and
 enabled with cockpit removed from the default zone, Podman prepared for rootless
-containers, and a persistent capped journal.
+containers, a persistent capped journal, chrony, bounded core dumps, a blacklist for
+filesystem modules nothing here uses, and two assertions: SELinux is enforcing and every
+repository checks package signatures.
 
 The by-hand version is `server-bootstrap.md` in the operational manual; this role is that
 procedure written down so a machine can be rebuilt without anyone remembering it.
@@ -39,6 +41,7 @@ such as `vaultserv` or a fresh droplet, cannot: first contact there is a real ru
 | `baseline_image_build` | `false` | True when baking an image rather than configuring a live machine. No task reads it; the role asserts only that a build was not also given an admin account. |
 | `baseline_swap_size` | `1G` | Size of the swap file created on machines that have none. |
 | `baseline_firewalld_remove_cockpit` | `true` | Remove the cockpit service from the firewall's default zone. |
+| `baseline_blacklist_fs_modules` | `[cramfs, freevxfs, jffs2, hfs, hfsplus]` | Filesystem modules written to `/etc/modprobe.d/` as `install <mod> /bin/false` plus `blacklist <mod>`. None is compiled into the AlmaLinux 9 or 10 kernel; the file exists so the CIS and STIG scanners report clean. `udf` and `squashfs` are left out because the VMs mount ISO images. |
 
 `meta/argument_specs.yml` is the authoritative version. It validates these before the
 role's first task — note that the playbook's first play, which reads the sudo password

@@ -1,5 +1,6 @@
 ---
-# The runbook ends every step with a check, because each failure these catch is silent.
+# The bootstrap procedure (server-bootstrap.md) ends every step with a check, because
+# each failure these catch is silent.
 # The role translated the actions and dropped the checks, so "the playbook ran clean" was
 # weaker evidence than "I did the procedure". This puts them back.
 #

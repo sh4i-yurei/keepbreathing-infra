@@ -41,7 +41,7 @@
 
 # fail2ban reads the journal with `backend = systemd`. Restarting journald and then
 # flushing the journal can leave its reader attached to files that have moved, and the
-# symptom is the silent one step 7 of the runbook warns about: the jail stays loaded and
+# symptom is the silent one step 7 of the bootstrap procedure warns about: the jail stays loaded and
 # bans nobody. Restarting fail2ban afterwards is the cheap way to be certain. The exact
 # mechanism is not established here — the reader does watch both /run/log/journal and
 # /var/log/journal — so this is belt and braces rather than a known-necessary fix.

@@ -5,3 +5,6 @@
 
 ansible_become_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
   ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | quote) if ansible_become | default(true) | bool else ''}}"
+
+image_build: false
+

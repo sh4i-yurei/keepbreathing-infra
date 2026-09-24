@@ -1,0 +1,9 @@
+---
+# Each step below is one from the server-bootstrap procedure, in the order it is done by
+# hand. Step 6, the sshd hardening drop-in, is the only one written. Step 1a's admin
+# account, the authorized key in a root-owned location, and the assertion that no
+# NOPASSWD rule names a non-root user are not here yet, and nor are the two opening
+# assertions.
+
+- name: Harden SSH
+  ansible.builtin.import_tasks: sshd.yml

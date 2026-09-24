@@ -15,7 +15,8 @@
 - name: verify | Only on a real run against a live machine
   when:
     - not ansible_check_mode
-    - not baseline_image_build | bool
+    - not image_build | bool
+
   block:
     - name: verify | Ask sshd which configuration wins
       ansible.builtin.command: sshd -T

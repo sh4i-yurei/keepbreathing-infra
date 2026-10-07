@@ -38,3 +38,11 @@
 
 - name: Harden SSH
   ansible.builtin.import_tasks: sshd.yml
+
+# The check below reads the sshd configuration after the handlers have checked and
+# reloaded it. Handlers otherwise run after the whole play.
+- name: Run the handlers before verifying
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the sshd configuration that takes effect
+  ansible.builtin.import_tasks: verify.yml

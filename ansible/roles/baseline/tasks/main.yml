@@ -66,7 +66,7 @@
 - name: Blacklist filesystem modules nothing here uses
   ansible.builtin.import_tasks: modules.yml
 
-# Two of the three checks below are only true once a handler has restarted something, and
+# Both checks below are only true once a handler has restarted something, and
 # handlers otherwise run after the whole play. Flushing them here means the role verifies
 # the state it actually left behind.
 - name: Run the handlers before verifying

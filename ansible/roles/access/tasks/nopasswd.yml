@@ -1,0 +1,21 @@
+---
+# Decision #38. Root's own NOPASSWD rule, which cloud-init writes on the droplets, is
+# allowed. Any other account or group with one fails the run.
+
+- name: nopasswd | Read every sudo rule that skips the password
+  ansible.builtin.command:
+    cmd: grep -rhE '^[[:space:]]*[^#[:space:]].*NOPASSWD' /etc/sudoers /etc/sudoers.d
+  register: access_nopasswd_rules
+  changed_when: false
+  failed_when: access_nopasswd_rules.rc > 1
+  check_mode: false
+
+- name: nopasswd | Check only root has passwordless sudo
+  ansible.builtin.assert:
+    that:
+      - access_nopasswd_rules.stdout_lines | reject('match', '^\s*root\s') | list | length == 0
+    fail_msg: >-
+      These sudo rules let an account other than root skip the password:
+      {{ access_nopasswd_rules.stdout_lines | reject('match', '^\s*root\s') | list }}.
+      Find where each one came from before removing it.
+    quiet: true

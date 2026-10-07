@@ -6,5 +6,10 @@
 ansible_become_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
   ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | quote) if ansible_become | default(true) | bool else ''}}"
 
-image_build: false
+# The admin account's password hash, from a hidden field named "hash" on the same vault
+# item. Read only by the access role's admin account task.
+access_admin_password_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
+  ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
+  | selectattr('name', 'equalto', 'hash') | map(attribute='value') | first }}"
 
+image_build: false

@@ -1,9 +1,34 @@
 ---
 # Each step below is one from the server-bootstrap procedure, in the order it is done by
-# hand. Step 6, the sshd hardening drop-in, is the only one written. Step 1a's admin
-# account, the authorized key in a root-owned location, and the assertion that no
-# NOPASSWD rule names a non-root user are not here yet, and nor are the two opening
-# assertions.
+# hand. Step 1a's admin account and step 6's sshd hardening drop-in are written. The
+# authorized key in a root-owned location and the assertion that no NOPASSWD rule names
+# a non-root user are not here yet.
+- name: Check the admin account name is not null and is well formed
+  ansible.builtin.assert:
+    that:
+      - access_admin_user is not none
+      - access_admin_user is match('^[a-z_][a-z0-9_-]*\\Z|^\\Z')
+    fail_msg: >-
+      access_admin_user "{{ access_admin_user }}" must be a lowercase account name or
+      "", never left empty with nothing after the colon. The name becomes part of the
+      authorized-keys path, so a name with a slash or a wildcard would put the key
+      somewhere sshd never reads.
+    quiet: true
+
+- name: Check image_build is set and does not clash with an admin account
+  ansible.builtin.assert:
+    that:
+      - image_build is defined
+      - image_build is boolean
+      - not (image_build and access_admin_user | length > 0)
+    fail_msg: >-
+      image_build must be set to true or false, and an image build must not have an
+      admin account. Set image_build in the inventory as a real boolean, and set
+      access_admin_user to "" when image_build is true.
+    quiet: true
+
+- name: Create the admin account
+  ansible.builtin.import_tasks: admin.yml
 
 - name: Harden SSH
   ansible.builtin.import_tasks: sshd.yml

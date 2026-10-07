@@ -1,8 +1,9 @@
 ---
 # Each step below is one from the server-bootstrap procedure, in the order it is done by
-# hand. Step 1a's admin account and step 6's sshd hardening drop-in are written. The
-# authorized key in a root-owned location and the assertion that no NOPASSWD rule names
-# a non-root user are not here yet.
+# hand. Step 1a's admin account, its key in a root-owned location and step 6's sshd
+# hardening drop-in are written. The assertion that no NOPASSWD rule names a non-root user
+# is not here yet.
+
 - name: Check the admin account name is not null and is well formed
   ansible.builtin.assert:
     that:
@@ -29,6 +30,9 @@
 
 - name: Create the admin account
   ansible.builtin.import_tasks: admin.yml
+
+- name: Put the admin account's key in a root-owned location
+  ansible.builtin.import_tasks: keys.yml
 
 - name: Harden SSH
   ansible.builtin.import_tasks: sshd.yml

@@ -1,0 +1,35 @@
+---
+# Decisions #37 and #49. The admin account's key in a root-owned directory outside its
+# home, and the sshd setting that reads keys from there. Skipped when there is no admin
+# account.
+
+- name: keys | Create the root-owned key directory
+  ansible.builtin.file:
+    path: /etc/ssh/authorized_keys
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: access_admin_user | length > 0
+
+- name: keys | Install the admin account's key
+  ansible.builtin.copy:
+    src: admin.pub
+    dest: "/etc/ssh/authorized_keys/{{ access_admin_user }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: access_admin_user | length > 0
+
+- name: keys | Install the drop-in that points sshd at that directory
+  ansible.builtin.copy:
+    src: 11-authorized-keys.conf
+    dest: /etc/ssh/sshd_config.d/11-authorized-keys.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: sshd -t -f %s
+  notify:
+    - Check the merged sshd configuration
+    - Reload sshd
+  when: access_admin_user | length > 0

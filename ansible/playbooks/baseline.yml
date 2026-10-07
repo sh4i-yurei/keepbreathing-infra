@@ -1,30 +1,9 @@
 ---
-# Bring a box to the baseline every machine gets before it gets a job.
-# First target is the hub (Ansible decision #5), then the three droplets.
+# Bring a machine to the baseline every machine gets before it gets a job.
 #   ansible-playbook playbooks/baseline.yml --limit hub
 
-# Read the sudo password once per host. group_vars/all.yml defines it as a lookup that
-# runs bw every time the value is read, and Ansible reads it on every task; a fact set
-# here outranks group_vars, so the rest of the run uses the stored value.
 - name: Fetch the become password
-  hosts: all
-  gather_facts: false
-  become: false
-  tasks:
-    - name: Check the vault is unlocked on the controller
-      ansible.builtin.command: bw unlock --check
-      delegate_to: localhost
-      changed_when: false
-      check_mode: false
-      vars:
-        ansible_become_password: ""
-      when: ansible_become | default(true) | bool
-
-    - name: Store the become password as a fact
-      ansible.builtin.set_fact:
-        ansible_become_password: "{{ ansible_become_password }}"
-      no_log: true
-      when: ansible_become | default(true) | bool
+  ansible.builtin.import_playbook: become-password.yml
 
 - name: Baseline
   hosts: all

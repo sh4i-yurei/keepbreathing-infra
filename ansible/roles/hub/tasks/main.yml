@@ -1,0 +1,7 @@
+---
+# The services that run on the hub, each one task file, in the order they are built.
+# The account comes first so the role is complete when run on its own; in playbooks/hub.yml
+# it has already run before baseline, and reports no change here.
+
+- name: Create the container account
+  ansible.builtin.import_tasks: account.yml

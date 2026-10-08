@@ -1,0 +1,16 @@
+---
+argument_specs:
+  main:
+    short_description: The services that run on the hub
+    options:
+      hub_container_user:
+        type: str
+        required: true
+        description: The account the hub's containers run under.
+  account:
+    short_description: Create the account the hub's containers run under
+    options:
+      hub_container_user:
+        type: str
+        required: true
+        description: The account the hub's containers run under.

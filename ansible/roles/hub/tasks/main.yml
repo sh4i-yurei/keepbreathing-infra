@@ -5,3 +5,6 @@
 
 - name: Create the container account
   ansible.builtin.import_tasks: account.yml
+
+- name: Run ntfy
+  ansible.builtin.import_tasks: ntfy.yml

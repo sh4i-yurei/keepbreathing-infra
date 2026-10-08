@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=ntfy, the hub's notification service
+
+[Container]
+ContainerName=ntfy
+Image={{ hub_ntfy_image }}
+Exec=serve
+PublishPort=127.0.0.1:{{ hub_ntfy_port }}:80
+Volume=/home/{{ hub_container_user }}/ntfy:/var/lib/ntfy:Z
+Volume=/home/{{ hub_container_user }}/.config/ntfy/server.yml:/etc/ntfy/server.yml:ro,Z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

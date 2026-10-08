@@ -1,3 +1,5 @@
 ---
-# No container account yet; the hub's containers are not deployed.
-baseline_container_user: ""
+# The account the hub's containers run under (Notification service decision #12). The hub
+# role creates it; baseline sets it up for rootless Podman.
+hub_container_user: keepbreath5
+baseline_container_user: "{{ hub_container_user }}"

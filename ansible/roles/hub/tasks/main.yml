@@ -8,3 +8,6 @@
 
 - name: Run ntfy
   ansible.builtin.import_tasks: ntfy.yml
+
+- name: Check ntfy is in the state the role claims
+  ansible.builtin.import_tasks: ntfy-verify.yml

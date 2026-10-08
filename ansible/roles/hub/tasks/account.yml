@@ -6,3 +6,4 @@
 - name: account | Create the container account
   ansible.builtin.user:
     name: "{{ hub_container_user }}"
+  register: hub_container_account

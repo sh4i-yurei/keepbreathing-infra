@@ -1,0 +1,22 @@
+---
+# Handlers run once, after the tasks that notify them, in the order they are DEFINED here.
+# The reload comes first so systemd has reread a changed Quadlet file before ntfy restarts.
+
+- name: Reload systemd for the container account
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: Restart ntfy
+  ansible.builtin.systemd_service:
+    name: ntfy.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"

@@ -7,6 +7,19 @@ argument_specs:
         type: str
         required: true
         description: The account the hub's containers run under.
+      hub_ntfy_image:
+        type: str
+        default: docker.io/binwiederhier/ntfy@sha256:4c599cf0818965782f93f652bd843e92714992e84d6b88ad17713dc0951cda1f
+        description: ntfy's container image, pinned by digest.
+      hub_ntfy_port:
+        type: int
+        default: 8080
+        description: The port ntfy is published on, on 127.0.0.1 only.
+      hub_ntfy_users:
+        type: list
+        elements: dict
+        description: ntfy's users. Each has a name, a list of topic:access rules, and token
+          true for the ones that publish with a token.
   account:
     short_description: Create the account the hub's containers run under
     options:

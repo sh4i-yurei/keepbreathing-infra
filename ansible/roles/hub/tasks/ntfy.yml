@@ -59,3 +59,24 @@
   become_user: "{{ hub_container_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: ntfy | Read the hub's Tailscale serve state
+  ansible.builtin.command: tailscale serve status --json
+  register: hub_ntfy_serve_status
+  changed_when: false
+  check_mode: false
+
+# Notification service decision #19. A serve settings file cannot express HTTPS on 443 in
+# front of plain HTTP to ntfy, so the role runs the serve command itself, and only when the
+# hub is not already serving it that way. Clearing first replaces any other setting on 443.
+- name: ntfy | Serve ntfy as the Tailscale Service when the hub is not already doing so
+  ansible.builtin.shell: >-
+    tailscale serve clear svc:ntfy &&
+    tailscale serve --yes --service=svc:ntfy --https=443 127.0.0.1:{{ hub_ntfy_port }}
+  vars:
+    hub_ntfy_serve: "{{ (hub_ntfy_serve_status.stdout | from_json).Services['svc:ntfy'] | default({}) }}"
+  when: >-
+    not (hub_ntfy_serve.TCP['443'].HTTPS | default(false))
+    or (hub_ntfy_serve.Web['ntfy.tail4cf2f3.ts.net:443'].Handlers['/'].Proxy | default(''))
+    != 'http://127.0.0.1:' ~ hub_ntfy_port
+  changed_when: true

@@ -15,6 +15,13 @@ hub_ntfy_users:
   - name: laptop
     access: [pages:wo, tickets:wo, test:wo]
     token: true
-  - name: uptime-kuma
+  - name: gatus
     access: [pages:wo]
     token: true
+
+# Gatus's image, pinned to the digest of the v5.37.0 tag (Monitoring and alerting decision #17).
+# The digest fixes the exact image; the version is only readable from this comment.
+hub_gatus_image: ghcr.io/twin/gatus@sha256:094eb186e55235db367e90e9d56140e5897b7044c41de23cde4cc18e6da1242e
+
+# The port Gatus is published on, on 127.0.0.1 only. ntfy has 8080.
+hub_gatus_port: 8081

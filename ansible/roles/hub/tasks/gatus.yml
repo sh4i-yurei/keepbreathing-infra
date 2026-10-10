@@ -1,0 +1,61 @@
+---
+# Monitoring and alerting step 1. Gatus as a rootless Quadlet container under the hub's
+# container account, the same way as ntfy.yml. Files are written as root and owned by that
+# account; only the systemd and Podman tasks run as the account itself.
+
+- name: gatus | Create the folders Gatus and its Quadlet file live in
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/{{ item }}"
+    state: directory
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0700"
+  loop:
+    - .config
+    - .config/containers
+    - .config/containers/systemd
+    - .config/gatus
+    - gatus
+
+- name: gatus | Write Gatus's configuration file
+  ansible.builtin.template:
+    src: gatus-config.yaml.j2
+    dest: "/home/{{ hub_container_user }}/.config/gatus/config.yaml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart gatus
+
+- name: gatus | Write Gatus's Quadlet file
+  ansible.builtin.template:
+    src: gatus.container.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/systemd/gatus.container"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  notify:
+    - Reload systemd for the container account
+    - Restart gatus
+
+- name: gatus | Download Gatus's image into the container account's storage
+  containers.podman.podman_image:
+    name: "{{ hub_gatus_image }}"
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: gatus | Run the handlers before making sure Gatus is running
+  ansible.builtin.meta: flush_handlers
+
+- name: gatus | Make sure Gatus is running
+  ansible.builtin.systemd_service:
+    name: gatus.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"

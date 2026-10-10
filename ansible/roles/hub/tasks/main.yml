@@ -11,3 +11,9 @@
 
 - name: Check ntfy is in the state the role claims
   ansible.builtin.import_tasks: ntfy-verify.yml
+
+- name: Run Gatus
+  ansible.builtin.import_tasks: gatus.yml
+
+- name: Check Gatus is in the state the role claims
+  ansible.builtin.import_tasks: gatus-verify.yml

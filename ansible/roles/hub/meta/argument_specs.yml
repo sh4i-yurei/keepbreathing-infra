@@ -20,6 +20,16 @@ argument_specs:
         elements: dict
         description: ntfy's users. Each has a name, a list of topic:access rules, and token
           true for the ones that publish with a token.
+
+      hub_gatus_image:
+        type: str
+        default: ghcr.io/twin/gatus@sha256:094eb186e55235db367e90e9d56140e5897b7044c41de23cde4cc18e6da1242e
+        description: Gatus's container image, pinned by digest.
+      hub_gatus_port:
+        type: int
+        default: 8081
+        description: The port Gatus is published on, on 127.0.0.1 only.
+
   account:
     short_description: Create the account the hub's containers run under
     options:

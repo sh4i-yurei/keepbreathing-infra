@@ -1,0 +1,80 @@
+---
+# Monitoring and alerting step 3. Checks Prometheus is in the state the role claims, after it has
+# been started. Skipped in check mode, where nothing was written or started.
+
+- name: prometheus-verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: prometheus-verify | Wait for Prometheus to report itself ready
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_prometheus_port }}/-/ready"
+      register: hub_prometheus_ready
+      until: hub_prometheus_ready.status == 200
+      retries: 15
+      delay: 2
+
+    - name: prometheus-verify | Wait for every scrape target to be up
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/targets?state=active"
+      register: hub_prometheus_targets
+      until: >-
+        (hub_prometheus_targets.json.data.activeTargets | map(attribute='labels.job') | sort)
+        == ['gatus', 'node', 'prometheus']
+        and (hub_prometheus_targets.json.data.activeTargets | map(attribute='health') | unique)
+        == ['up']
+      retries: 15
+      delay: 5
+
+    - name: prometheus-verify | Read the loaded rules and the retention settings
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/{{ item }}"
+      loop:
+        - rules
+        - status/flags
+      register: hub_prometheus_status
+
+    - name: prometheus-verify | The disk-full rule is loaded and retention is 15 days and 8 GB
+      ansible.builtin.assert:
+        that:
+          - >-
+            'NodeFilesystemSpaceFillingUp' in
+            (hub_prometheus_status.results[0].json.data.groups | map(attribute='rules') | flatten
+            | map(attribute='name') | list)
+          - hub_prometheus_status.results[1].json.data['storage.tsdb.retention.time'] == '15d'
+          - hub_prometheus_status.results[1].json.data['storage.tsdb.retention.size'] == '8GiB'
+        fail_msg: >-
+          Prometheus is missing the disk-full rule or is not running with 15 days and 8 GB of
+          retention.
+        quiet: true
+
+    - name: prometheus-verify | Read the running Prometheus container
+      containers.podman.podman_container_info:
+        name: prometheus
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_prometheus_container
+
+    - name: prometheus-verify | The Prometheus container is running the pinned image
+      ansible.builtin.assert:
+        that:
+          - hub_prometheus_container.containers | length == 1
+          - hub_prometheus_container.containers[0].State.Running
+          - hub_prometheus_container.containers[0].ImageName == hub_prometheus_image
+        fail_msg: >-
+          The prometheus container is missing, stopped, or running an image other than the pinned
+          {{ hub_prometheus_image }}. Running:
+          {{ (hub_prometheus_container.containers | first | default({})).ImageName | default('nothing') }}.
+        quiet: true
+
+    - name: prometheus-verify | Prometheus sends its alerts to Alertmanager
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/alertmanagers"
+      register: hub_prometheus_alertmanagers
+      until: >-
+        (hub_prometheus_alertmanagers.json.data.activeAlertmanagers | map(attribute='url') | list)
+        == ['http://' ~ hub_host_loopback ~ ':' ~ hub_alertmanager_port ~ '/api/v2/alerts']
+      retries: 10
+      delay: 3

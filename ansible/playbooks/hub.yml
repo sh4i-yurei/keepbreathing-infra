@@ -25,4 +25,5 @@
   hosts: hub
   force_handlers: true
   roles:
+    - node_exporter
     - hub

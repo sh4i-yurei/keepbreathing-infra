@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Prometheus, the hub's metrics store
+
+[Container]
+ContainerName=prometheus
+Image={{ hub_prometheus_image }}
+Network=pasta:--map-host-loopback,{{ hub_host_loopback }}
+UserNS=keep-id:uid=65534,gid=65534
+PublishPort=127.0.0.1:{{ hub_prometheus_port }}:9090
+Volume=/home/{{ hub_container_user }}/.config/prometheus:/etc/prometheus:ro,Z
+Volume=/home/{{ hub_container_user }}/prometheus:/prometheus:Z
+Exec=--config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --storage.tsdb.retention.time=15d --storage.tsdb.retention.size=8GB
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

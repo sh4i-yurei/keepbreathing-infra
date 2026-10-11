@@ -3,7 +3,7 @@
 # container account. Files are written as root and owned by that account (Ansible decision
 # #50); only the systemd and Podman tasks run as the account itself.
 
-- name: ntfy | Create the folders ntfy and its Quadlet file live in
+- name: ntfy-setup | Create the folders ntfy and its Quadlet file live in
   ansible.builtin.file:
     path: "/home/{{ hub_container_user }}/{{ item }}"
     state: directory
@@ -17,7 +17,7 @@
     - .config/ntfy
     - ntfy
 
-- name: ntfy | Write ntfy's configuration file
+- name: ntfy-setup | Write ntfy's configuration file
   ansible.builtin.template:
     src: ntfy-server.yml.j2
     dest: "/home/{{ hub_container_user }}/.config/ntfy/server.yml"
@@ -28,7 +28,7 @@
   no_log: true
   notify: Restart ntfy
 
-- name: ntfy | Write ntfy's Quadlet file
+- name: ntfy-setup | Write ntfy's Quadlet file
   ansible.builtin.template:
     src: ntfy.container.j2
     dest: "/home/{{ hub_container_user }}/.config/containers/systemd/ntfy.container"
@@ -39,7 +39,7 @@
     - Reload systemd for the container account
     - Restart ntfy
 
-- name: ntfy | Download ntfy's image into the container account's storage
+- name: ntfy-setup | Download ntfy's image into the container account's storage
   containers.podman.podman_image:
     name: "{{ hub_ntfy_image }}"
   become: true
@@ -47,10 +47,10 @@
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
 
-- name: ntfy | Run the handlers before making sure ntfy is running
+- name: ntfy-setup | Run the handlers before making sure ntfy is running
   ansible.builtin.meta: flush_handlers
 
-- name: ntfy | Make sure ntfy is running
+- name: ntfy-setup | Make sure ntfy is running
   ansible.builtin.systemd_service:
     name: ntfy.service
     state: started
@@ -60,7 +60,7 @@
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
 
-- name: ntfy | Read the hub's Tailscale serve state
+- name: ntfy-setup | Read the hub's Tailscale serve state
   ansible.builtin.command: tailscale serve status --json
   register: hub_ntfy_serve_status
   changed_when: false
@@ -69,7 +69,7 @@
 # Notification service decision #19. A serve settings file cannot express HTTPS on 443 in
 # front of plain HTTP to ntfy, so the role runs the serve command itself, and only when the
 # hub is not already serving it that way. Clearing first replaces any other setting on 443.
-- name: ntfy | Serve ntfy as the Tailscale Service when the hub is not already doing so
+- name: ntfy-setup | Serve ntfy as the Tailscale Service when the hub is not already doing so
   ansible.builtin.shell: >-
     tailscale serve clear svc:ntfy &&
     tailscale serve --yes --service=svc:ntfy --https=443 127.0.0.1:{{ hub_ntfy_port }}

@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/node_exporter). Edits here are overwritten.
+[Unit]
+Description=node_exporter, this machine's metrics for Prometheus
+Documentation=https://github.com/prometheus/node_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=node_exporter
+Group=node_exporter
+ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ node_exporter_listen_address }}
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

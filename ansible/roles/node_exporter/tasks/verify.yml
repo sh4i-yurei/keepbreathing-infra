@@ -1,0 +1,33 @@
+---
+# Checks node_exporter is in the state the role claims, after it has been started. Skipped in
+# check mode, where nothing was installed or started.
+
+- name: verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: verify | It answers on its listen address with the pinned version
+      ansible.builtin.uri:
+        url: "http://{{ node_exporter_listen_address }}/metrics"
+        return_content: true
+      register: node_exporter_metrics
+      until: >-
+        node_exporter_metrics.status == 200 and
+        node_exporter_metrics.content is search('node_exporter_build_info\{[^}]*version="' ~ node_exporter_version ~ '"')
+      retries: 10
+      delay: 2
+
+    - name: verify | Read which account it runs as
+      ansible.builtin.command: ps -o user:32= -C node_exporter
+      register: node_exporter_user
+      changed_when: false
+
+    - name: verify | It runs as its own account, not root
+      ansible.builtin.assert:
+        that:
+          - node_exporter_user.stdout_lines | length > 0
+          - node_exporter_user.stdout_lines | unique == ['node_exporter']
+        fail_msg: >-
+          node_exporter is not running as node_exporter. Running as:
+          {{ node_exporter_user.stdout_lines | unique | join(', ') | default('nothing', true) }}.
+        quiet: true

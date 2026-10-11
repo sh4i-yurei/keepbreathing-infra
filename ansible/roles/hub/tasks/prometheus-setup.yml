@@ -1,0 +1,80 @@
+---
+# Monitoring and alerting step 3. Prometheus as a rootless Quadlet container under the hub's
+# container account, the same way as gatus-setup.yml. It reaches node_exporter and Gatus through the
+# hub's loopback (decision #24). Files are written as root and owned by that account; only the
+# systemd and Podman tasks run as the account itself.
+
+- name: prometheus-setup | Create the folders Prometheus and its Quadlet file live in
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/{{ item }}"
+    state: directory
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0700"
+  loop:
+    - .config
+    - .config/containers
+    - .config/containers/systemd
+    - .config/prometheus
+    - prometheus
+
+- name: prometheus-setup | Write Prometheus's configuration file
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/prometheus.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart prometheus
+
+- name: prometheus-setup | Write Prometheus's rules
+  ansible.builtin.copy:
+    src: prometheus-rules.yml
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/rules.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart prometheus
+
+- name: prometheus-setup | Write Prometheus's password for Alertmanager
+  ansible.builtin.template:
+    src: prometheus-alertmanager-password.j2
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/alertmanager-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart prometheus
+
+- name: prometheus-setup | Write Prometheus's Quadlet file
+  ansible.builtin.template:
+    src: prometheus.container.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/systemd/prometheus.container"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  notify:
+    - Reload systemd for the container account
+    - Restart prometheus
+
+- name: prometheus-setup | Download Prometheus's image into the container account's storage
+  containers.podman.podman_image:
+    name: "{{ hub_prometheus_image }}"
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: prometheus-setup | Run the handlers before making sure Prometheus is running
+  ansible.builtin.meta: flush_handlers
+
+- name: prometheus-setup | Make sure Prometheus is running
+  ansible.builtin.systemd_service:
+    name: prometheus.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"

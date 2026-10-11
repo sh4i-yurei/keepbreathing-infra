@@ -1,0 +1,4 @@
+---
+# The release's file and folder name, built from the version. Defined once here because the
+# download, the unpack and the install all use it.
+node_exporter_release: "node_exporter-{{ node_exporter_version }}.linux-amd64"

@@ -1,0 +1,53 @@
+---
+# Monitoring and alerting step 3. Checks Alertmanager is in the state the role claims, after it has
+# been started. Skipped in check mode, where nothing was written or started.
+
+- name: alertmanager-verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: alertmanager-verify | Wait for Alertmanager to refuse a request with no password
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_alertmanager_port }}/api/v2/status"
+        status_code: [401]
+      register: hub_alertmanager_anonymous
+      until: hub_alertmanager_anonymous is succeeded
+      retries: 15
+      delay: 2
+
+    - name: alertmanager-verify | Prometheus's password is accepted and clustering is off
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_alertmanager_port }}/api/v2/status"
+        url_username: "{{ hub_alertmanager_login.username }}"
+        url_password: "{{ hub_alertmanager_login.password }}"
+        force_basic_auth: true
+      vars:
+        hub_alertmanager_login: >-
+          {{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'alertmanager prometheus (hub)' | quote)
+          | from_json).login }}
+      register: hub_alertmanager_status
+      failed_when: >-
+        hub_alertmanager_status.status != 200
+        or hub_alertmanager_status.json.cluster.status != 'disabled'
+      no_log: true
+
+    - name: alertmanager-verify | Read the running Alertmanager container
+      containers.podman.podman_container_info:
+        name: alertmanager
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_alertmanager_container
+
+    - name: alertmanager-verify | The Alertmanager container is running the pinned image
+      ansible.builtin.assert:
+        that:
+          - hub_alertmanager_container.containers | length == 1
+          - hub_alertmanager_container.containers[0].State.Running
+          - hub_alertmanager_container.containers[0].ImageName == hub_alertmanager_image
+        fail_msg: >-
+          The alertmanager container is missing, stopped, or running an image other than the
+          pinned {{ hub_alertmanager_image }}. Running:
+          {{ (hub_alertmanager_container.containers | first | default({})).ImageName | default('nothing') }}.
+        quiet: true

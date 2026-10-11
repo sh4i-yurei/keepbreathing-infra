@@ -1,0 +1,7 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# Who may use Alertmanager's web interface and API (Monitoring and alerting decision #25). The
+# username and bcrypt hash come from the vault item "alertmanager prometheus (hub)".
+{% set alertmanager_vault = lookup('ansible.builtin.pipe', 'bw get item ' ~ 'alertmanager prometheus (hub)' | quote) | from_json %}
+{% set alertmanager_fields = alertmanager_vault.fields | items2dict(key_name='name', value_name='value') %}
+basic_auth_users:
+  {{ alertmanager_vault.login.username }}: "{{ alertmanager_fields.bcrypt }}"

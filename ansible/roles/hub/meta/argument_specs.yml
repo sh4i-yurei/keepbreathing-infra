@@ -30,6 +30,28 @@ argument_specs:
         default: 8081
         description: The port Gatus is published on, on 127.0.0.1 only.
 
+      hub_prometheus_image:
+        type: str
+        default: quay.io/prometheus/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+        description: Prometheus's container image, pinned by digest.
+      hub_prometheus_port:
+        type: int
+        default: 9090
+        description: The port Prometheus is published on, on 127.0.0.1 only.
+      hub_host_loopback:
+        type: str
+        default: 169.254.1.3
+        description: The address in Prometheus's container that reaches the hub's loopback.
+
+      hub_alertmanager_image:
+        type: str
+        default: quay.io/prometheus/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+        description: Alertmanager's container image, pinned by digest.
+      hub_alertmanager_port:
+        type: int
+        default: 9093
+        description: The port Alertmanager is published on, on 127.0.0.1 only.
+
   account:
     short_description: Create the account the hub's containers run under
     options:

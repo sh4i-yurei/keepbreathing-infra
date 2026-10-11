@@ -1,9 +1,9 @@
 ---
 # Monitoring and alerting step 1. Gatus as a rootless Quadlet container under the hub's
-# container account, the same way as ntfy.yml. Files are written as root and owned by that
+# container account, the same way as ntfy-setup.yml. Files are written as root and owned by that
 # account; only the systemd and Podman tasks run as the account itself.
 
-- name: gatus | Create the folders Gatus and its Quadlet file live in
+- name: gatus-setup | Create the folders Gatus and its Quadlet file live in
   ansible.builtin.file:
     path: "/home/{{ hub_container_user }}/{{ item }}"
     state: directory
@@ -17,7 +17,7 @@
     - .config/gatus
     - gatus
 
-- name: gatus | Write Gatus's configuration file
+- name: gatus-setup | Write Gatus's configuration file
   ansible.builtin.template:
     src: gatus-config.yaml.j2
     dest: "/home/{{ hub_container_user }}/.config/gatus/config.yaml"
@@ -28,7 +28,7 @@
   no_log: true
   notify: Restart gatus
 
-- name: gatus | Write Gatus's Quadlet file
+- name: gatus-setup | Write Gatus's Quadlet file
   ansible.builtin.template:
     src: gatus.container.j2
     dest: "/home/{{ hub_container_user }}/.config/containers/systemd/gatus.container"
@@ -39,7 +39,7 @@
     - Reload systemd for the container account
     - Restart gatus
 
-- name: gatus | Download Gatus's image into the container account's storage
+- name: gatus-setup | Download Gatus's image into the container account's storage
   containers.podman.podman_image:
     name: "{{ hub_gatus_image }}"
   become: true
@@ -47,10 +47,10 @@
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
 
-- name: gatus | Run the handlers before making sure Gatus is running
+- name: gatus-setup | Run the handlers before making sure Gatus is running
   ansible.builtin.meta: flush_handlers
 
-- name: gatus | Make sure Gatus is running
+- name: gatus-setup | Make sure Gatus is running
   ansible.builtin.systemd_service:
     name: gatus.service
     state: started

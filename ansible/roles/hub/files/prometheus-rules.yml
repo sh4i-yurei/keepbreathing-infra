@@ -1,0 +1,26 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# The one cause-based page (Monitoring and alerting decision #5): a filesystem that will run out of
+# space within a day. The expression is node_exporter's own NodeFilesystemSpaceFillingUp warning
+# rule from its node-mixin, with the mixin's default settings filled in.
+groups:
+  - name: disk
+    rules:
+      - alert: NodeFilesystemSpaceFillingUp
+        expr: |
+          (
+            node_filesystem_avail_bytes{job="node",fstype!="",mountpoint!=""}
+              / node_filesystem_size_bytes{job="node",fstype!="",mountpoint!=""} * 100 < 40
+          and
+            predict_linear(node_filesystem_avail_bytes{job="node",fstype!="",mountpoint!=""}[6h], 24*60*60) < 0
+          and
+            node_filesystem_readonly{job="node",fstype!="",mountpoint!=""} == 0
+          )
+        for: 1h
+        labels:
+          severity: page
+        annotations:
+          summary: Filesystem is predicted to run out of space within the next 24 hours.
+          description: >-
+            Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at
+            {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left and is
+            filling up.

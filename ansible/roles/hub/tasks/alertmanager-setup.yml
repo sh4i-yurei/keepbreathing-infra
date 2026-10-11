@@ -1,0 +1,70 @@
+---
+# Monitoring and alerting step 3. Alertmanager as a rootless Quadlet container under the hub's
+# container account, the same way as prometheus-setup.yml, with a password on its interface
+# (decision #25). Files are written as root and owned by that account; only the systemd and Podman
+# tasks run as the account itself.
+
+- name: alertmanager-setup | Create the folders Alertmanager and its Quadlet file live in
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/{{ item }}"
+    state: directory
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0700"
+  loop:
+    - .config
+    - .config/containers
+    - .config/containers/systemd
+    - .config/alertmanager
+    - alertmanager
+
+- name: alertmanager-setup | Write Alertmanager's routing configuration
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: "/home/{{ hub_container_user }}/.config/alertmanager/alertmanager.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart alertmanager
+
+- name: alertmanager-setup | Write Alertmanager's password file
+  ansible.builtin.template:
+    src: alertmanager-web.yml.j2
+    dest: "/home/{{ hub_container_user }}/.config/alertmanager/web.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+
+- name: alertmanager-setup | Write Alertmanager's Quadlet file
+  ansible.builtin.template:
+    src: alertmanager.container.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/systemd/alertmanager.container"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  notify:
+    - Reload systemd for the container account
+    - Restart alertmanager
+
+- name: alertmanager-setup | Download Alertmanager's image into the container account's storage
+  containers.podman.podman_image:
+    name: "{{ hub_alertmanager_image }}"
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: alertmanager-setup | Run the handlers before making sure Alertmanager is running
+  ansible.builtin.meta: flush_handlers
+
+- name: alertmanager-setup | Make sure Alertmanager is running
+  ansible.builtin.systemd_service:
+    name: alertmanager.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"

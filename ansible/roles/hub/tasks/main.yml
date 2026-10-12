@@ -6,6 +6,12 @@
 - name: Create the container account
   ansible.builtin.import_tasks: account.yml
 
+- name: Route the droplets' VPC through the tailnet, keeping the hub's own subnet direct
+  ansible.builtin.import_tasks: tailnet-routes-setup.yml
+
+- name: Check the hub's routing is in the state the role claims
+  ansible.builtin.import_tasks: tailnet-routes-verify.yml
+
 - name: Run ntfy
   ansible.builtin.import_tasks: ntfy-setup.yml
 

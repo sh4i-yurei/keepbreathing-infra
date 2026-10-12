@@ -1,0 +1,30 @@
+---
+# Monitoring and alerting step 5. Checks the hub keeps its own subnet on the main table and reaches
+# the droplets' VPC through the tailnet. Skipped in check mode, where nothing was changed.
+
+- name: tailnet-routes-verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: tailnet-routes-verify | Read the priority 2500 rule and the routes the kernel would pick
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - ip rule show priority 2500
+        - ip route get {{ hostvars['web'].ansible_host }}
+        - ip route get {{ ansible_default_ipv4.gateway }}
+      register: hub_route_checks
+      changed_when: false
+
+    - name: tailnet-routes-verify | The hub's subnet stays on main and the VPC goes through the tailnet
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('to ' ~ ansible_default_ipv4.network ~ '/' ~ ansible_default_ipv4.prefix ~ ' lookup main')
+            in hub_route_checks.results[0].stdout
+          - "'dev tailscale0' in hub_route_checks.results[1].stdout"
+          - "('dev ' ~ ansible_default_ipv4.interface) in hub_route_checks.results[2].stdout"
+        fail_msg: >-
+          Routing is not as the role claims. Rule 2500: {{ hub_route_checks.results[0].stdout }}.
+          Route to web: {{ hub_route_checks.results[1].stdout }}.
+          Route to the gateway: {{ hub_route_checks.results[2].stdout }}.
+        quiet: true

@@ -9,6 +9,7 @@ Exec=serve
 PublishPort=127.0.0.1:{{ hub_ntfy_port }}:80
 Volume=/home/{{ hub_container_user }}/ntfy:/var/lib/ntfy:Z
 Volume=/home/{{ hub_container_user }}/.config/ntfy/server.yml:/etc/ntfy/server.yml:ro,Z
+Volume=/home/{{ hub_container_user }}/.config/ntfy/templates:/etc/ntfy/templates:ro,Z
 
 [Service]
 Restart=always

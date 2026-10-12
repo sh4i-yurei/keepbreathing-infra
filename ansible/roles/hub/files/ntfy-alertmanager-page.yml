@@ -1,0 +1,32 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# ntfy v2.29.0's built-in server/templates/alertmanager.yml, with priority 5 added (Monitoring and
+# alerting decision #27). When hub_ntfy_version changes, compare this with ntfy's built-in template
+# at the new version, then set hub_ntfy_alertmanager_template_from to match.
+title: |
+  {{- if eq .status "firing" }}
+  🚨 Alert: {{ (first .alerts).labels.alertname }}
+  {{- else if eq .status "resolved" }}
+  ✅ Resolved: {{ (first .alerts).labels.alertname }}
+  {{- else }}
+  {{ fail "Unsupported Alertmanager status." }}
+  {{- end }}
+message: |
+  Status: {{ .status | title }}
+  Receiver: {{ .receiver }}
+
+  {{- range .alerts }}
+  Alert: {{ .labels.alertname }}
+  Instance: {{ .labels.instance }}
+  Severity: {{ .labels.severity }}
+  Starts at: {{ .startsAt }}
+  {{ if and .endsAt (ne .endsAt "0001-01-01T00:00:00Z") }}Ends at: {{ .endsAt }}{{ end }}
+  {{- if .annotations.summary }}
+  Summary: {{ .annotations.summary }}
+  {{- end }}
+  {{- if .annotations.description }}
+  Description: {{ .annotations.description }}
+  {{- end }}
+  Source: {{ .generatorURL }}
+
+  {{ end }}
+priority: "5"

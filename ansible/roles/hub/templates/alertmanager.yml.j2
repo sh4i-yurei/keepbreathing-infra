@@ -1,8 +1,20 @@
 # Managed by Ansible (roles/hub). Edits here are overwritten.
-# Step 3 only proves Alertmanager receives Prometheus's alerts, so every alert goes to a receiver
-# with no destination. Step 4 points it at ntfy (Monitoring and alerting decision #14).
+# Alerts labelled severity="page" go to ntfy's pages topic through alertmanager-page, the role's
+# copy of ntfy's alertmanager template with priority 5 (Monitoring and alerting decisions #14,
+# #22 and #27).
+# Everything else goes to a receiver with no destination.
 route:
   receiver: nowhere
+  routes:
+    - matchers:
+        - severity="page"
+      receiver: ntfy-pages
 
 receivers:
   - name: nowhere
+  - name: ntfy-pages
+    webhook_configs:
+      - url: "https://ntfy.tail4cf2f3.ts.net/pages?template=alertmanager-page"
+        http_config:
+          authorization:
+            credentials_file: /etc/alertmanager/ntfy-token

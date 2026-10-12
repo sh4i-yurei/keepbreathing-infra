@@ -11,6 +11,14 @@ argument_specs:
         type: str
         default: docker.io/binwiederhier/ntfy@sha256:4c599cf0818965782f93f652bd843e92714992e84d6b88ad17713dc0951cda1f
         description: ntfy's container image, pinned by digest.
+      hub_ntfy_version:
+        type: str
+        default: "2.29.0"
+        description: ntfy's version, matching the digest in hub_ntfy_image.
+      hub_ntfy_alertmanager_template_from:
+        type: str
+        default: "2.29.0"
+        description: The ntfy version files/ntfy-alertmanager-page.yml was copied from.
       hub_ntfy_port:
         type: int
         default: 8080

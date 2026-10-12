@@ -37,6 +37,17 @@
   diff: false
   no_log: true
 
+- name: alertmanager-setup | Write Alertmanager's ntfy token
+  ansible.builtin.template:
+    src: alertmanager-ntfy-token.j2
+    dest: "/home/{{ hub_container_user }}/.config/alertmanager/ntfy-token"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart alertmanager
+
 - name: alertmanager-setup | Write Alertmanager's Quadlet file
   ansible.builtin.template:
     src: alertmanager.container.j2

@@ -1,0 +1,46 @@
+---
+# Monitoring and alerting decision #34. The Podman exporter as a rootless Quadlet container under the
+# hub's container account, reading that account's Podman socket.
+
+- name: podman-exporter-setup | Turn on the container account's Podman socket
+  ansible.builtin.systemd_service:
+    name: podman.socket
+    state: started
+    enabled: true
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: podman-exporter-setup | Write the Podman exporter's Quadlet file
+  ansible.builtin.template:
+    src: podman-exporter.container.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/systemd/podman-exporter.container"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  notify:
+    - Reload systemd for the container account
+    - Restart podman-exporter
+
+- name: podman-exporter-setup | Download the Podman exporter's image into the container account's storage
+  containers.podman.podman_image:
+    name: "{{ hub_podman_exporter_image }}"
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: podman-exporter-setup | Run the handlers before making sure the Podman exporter is running
+  ansible.builtin.meta: flush_handlers
+
+- name: podman-exporter-setup | Make sure the Podman exporter is running
+  ansible.builtin.systemd_service:
+    name: podman-exporter.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"

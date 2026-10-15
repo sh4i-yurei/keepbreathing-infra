@@ -30,6 +30,12 @@
 - name: Check Alertmanager is in the state the role claims
   ansible.builtin.import_tasks: alertmanager-verify.yml
 
+- name: Run the Podman exporter
+  ansible.builtin.import_tasks: podman-exporter-setup.yml
+
+- name: Check the Podman exporter is in the state the role claims
+  ansible.builtin.import_tasks: podman-exporter-verify.yml
+
 - name: Run Prometheus
   ansible.builtin.import_tasks: prometheus-setup.yml
 

@@ -1,0 +1,32 @@
+---
+# Monitoring and alerting decision #34. Checks the Podman exporter reports, by name, the containers set
+# up before it as running, and no container in any other state. It runs before Prometheus and Grafana
+# are set up, so on a fresh hub those two are covered by their own checks and ContainerNotRunning.
+# Skipped in check mode, where nothing was started.
+
+- name: podman-exporter-verify | Only on a real run
+  when: not ansible_check_mode
+  vars:
+    hub_expected_containers: [alertmanager, gatus, ntfy, podman-exporter]
+
+  block:
+    - name: podman-exporter-verify | The containers set up so far are reported as running
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_podman_exporter_port }}/metrics"
+        return_content: true
+      register: hub_podman_metrics
+      until: >-
+        hub_podman_metrics.status == 200 and
+        (hub_expected_containers | reject('in', hub_podman_metrics.content
+        | regex_findall('podman_container_state\\{[^}]*name="([^"]+)"[^}]*\\} 2')) | list) == []
+      retries: 20
+      delay: 6
+
+    - name: podman-exporter-verify | No container is in any state other than running
+      ansible.builtin.assert:
+        that:
+          - >-
+            hub_podman_metrics.content | regex_findall('podman_container_state\\{[^}]*\\} (?!2\\b)\\S+')
+            | length == 0
+        fail_msg: The Podman exporter reports a hub container that is not running.
+        quiet: true

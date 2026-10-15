@@ -25,6 +25,13 @@
       delay: 2
       no_log: "{{ node_exporter_password_set | bool }}"
 
+    - name: verify | It reports systemd unit states, which the failed-service alerts read
+      ansible.builtin.assert:
+        that:
+          - node_exporter_metrics.content is search('node_systemd_unit_state\\{')
+        fail_msg: node_exporter is not reporting node_systemd_unit_state; the systemd collector is off.
+        quiet: true
+
     - name: verify | Without the password it is refused
       ansible.builtin.uri:
         url: "{{ node_exporter_url }}"

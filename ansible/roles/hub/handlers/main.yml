@@ -51,6 +51,16 @@
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
 
+- name: Restart podman-exporter
+  ansible.builtin.systemd_service:
+    name: podman-exporter.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
 - name: Restart grafana
   ansible.builtin.systemd_service:
     name: grafana.service

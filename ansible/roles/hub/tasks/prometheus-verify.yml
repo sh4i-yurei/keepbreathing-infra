@@ -20,7 +20,7 @@
       register: hub_prometheus_targets
       until: >-
         (hub_prometheus_targets.json.data.activeTargets | map(attribute='scrapePool') | sort)
-        == (['alertmanager', 'gatus', 'node', 'ntfy', 'prometheus'] + groups['droplets'] | map('regex_replace', '^', 'node-') | list) | sort
+        == (['alertmanager', 'gatus', 'node', 'ntfy', 'podman', 'prometheus'] + groups['droplets'] | map('regex_replace', '^', 'node-') | list) | sort
         and (hub_prometheus_targets.json.data.activeTargets | map(attribute='health') | unique)
         == ['up']
       retries: 15
@@ -57,7 +57,7 @@
             (hub_prometheus_status.results[0].json.data.groups | map(attribute='rules') | flatten
             | map(attribute='name') | list)
           - >-
-            (['TargetDown', 'NodeFilesystemAlmostOutOfSpace', 'PrometheusRuleFailures',
+            (['TargetDown', 'ContainerNotRunning', 'NodeFilesystemAlmostOutOfSpace', 'PrometheusRuleFailures',
             'AlertmanagerFailedToSendAlerts'] | difference(hub_prometheus_status.results[0].json.data.groups
             | map(attribute='rules') | flatten | map(attribute='name') | list)) == []
           - >-

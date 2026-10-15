@@ -38,3 +38,18 @@ groups:
           description: >-
             Prometheus has not been able to scrape {{ $labels.job }} on {{ $labels.instance }} for 5
             minutes.
+
+  # A hub container that is not running for 5 minutes pages (Monitoring and alerting decision #34).
+  # 2 is running in podman_container_state.
+  - name: containers
+    rules:
+      - alert: ContainerNotRunning
+        expr: podman_container_state{job="podman"} != 2
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: A hub container has not been running for 5 minutes.
+          description: >-
+            The {{ $labels.name }} container on the hub is in state {{ $value }} (2 is running;
+            3 stopped, 5 exited).

@@ -108,6 +108,20 @@
   no_log: true
   notify: Restart prometheus
 
+- name: prometheus-setup | Write Prometheus's password for each tailnet machine's node_exporter
+  ansible.builtin.copy:
+    content: "{{ (lookup('ansible.builtin.pipe', 'bw get password ' ~ ('node_exporter prometheus (' ~ item.name ~ ')') | quote)) }}"
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/node-{{ item.name }}-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  loop: "{{ hub_node_exporter_tailnet_hosts }}"
+  loop_control:
+    label: "{{ item.name }}"
+  diff: false
+  no_log: true
+  notify: Restart prometheus
+
 - name: prometheus-setup | Write Prometheus's Quadlet file
   ansible.builtin.template:
     src: prometheus.container.j2

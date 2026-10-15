@@ -68,6 +68,18 @@ argument_specs:
         default: 9093
         description: The port Alertmanager is published on, on 127.0.0.1 only.
 
+      hub_node_exporter_tailnet_hosts:
+        type: list
+        elements: dict
+        description: Machines whose node_exporter the hub scrapes over the tailnet with a password.
+        options:
+          name:
+            type: str
+            required: true
+          address:
+            type: str
+            required: true
+
       hub_podman_exporter_image:
         type: str
         default: quay.io/navidys/prometheus-podman-exporter@sha256:ddaa9003e86f435f2d958ab68041959e4d2bb290a350a2649a123c449db032db

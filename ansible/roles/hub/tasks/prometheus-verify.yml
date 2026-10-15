@@ -20,7 +20,8 @@
       register: hub_prometheus_targets
       until: >-
         (hub_prometheus_targets.json.data.activeTargets | map(attribute='scrapePool') | sort)
-        == (['alertmanager', 'gatus', 'node', 'ntfy', 'podman', 'prometheus'] + groups['droplets'] | map('regex_replace', '^', 'node-') | list) | sort
+        == (['alertmanager', 'gatus', 'node', 'ntfy', 'podman', 'prometheus'] + (groups['droplets']
+        + (hub_node_exporter_tailnet_hosts | map(attribute='name') | list)) | map('regex_replace', '^', 'node-') | list) | sort
         and (hub_prometheus_targets.json.data.activeTargets | map(attribute='health') | unique)
         == ['up']
       retries: 15

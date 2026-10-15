@@ -70,3 +70,19 @@ scrape_configs:
       - target_label: job
         replacement: node
 {% endfor %}
+{% for host in hub_node_exporter_tailnet_hosts %}
+
+  # node_exporter on {{ host.name }}, over the tailnet with its own password (decision #30).
+  # Relabelled job="node", the job node_exporter's rules select.
+  - job_name: node-{{ host.name }}
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/node-{{ host.name }}-password
+    static_configs:
+      - targets: ["{{ host.address }}"]
+        labels:
+          instance: {{ host.name }}
+    relabel_configs:
+      - target_label: job
+        replacement: node
+{% endfor %}

@@ -58,6 +58,16 @@ hub_alertmanager_image: quay.io/prometheus/alertmanager@sha256:e9733bafb1bdef9b0
 # The port Alertmanager is published on, on 127.0.0.1 only. It requires a password (decision #25).
 hub_alertmanager_port: 9093
 
+# Machines whose node_exporter the hub scrapes over the tailnet, with a password and plain HTTP,
+# because the tailnet encrypts the traffic (Monitoring and alerting decision #30). Each has a vault
+# item named "node_exporter prometheus (<name>)". vaultserv is installed by playbooks/node-exporter.yml,
+# almaserv by hand.
+hub_node_exporter_tailnet_hosts:
+  - name: vaultserv
+    address: "100.65.221.62:9100"
+  - name: almaserv
+    address: "100.116.219.6:9100"
+
 # The Podman exporter's image, pinned to the digest of the v2.0.0 tag on Quay (Monitoring and alerting
 # decision #34). The digest fixes the exact image; the version is only readable from this comment.
 hub_podman_exporter_image: quay.io/navidys/prometheus-podman-exporter@sha256:ddaa9003e86f435f2d958ab68041959e4d2bb290a350a2649a123c449db032db

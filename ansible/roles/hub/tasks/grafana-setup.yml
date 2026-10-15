@@ -58,18 +58,45 @@
 # copied in after Grafana starts would get config_home_t, which the container cannot read. The folder
 # is mounted with :z, the shared container_file_t at s0, so labelling each file the same way makes it
 # readable straight away and matches what Podman sets when the container starts.
+# Each subfolder of files/dashboards is a Grafana folder. hub_grafana_dashboards, in vars/main.yml,
+# is every dashboard file's path relative to files/dashboards.
+- name: grafana-setup | Create the dashboard folders
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/.config/grafana/dashboards/{{ item }}"
+    state: directory
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0700"
+    setype: container_file_t
+    selevel: s0
+  loop: "{{ hub_grafana_dashboards | map('dirname') | select | unique | list }}"
+
 - name: grafana-setup | Copy the dashboards
   ansible.builtin.copy:
-    src: "{{ item }}"
-    dest: "/home/{{ hub_container_user }}/.config/grafana/dashboards/{{ item | basename }}"
+    src: "dashboards/{{ item }}"
+    dest: "/home/{{ hub_container_user }}/.config/grafana/dashboards/{{ item }}"
     owner: "{{ hub_container_user }}"
     group: "{{ hub_container_user }}"
     mode: "0600"
     setype: container_file_t
     selevel: s0
-  loop: "{{ query('ansible.builtin.fileglob', 'dashboards/*.json') }}"
-  loop_control:
-    label: "{{ item | basename }}"
+  loop: "{{ hub_grafana_dashboards }}"
+
+- name: grafana-setup | Find the dashboard files on the hub
+  ansible.builtin.find:
+    paths: "/home/{{ hub_container_user }}/.config/grafana/dashboards"
+    patterns: "*.json"
+    recurse: true
+  register: hub_grafana_dashboards_on_hub
+
+# A dashboard moved or deleted in the repo leaves its old file behind otherwise, which Grafana would
+# keep loading.
+- name: grafana-setup | Remove dashboard files the repo no longer has
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ hub_grafana_dashboards_on_hub.files | map(attribute='path') | list }}"
+  when: (item | regex_replace('^.*/\\.config/grafana/dashboards/', '')) not in hub_grafana_dashboards
 
 - name: grafana-setup | Make the folder the plugin downloads are kept in
   ansible.builtin.file:

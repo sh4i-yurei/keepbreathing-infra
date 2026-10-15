@@ -2393,8 +2393,9 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "ntfy App",
+  "title": "Notification Delivery",
   "uid": "TO6HgexVz",
   "version": 24,
-  "weekStart": ""
+  "weekStart": "",
+  "description": "ntfy: messages published and cached, subscribers, HTTP errors and publish duration."
 }

@@ -8,3 +8,16 @@ node_exporter_sha256: b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f
 # The address and port node_exporter listens on. The hub keeps it on its loopback, where only
 # Prometheus reaches it (decision #24).
 node_exporter_listen_address: "127.0.0.1:9100"
+
+# The bcrypt hash of the password Prometheus scrapes with, as the user prometheus. Empty means
+# node_exporter asks for no password.
+node_exporter_basic_auth_hash: ""
+# The password itself, which only the role's own checks use. Set it together with the hash.
+node_exporter_basic_auth_password: ""
+
+# Whether node_exporter serves HTTPS, with a self-signed certificate made on the machine for the
+# address in node_exporter_listen_address (Monitoring and alerting decisions #26 and #29).
+node_exporter_tls: false
+
+# The addresses firewalld lets reach node_exporter's port. Empty means the role adds no rule.
+node_exporter_allowed_sources: []

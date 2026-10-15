@@ -1,0 +1,13 @@
+---
+# node_exporter on the droplets serves HTTPS with a self-signed certificate and asks for a
+# scrape password (Monitoring and alerting decisions #26, #29 and #32).
+node_exporter_tls: true
+
+# The scrape password and its bcrypt hash, read from the vault at run time.
+# Convention: one Login item per droplet, named "node_exporter prometheus (<inventory name>)",
+# with the hash in a hidden field named "bcrypt".
+node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
+  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
+node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
+  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
+  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"

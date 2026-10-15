@@ -47,6 +47,39 @@
   no_log: true
   notify: Restart prometheus
 
+# The droplets' node_exporter certificates are public and readable without sudo, so they are read
+# as the login account. Reading them over SSH from each droplet means Prometheus trusts what is on
+# that machine, not whatever answers on the network (decision #29). become is off because
+# become-password.yml stores the hub's sudo password as a fact, which outranks the droplet's own.
+- name: prometheus-setup | Read each droplet's node_exporter certificate
+  ansible.builtin.slurp:
+    src: /etc/node_exporter/node_exporter.crt
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['droplets'] }}"
+  become: false
+  register: hub_droplet_certificates
+
+- name: prometheus-setup | Write the droplets' certificates into the one file Prometheus trusts
+  ansible.builtin.copy:
+    content: "{{ hub_droplet_certificates.results | map(attribute='content') | map('b64decode') | join('') }}"
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/droplets.crt"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart prometheus
+
+- name: prometheus-setup | Write Prometheus's password for each droplet's node_exporter
+  ansible.builtin.copy:
+    content: "{{ hostvars[item].node_exporter_basic_auth_password }}"
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/node-{{ item }}-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  loop: "{{ groups['droplets'] }}"
+  diff: false
+  no_log: true
+  notify: Restart prometheus
+
 - name: prometheus-setup | Write Prometheus's Quadlet file
   ansible.builtin.template:
     src: prometheus.container.j2

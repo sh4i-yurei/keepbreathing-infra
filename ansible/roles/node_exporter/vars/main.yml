@@ -2,3 +2,7 @@
 # The release's file and folder name, built from the version. Defined once here because the
 # download, the unpack and the install all use it.
 node_exporter_release: "node_exporter-{{ node_exporter_version }}.linux-amd64"
+
+# Whether node_exporter gets a web config file: true when it serves HTTPS, asks for a password,
+# or both.
+node_exporter_web_config: "{{ node_exporter_tls or node_exporter_basic_auth_hash | length > 0 }}"

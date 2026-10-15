@@ -48,6 +48,10 @@
   become: true
   notify: Restart node_exporter
 
+- name: Write the web config, and the key and certificate for HTTPS
+  ansible.builtin.import_tasks: web-config.yml
+  when: node_exporter_web_config | bool
+
 - name: Write the systemd unit
   ansible.builtin.template:
     src: node_exporter.service.j2
@@ -59,6 +63,18 @@
   notify:
     - Reload systemd for node_exporter
     - Restart node_exporter
+
+# Every interface on the droplets is in the public zone, and control's tailscale0, in no zone,
+# falls into the default zone, also public (read on all three on 2026-10-14).
+- name: Let the scrape addresses reach its port through firewalld
+  ansible.posix.firewalld:
+    rich_rule: 'rule family="ipv4" source address="{{ item }}" port port="{{ node_exporter_listen_address.split(":")[-1] }}" protocol="tcp" accept'
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ node_exporter_allowed_sources }}"
+  become: true
 
 - name: Run the handlers before making sure it is running
   ansible.builtin.meta: flush_handlers

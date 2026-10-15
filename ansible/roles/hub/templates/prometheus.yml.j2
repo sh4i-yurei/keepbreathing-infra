@@ -28,3 +28,22 @@ scrape_configs:
   - job_name: gatus
     static_configs:
       - targets: ["{{ hub_host_loopback }}:{{ hub_gatus_port }}"]
+{% for host in groups['droplets'] %}
+
+  # node_exporter on {{ host }}, over HTTPS with its own password (decisions #26, #29 and #32).
+  # Relabelled job="node", the job node_exporter's rules select.
+  - job_name: node-{{ host }}
+    scheme: https
+    tls_config:
+      ca_file: /etc/prometheus/droplets.crt
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/node-{{ host }}-password
+    static_configs:
+      - targets: ["{{ hostvars[host].node_exporter_listen_address }}"]
+        labels:
+          instance: {{ host }}
+    relabel_configs:
+      - target_label: job
+        replacement: node
+{% endfor %}

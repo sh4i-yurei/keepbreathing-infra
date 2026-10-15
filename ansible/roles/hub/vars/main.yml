@@ -1,0 +1,7 @@
+---
+# Every dashboard file's path relative to files/dashboards, at any depth; each subfolder is a Grafana
+# folder (Monitoring and alerting decisions #40 and #45). Listed with find on the controller, because
+# the fileglob lookup does not expand a wildcard in a folder name.
+hub_grafana_dashboards: >-
+  {{ lookup('ansible.builtin.pipe', 'find ' ~ (role_path ~ '/files/dashboards') | quote ~ " -name '*.json'").splitlines()
+  | map('regex_replace', '^.*/files/dashboards/', '') | sort }}

@@ -15528,9 +15528,10 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Node Exporter Full",
+  "title": "Host Detail",
   "uid": "rYdddlPWk",
   "version": 101,
   "weekStart": "",
-  "gnetId": 1860
+  "gnetId": 1860,
+  "description": "Full metrics for one host, chosen from the menu at the top: CPU, memory, disks, filesystems, network, systemd and more."
 }

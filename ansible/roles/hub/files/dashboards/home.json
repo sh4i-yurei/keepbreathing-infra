@@ -1,7 +1,7 @@
 {
   "uid": "hub-home",
-  "title": "Hub",
-  "description": "The page Grafana opens on: firing and pending alerts, every dashboard, and whether each machine and uptime check is up.",
+  "title": "Operations Overview",
+  "description": "Active alerts, and the status of every host, service check and hub container. Grafana opens on this page.",
   "editable": false,
   "schemaVersion": 41,
   "time": {

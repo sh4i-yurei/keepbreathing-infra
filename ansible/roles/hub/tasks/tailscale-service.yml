@@ -1,0 +1,26 @@
+---
+# Monitoring and alerting decision #18. Makes the hub serve one Tailscale Service: HTTPS on 443 in
+# front of plain HTTP on the hub's loopback. Imported once per Service, with hub_service_name and
+# hub_service_port. The Service itself is defined in the Tailscale console and granted and
+# auto-approved in policy.hujson; this file only makes the hub serve it.
+
+- name: tailscale-service | Read the hub's Tailscale serve state for {{ hub_service_name }}
+  ansible.builtin.command: tailscale serve status --json
+  register: hub_serve_status
+  changed_when: false
+  check_mode: false
+
+# Notification service decision #19. A serve settings file cannot express HTTPS on 443 in front of
+# plain HTTP, so the role runs the serve command itself, and only when the hub is not already
+# serving the Service that way. Clearing first replaces any other setting on 443.
+- name: tailscale-service | Serve the Service when the hub is not already doing so, {{ hub_service_name }}
+  ansible.builtin.shell: >-
+    tailscale serve clear svc:{{ hub_service_name }} &&
+    tailscale serve --yes --service=svc:{{ hub_service_name }} --https=443 127.0.0.1:{{ hub_service_port }}
+  vars:
+    hub_serve: "{{ (hub_serve_status.stdout | from_json).Services['svc:' ~ hub_service_name] | default({}) }}"
+  when: >-
+    not (hub_serve.TCP['443'].HTTPS | default(false))
+    or (hub_serve.Web[hub_service_name ~ '.' ~ hub_tailnet_domain ~ ':443'].Handlers['/'].Proxy | default(''))
+    != 'http://127.0.0.1:' ~ hub_service_port
+  changed_when: true

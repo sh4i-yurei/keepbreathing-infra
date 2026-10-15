@@ -48,18 +48,23 @@
         - status/flags
       register: hub_prometheus_status
 
-    - name: prometheus-verify | The disk-full rule is loaded and retention is 15 days and 8 GB
+    - name: prometheus-verify | The disk-full and mixin rules are loaded and retention is 15 days and 8 GB
+
       ansible.builtin.assert:
         that:
           - >-
             'NodeFilesystemSpaceFillingUp' in
             (hub_prometheus_status.results[0].json.data.groups | map(attribute='rules') | flatten
             | map(attribute='name') | list)
+          - >-
+            'instance:node_cpu_utilisation:rate5m' in
+            (hub_prometheus_status.results[0].json.data.groups | map(attribute='rules') | flatten
+            | map(attribute='name') | list)
           - hub_prometheus_status.results[1].json.data['storage.tsdb.retention.time'] == '15d'
           - hub_prometheus_status.results[1].json.data['storage.tsdb.retention.size'] == '8GiB'
         fail_msg: >-
-          Prometheus is missing the disk-full rule or is not running with 15 days and 8 GB of
-          retention.
+          Prometheus is missing the disk-full rule or node_exporter's mixin recording rules, or is
+          not running with 15 days and 8 GB of retention.
         quiet: true
 
     - name: prometheus-verify | Read the running Prometheus container

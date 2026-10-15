@@ -36,6 +36,18 @@
     mode: "0600"
   notify: Restart prometheus
 
+# node_exporter's mixin recording rules, copied unchanged from monitoring.mixins.dev at commit
+# 8607c0eb5d9de22d796dd092ee4c9348eec3d6bb (SHA-256 4dce2ad9...). The USE Method / Cluster dashboard
+# reads them (Monitoring and alerting decision #40).
+- name: prometheus-setup | Write node_exporter's mixin recording rules
+  ansible.builtin.copy:
+    src: node-mixin-rules.yml
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/node-mixin-rules.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart prometheus
+
 - name: prometheus-setup | Write Prometheus's password for Alertmanager
   ansible.builtin.template:
     src: prometheus-alertmanager-password.j2

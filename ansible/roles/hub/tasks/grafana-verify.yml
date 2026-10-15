@@ -1,0 +1,162 @@
+---
+# Monitoring and alerting step 8a. Checks Grafana is in the state the role claims, after it has been
+# started (decisions #40 and #41). Skipped in check mode, where nothing was written or started.
+
+- name: grafana-verify | Only on a real run
+  when: not ansible_check_mode
+  vars:
+    hub_grafana_url: "http://127.0.0.1:{{ hub_grafana_port }}"
+    hub_grafana_admin_password: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'grafana admin (hub)' | quote) | from_json).login.password }}"
+
+  block:
+    - name: grafana-verify | Wait for Grafana to report itself healthy
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/health"
+      register: hub_grafana_health
+      until: hub_grafana_health.status == 200 and hub_grafana_health.json.database == 'ok'
+      retries: 30
+      delay: 2
+
+    - name: grafana-verify | Grafana runs the pinned version
+      ansible.builtin.assert:
+        that:
+          - hub_grafana_health.json.version == hub_grafana_version
+        fail_msg: >-
+          Grafana reports version {{ hub_grafana_health.json.version }}, not the pinned
+          {{ hub_grafana_version }}.
+        quiet: true
+
+    - name: grafana-verify | Anonymous access is refused
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/search"
+        status_code: 401
+
+    - name: grafana-verify | Try the vault's admin password
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/user"
+        url_username: admin
+        url_password: "{{ hub_grafana_admin_password }}"
+        force_basic_auth: true
+        status_code: [200, 401]
+      register: hub_grafana_login
+      no_log: true
+
+    # Grafana applies GF_SECURITY_ADMIN_PASSWORD__FILE only when it first creates its database, so
+    # the vault is made the source of truth here (decision #41).
+    - name: grafana-verify | Reset Grafana's admin password to the vault's when they differ
+      ansible.builtin.command:
+        argv:
+          - podman
+          - exec
+          - -i
+          - grafana
+          - grafana
+          - cli
+          - --homepath=/usr/share/grafana
+          - --config=/etc/grafana/grafana.ini
+          - admin
+          - reset-admin-password
+          - --password-from-stdin
+        stdin: "{{ hub_grafana_admin_password }}"
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      when: hub_grafana_login.status == 401
+      changed_when: true
+      no_log: true
+
+    - name: grafana-verify | The vault's admin password logs in
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/user"
+        url_username: admin
+        url_password: "{{ hub_grafana_admin_password }}"
+        force_basic_auth: true
+      register: hub_grafana_user
+      failed_when: hub_grafana_user.status != 200 or hub_grafana_user.json.login != 'admin'
+      no_log: true
+
+    - name: grafana-verify | Each plugin is loaded at its pinned version and signed by Grafana
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/plugins/{{ item.id }}/settings"
+        url_username: admin
+        url_password: "{{ hub_grafana_admin_password }}"
+        force_basic_auth: true
+      loop: "{{ hub_grafana_plugins }}"
+      loop_control:
+        label: "{{ item.id }} {{ item.version }}"
+      register: hub_grafana_plugin_settings
+      failed_when: >-
+        hub_grafana_plugin_settings.status != 200
+        or hub_grafana_plugin_settings.json.info.version != item.version
+        or hub_grafana_plugin_settings.json.signature != 'valid'
+        or hub_grafana_plugin_settings.json.signatureType != 'grafana'
+
+    - name: grafana-verify | Grafana reaches Prometheus
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/datasources/uid/prometheus/health"
+        url_username: admin
+        url_password: "{{ hub_grafana_admin_password }}"
+        force_basic_auth: true
+      register: hub_grafana_prometheus_health
+      failed_when: >-
+        hub_grafana_prometheus_health.status != 200
+        or hub_grafana_prometheus_health.json.status != 'OK'
+
+    # Alertmanager is a browser-only data source with no server-side health check (its plugin.json
+    # has no "backend"), so this asks through Grafana's data source proxy, the way its panels do.
+    - name: grafana-verify | Grafana reaches Alertmanager with the data source's password
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/datasources/proxy/uid/alertmanager/api/v2/status"
+        url_username: admin
+        url_password: "{{ hub_grafana_admin_password }}"
+        force_basic_auth: true
+      register: hub_grafana_alertmanager_status
+      failed_when: >-
+        hub_grafana_alertmanager_status.status != 200
+        or hub_grafana_alertmanager_status.json.cluster.status != 'disabled'
+
+    - name: grafana-verify | Each dashboard in files/dashboards is loaded
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/dashboards/uid/{{ (lookup('ansible.builtin.file', item) | from_json).uid }}"
+        url_username: admin
+        url_password: "{{ hub_grafana_admin_password }}"
+        force_basic_auth: true
+      loop: "{{ query('ansible.builtin.fileglob', 'dashboards/*.json') }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      register: hub_grafana_dashboards
+      until: hub_grafana_dashboards.status == 200
+      retries: 10
+      delay: 3
+
+    - name: grafana-verify | The overview's recording rules cover every machine
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/query?query=count(instance:node_num_cpu:sum)"
+      register: hub_grafana_overview_machines
+      until: >-
+        (hub_grafana_overview_machines.json.data.result | length) == 1
+        and (hub_grafana_overview_machines.json.data.result[0].value[1] | int)
+        == (groups['droplets'] | length) + 1
+      retries: 10
+      delay: 6
+
+    - name: grafana-verify | Read the running Grafana container
+      containers.podman.podman_container_info:
+        name: grafana
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_grafana_container
+
+    - name: grafana-verify | The Grafana container is running the pinned image
+      ansible.builtin.assert:
+        that:
+          - hub_grafana_container.containers | length == 1
+          - hub_grafana_container.containers[0].State.Running
+          - hub_grafana_container.containers[0].ImageName == hub_grafana_image
+        fail_msg: >-
+          The grafana container is missing, stopped, or running an image other than the pinned
+          {{ hub_grafana_image }}.
+        quiet: true

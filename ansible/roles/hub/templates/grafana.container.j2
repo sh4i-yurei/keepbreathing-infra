@@ -10,7 +10,7 @@ UserNS=keep-id:uid=472,gid=0
 PublishPort=127.0.0.1:{{ hub_grafana_port }}:3000
 Volume=/home/{{ hub_container_user }}/.config/grafana/datasources:/etc/grafana/provisioning/datasources:ro,Z
 Volume=/home/{{ hub_container_user }}/.config/grafana/providers:/etc/grafana/provisioning/dashboards:ro,Z
-Volume=/home/{{ hub_container_user }}/.config/grafana/dashboards:/etc/grafana/dashboards:ro,Z
+Volume=/home/{{ hub_container_user }}/.config/grafana/dashboards:/etc/grafana/dashboards:ro,z
 Volume=/home/{{ hub_container_user }}/.config/grafana/plugins:/var/lib/grafana-plugins:ro,Z
 Volume=/home/{{ hub_container_user }}/.config/grafana/secrets:/etc/grafana/secrets:ro,Z
 Volume=/home/{{ hub_container_user }}/grafana:/var/lib/grafana:Z

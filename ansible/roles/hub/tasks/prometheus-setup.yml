@@ -48,6 +48,22 @@
     mode: "0600"
   notify: Restart prometheus
 
+# The node_exporter, Prometheus and Alertmanager mixins' alert rules, copied unchanged from
+# monitoring.mixins.dev at the same commit (decisions #35 and #42). critical goes to pages and warning
+# to tickets in Alertmanager's routing.
+- name: prometheus-setup | Write the mixins' alert rules
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/{{ item }}"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  loop:
+    - node-mixin-alerts.yml
+    - prometheus-mixin-alerts.yml
+    - alertmanager-mixin-alerts.yml
+  notify: Restart prometheus
+
 - name: prometheus-setup | Write Prometheus's password for Alertmanager
   ansible.builtin.template:
     src: prometheus-alertmanager-password.j2

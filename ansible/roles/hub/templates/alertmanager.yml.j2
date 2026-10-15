@@ -1,20 +1,30 @@
 # Managed by Ansible (roles/hub). Edits here are overwritten.
-# Alerts labelled severity="page" go to ntfy's pages topic through alertmanager-page, the role's
-# copy of ntfy's alertmanager template with priority 5 (Monitoring and alerting decisions #14,
-# #22 and #27).
-# Everything else goes to a receiver with no destination.
+# Alerts labelled severity="page" or "critical" go to ntfy's pages topic through alertmanager-page,
+# the role's copy of ntfy's alertmanager template with priority 5 (Monitoring and alerting decisions
+# #14, #22, #27 and #35). severity="warning" goes to the tickets topic through ntfy's built-in
+# alertmanager template, at its default priority 3. Everything else, such as info, goes to a receiver
+# with no destination.
 route:
   receiver: nowhere
   routes:
     - matchers:
-        - severity="page"
+        - severity=~"page|critical"
       receiver: ntfy-pages
+    - matchers:
+        - severity="warning"
+      receiver: ntfy-tickets
 
 receivers:
   - name: nowhere
   - name: ntfy-pages
     webhook_configs:
       - url: "https://ntfy.tail4cf2f3.ts.net/pages?template=alertmanager-page"
+        http_config:
+          authorization:
+            credentials_file: /etc/alertmanager/ntfy-token
+  - name: ntfy-tickets
+    webhook_configs:
+      - url: "https://ntfy.tail4cf2f3.ts.net/tickets?template=alertmanager"
         http_config:
           authorization:
             credentials_file: /etc/alertmanager/ntfy-token

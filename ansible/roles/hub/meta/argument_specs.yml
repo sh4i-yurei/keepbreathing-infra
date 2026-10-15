@@ -27,6 +27,10 @@ argument_specs:
         type: int
         default: 8080
         description: The port ntfy is published on, on 127.0.0.1 only.
+      hub_ntfy_metrics_port:
+        type: int
+        default: 9095
+        description: The port ntfy's metrics are published on, on 127.0.0.1 only.
       hub_ntfy_users:
         type: list
         elements: dict

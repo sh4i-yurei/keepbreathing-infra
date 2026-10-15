@@ -1,0 +1,33 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# Grafana's data sources (Monitoring and alerting decisions #16, #39 and #41). Grafana reaches
+# Prometheus and Alertmanager through the hub's loopback (decision #24). editable: false keeps the
+# browser from changing them, so this file stays the record.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: "http://{{ hub_host_loopback }}:{{ hub_prometheus_port }}"
+    isDefault: true
+    editable: false
+
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager
+    access: proxy
+    url: "http://{{ hub_host_loopback }}:{{ hub_alertmanager_port }}"
+    basicAuth: true
+    basicAuthUser: prometheus
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false
+    secureJsonData:
+      basicAuthPassword: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'alertmanager prometheus (hub)' | quote) | from_json).login.password }}"
+    editable: false
+
+  - name: Infinity
+    type: yesoreyeram-infinity-datasource
+    uid: infinity
+    editable: false

@@ -1,0 +1,14 @@
+---
+# node_exporter on the droplets, with HTTPS and a scrape password from host_vars and
+# group_vars/droplets.yml (Monitoring and alerting step 6, decisions #26, #29 and #32). The hub
+# gets node_exporter through hub.yml.
+#   ansible-playbook playbooks/node-exporter.yml --limit web
+
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+- name: Node exporter
+  hosts: droplets
+  force_handlers: true
+  roles:
+    - node_exporter

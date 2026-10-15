@@ -4,12 +4,16 @@ Description=node_exporter, this machine's metrics for Prometheus
 Documentation=https://github.com/prometheus/node_exporter
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 User=node_exporter
 Group=node_exporter
-ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ node_exporter_listen_address }}
+ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ node_exporter_listen_address }}{{ ' --web.config.file=/etc/node_exporter/web.yml' if node_exporter_web_config | bool else '' }}
 Restart=on-failure
+# Retried every 5 seconds with no start limit (StartLimitIntervalSec=0 above), so it starts once
+# its listen address exists, such as a tailnet address that appears after boot.
+RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only

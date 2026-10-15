@@ -36,6 +36,12 @@
 			"dst": ["svc:ntfy"],
 			"ip":  ["443"],
 		},
+		// Grafana: my own devices (laptop, phone). Monitoring and alerting decisions #16 and #18.
+		{
+			"src": ["autogroup:member"],
+			"dst": ["svc:grafana"],
+			"ip":  ["443"],
+		},
 
 		// Allow users in "group:example" to access "tag:example", but only from
 		// devices that are running macOS and have enabled Tailscale client auto-updating.
@@ -107,11 +113,13 @@
 		"tag:bastion": ["autogroup:admin"],
 	},
 
-	// Machines tagged tag:hub are approved automatically to serve ntfy, so a rebuilt hub
-	// comes back reachable without a click in the console. Notification service decision #19.
+	// Machines tagged tag:hub are approved automatically to serve the hub's Services, so a
+	// rebuilt hub comes back reachable without a click in the console. Notification service
+	// decision #19; Monitoring and alerting decision #18.
 	"autoApprovers": {
 		"services": {
-			"svc:ntfy": ["tag:hub"],
+			"svc:grafana": ["tag:hub"],
+			"svc:ntfy":    ["tag:hub"],
 		},
 	},
 

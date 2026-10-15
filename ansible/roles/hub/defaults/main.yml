@@ -54,3 +54,21 @@ hub_alertmanager_image: quay.io/prometheus/alertmanager@sha256:e9733bafb1bdef9b0
 
 # The port Alertmanager is published on, on 127.0.0.1 only. It requires a password (decision #25).
 hub_alertmanager_port: 9093
+
+# Grafana's image, pinned to the digest of the 13.2.4 tag on Docker Hub (Monitoring and alerting
+# decision #41). The digest fixes the exact image; hub_grafana_version is changed with it.
+hub_grafana_image: docker.io/grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+hub_grafana_version: "13.2.4"
+
+# The port Grafana is published on, on 127.0.0.1 only. The Tailscale Service forwards to it.
+hub_grafana_port: 3000
+
+# Grafana's plugins, each pinned by the SHA-256 of its linux-amd64 zip from grafana.com's plugin
+# API, recorded when the version is chosen (decisions #39, #41 and #44).
+hub_grafana_plugins:
+  - id: yesoreyeram-infinity-datasource
+    version: "4.1.1"
+    sha256: e24f6030e998cf5dd76c70bb26a5bcb56a34bc530446358e21ae0164f21af3d5
+  - id: grafana-github-datasource
+    version: "2.9.3"
+    sha256: 8e77f6679afbb3a4d5a899692da65f60905bec6db50a1ad80f78c95a20ff6a12

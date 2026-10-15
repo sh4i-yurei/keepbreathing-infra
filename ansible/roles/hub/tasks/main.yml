@@ -35,3 +35,9 @@
 
 - name: Check Prometheus is in the state the role claims
   ansible.builtin.import_tasks: prometheus-verify.yml
+
+- name: Run Grafana
+  ansible.builtin.import_tasks: grafana-setup.yml
+
+- name: Check Grafana is in the state the role claims
+  ansible.builtin.import_tasks: grafana-verify.yml

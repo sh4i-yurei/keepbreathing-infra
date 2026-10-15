@@ -1,0 +1,163 @@
+---
+# Monitoring and alerting step 8a. Grafana as a rootless Quadlet container under the hub's container
+# account, the same way as prometheus-setup.yml (decisions #40 and #41). Files are written as root
+# and owned by that account; only the systemd and Podman tasks run as the account itself.
+
+- name: grafana-setup | Create the folders Grafana and its Quadlet file live in
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/{{ item }}"
+    state: directory
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0700"
+  loop:
+    - .config
+    - .config/containers
+    - .config/containers/systemd
+    - .config/grafana
+    - .config/grafana/datasources
+    - .config/grafana/providers
+    - .config/grafana/dashboards
+    - .config/grafana/plugins
+    - .config/grafana/secrets
+    - grafana
+
+# Grafana reads the admin password only when it first creates its database, so a change here needs
+# no restart; grafana-verify.yml logs in with it and resets Grafana to it when they differ.
+- name: grafana-setup | Write Grafana's admin password
+  ansible.builtin.template:
+    src: grafana-admin-password.j2
+    dest: "/home/{{ hub_container_user }}/.config/grafana/secrets/admin-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+
+- name: grafana-setup | Write Grafana's data sources
+  ansible.builtin.template:
+    src: grafana-datasources.yml.j2
+    dest: "/home/{{ hub_container_user }}/.config/grafana/datasources/datasources.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart grafana
+
+- name: grafana-setup | Write Grafana's dashboard provider
+  ansible.builtin.copy:
+    src: grafana-dashboards.yml
+    dest: "/home/{{ hub_container_user }}/.config/grafana/providers/dashboards.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart grafana
+
+# The file provider rescans its folder on its own, so a changed dashboard needs no restart.
+- name: grafana-setup | Copy the dashboards
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/home/{{ hub_container_user }}/.config/grafana/dashboards/{{ item | basename }}"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  loop: "{{ query('ansible.builtin.fileglob', 'dashboards/*.json') }}"
+  loop_control:
+    label: "{{ item | basename }}"
+
+- name: grafana-setup | Make the folder the plugin downloads are kept in
+  ansible.builtin.file:
+    path: /var/cache/grafana-plugins
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# The checksum is recorded in defaults when a version is chosen, not read from grafana.com at
+# install time (decision #41, the same reason as node_exporter's #25).
+- name: grafana-setup | Download each plugin and check it against its pinned SHA-256
+  ansible.builtin.get_url:
+    url: "https://grafana.com/api/plugins/{{ item.id }}/versions/{{ item.version }}/download?os=linux&arch=amd64"
+    dest: "/var/cache/grafana-plugins/{{ item.id }}-{{ item.version }}.linux_amd64.zip"
+    checksum: "sha256:{{ item.sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ hub_grafana_plugins }}"
+  loop_control:
+    label: "{{ item.id }} {{ item.version }}"
+
+- name: grafana-setup | Read which version of each plugin is unpacked
+  ansible.builtin.slurp:
+    src: "/home/{{ hub_container_user }}/.config/grafana/plugins/{{ item.id }}/plugin.json"
+  loop: "{{ hub_grafana_plugins }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: hub_grafana_plugin_json
+  failed_when: false
+
+# A different version is removed whole before the pinned one is unpacked, so no file from the old
+# version is left beside the new one's signed manifest.
+- name: grafana-setup | Remove a plugin unpacked at a version other than the pinned one
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/.config/grafana/plugins/{{ item.item.id }}"
+    state: absent
+  loop: "{{ hub_grafana_plugin_json.results }}"
+  loop_control:
+    label: "{{ item.item.id }}"
+  when:
+    - item.content is defined
+    - (item.content | b64decode | from_json).info.version != item.item.version
+  notify: Restart grafana
+
+- name: grafana-setup | Unpack each plugin
+  ansible.builtin.unarchive:
+    src: "/var/cache/grafana-plugins/{{ item.id }}-{{ item.version }}.linux_amd64.zip"
+    dest: "/home/{{ hub_container_user }}/.config/grafana/plugins"
+    remote_src: true
+    creates: "/home/{{ hub_container_user }}/.config/grafana/plugins/{{ item.id }}/plugin.json"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+  loop: "{{ hub_grafana_plugins }}"
+  loop_control:
+    label: "{{ item.id }} {{ item.version }}"
+  notify: Restart grafana
+
+- name: grafana-setup | Write Grafana's Quadlet file
+  ansible.builtin.template:
+    src: grafana.container.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/systemd/grafana.container"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  notify:
+    - Reload systemd for the container account
+    - Restart grafana
+
+- name: grafana-setup | Download Grafana's image into the container account's storage
+  containers.podman.podman_image:
+    name: "{{ hub_grafana_image }}"
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: grafana-setup | Run the handlers before making sure Grafana is running
+  ansible.builtin.meta: flush_handlers
+
+- name: grafana-setup | Make sure Grafana is running
+  ansible.builtin.systemd_service:
+    name: grafana.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: grafana-setup | Serve Grafana as a Tailscale Service
+  ansible.builtin.import_tasks: tailscale-service.yml
+  vars:
+    hub_service_name: grafana
+    hub_service_port: "{{ hub_grafana_port }}"

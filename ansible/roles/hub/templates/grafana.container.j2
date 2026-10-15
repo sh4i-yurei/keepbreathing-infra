@@ -21,9 +21,13 @@ Environment=GF_SECURITY_COOKIE_SECURE=true
 Environment=GF_ANALYTICS_REPORTING_ENABLED=false
 Environment=GF_ANALYTICS_CHECK_FOR_UPDATES=false
 Environment=GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+Environment=GF_PLUGINS_PREINSTALL_DISABLED=true
 
 [Service]
 Restart=always
+# The first start translates the image's file owners for keep-id, which took longer than systemd's
+# default 90 seconds on the hub. Later starts reuse that copy.
+TimeoutStartSec=900
 
 [Install]
 WantedBy=default.target

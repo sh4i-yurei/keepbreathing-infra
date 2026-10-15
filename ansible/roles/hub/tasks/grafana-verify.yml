@@ -137,7 +137,7 @@
       until: >-
         (hub_grafana_overview_machines.json.data.result | length) == 1
         and (hub_grafana_overview_machines.json.data.result[0].value[1] | int)
-        == (groups['droplets'] | length) + 1
+        == (groups['droplets'] | length) + 1 + (hub_node_exporter_tailnet_hosts | length)
       retries: 10
       delay: 6
 

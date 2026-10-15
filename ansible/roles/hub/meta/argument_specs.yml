@@ -68,6 +68,15 @@ argument_specs:
         default: 9093
         description: The port Alertmanager is published on, on 127.0.0.1 only.
 
+      hub_podman_exporter_image:
+        type: str
+        default: quay.io/navidys/prometheus-podman-exporter@sha256:ddaa9003e86f435f2d958ab68041959e4d2bb290a350a2649a123c449db032db
+        description: The Podman exporter's container image, pinned by digest.
+      hub_podman_exporter_port:
+        type: int
+        default: 9882
+        description: The port the Podman exporter is published on, on 127.0.0.1 only.
+
       hub_grafana_image:
         type: str
         default: docker.io/grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f

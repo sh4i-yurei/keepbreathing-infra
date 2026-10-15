@@ -1,0 +1,25 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# Reports the state of the hub's containers through the container account's Podman socket, as the
+# exporter's install guide gives for rootless use (Monitoring and alerting decision #34).
+[Unit]
+Description=Podman exporter, the hub containers' state for Prometheus
+Requires=podman.socket
+After=podman.socket
+
+[Container]
+ContainerName=podman-exporter
+Image={{ hub_podman_exporter_image }}
+Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
+Volume=%t/podman/podman.sock:/run/podman/podman.sock
+UserNS=keep-id:uid=65534
+SecurityLabelType=container_runtime_t
+PublishPort=127.0.0.1:{{ hub_podman_exporter_port }}:9882
+Exec=--collector.enhance-metrics
+
+[Service]
+Restart=always
+# The first start translates the image's file owners for keep-id, which is slow on the hub's disk.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

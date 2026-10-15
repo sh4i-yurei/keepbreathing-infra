@@ -1,3 +1,15 @@
 ---
 # Runs Vaultwarden as a rootless container.
 baseline_container_user: keepbreath4
+
+# node_exporter listens on the tailnet address, behind a password from this machine's own vault item,
+# and only the hub's tailnet address may reach it. The tailnet encrypts the traffic, so it serves
+# plain HTTP (Monitoring and alerting decision #30).
+node_exporter_listen_address: "100.65.221.62:9100"
+node_exporter_allowed_sources:
+  - 100.95.89.6
+node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
+  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
+node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
+  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
+  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"

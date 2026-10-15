@@ -14,6 +14,9 @@ hub_ntfy_alertmanager_template_from: "2.29.0"
 # The port ntfy is published on, on 127.0.0.1 only. The Tailscale Service forwards to it (#16).
 hub_ntfy_port: 8080
 
+# The port ntfy's metrics are published on, on 127.0.0.1 only, for Prometheus (decision #42).
+hub_ntfy_metrics_port: 9095
+
 # ntfy's users and what each may do (Notification service decisions #8 and #9). Each one has a
 # vault item named "ntfy <name> (hub)" holding its bcrypt hash and, where token is true, its
 # token. Access is <topic>:ro for read-only or <topic>:wo for write-only.
@@ -27,7 +30,7 @@ hub_ntfy_users:
     access: [pages:wo]
     token: true
   - name: alertmanager
-    access: [pages:wo]
+    access: [pages:wo, tickets:wo]
     token: true
 
 # Gatus's image, pinned to the digest of the v5.37.0 tag (Monitoring and alerting decision #17).

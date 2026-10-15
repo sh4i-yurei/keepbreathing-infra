@@ -24,3 +24,17 @@ groups:
             Filesystem on {{ $labels.device }}, mounted on {{ $labels.mountpoint }}, at
             {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left and is
             filling up.
+
+  # Any scrape target down for 5 minutes pages (Monitoring and alerting decision #33).
+  - name: targets
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: A scrape target has been down for 5 minutes.
+          description: >-
+            Prometheus has not been able to scrape {{ $labels.job }} on {{ $labels.instance }} for 5
+            minutes.

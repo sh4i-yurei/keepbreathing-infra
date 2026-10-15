@@ -5,6 +5,8 @@ behind-proxy: true
 cache-file: "/var/lib/ntfy/cache.db"
 auth-file: "/var/lib/ntfy/user.db"
 auth-default-access: "deny-all"
+# Metrics on their own listener, so they are never served on the Tailscale Service (decision #42).
+metrics-listen-http: ":9095"
 
 {% set ntfy_vault = {} %}
 {% for user in hub_ntfy_users %}

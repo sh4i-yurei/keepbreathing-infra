@@ -54,7 +54,10 @@
     mode: "0600"
   notify: Restart grafana
 
-# The file provider rescans its folder on its own, so a changed dashboard needs no restart.
+# The file provider rescans its folder on its own, so a changed dashboard needs no restart. A file
+# copied in after Grafana starts would get config_home_t, which the container cannot read. The folder
+# is mounted with :z, the shared container_file_t at s0, so labelling each file the same way makes it
+# readable straight away and matches what Podman sets when the container starts.
 - name: grafana-setup | Copy the dashboards
   ansible.builtin.copy:
     src: "{{ item }}"
@@ -62,6 +65,8 @@
     owner: "{{ hub_container_user }}"
     group: "{{ hub_container_user }}"
     mode: "0600"
+    setype: container_file_t
+    selevel: s0
   loop: "{{ query('ansible.builtin.fileglob', 'dashboards/*.json') }}"
   loop_control:
     label: "{{ item | basename }}"

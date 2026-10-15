@@ -6,6 +6,9 @@ global:
 rule_files:
   - /etc/prometheus/rules.yml
   - /etc/prometheus/node-mixin-rules.yml
+  - /etc/prometheus/node-mixin-alerts.yml
+  - /etc/prometheus/prometheus-mixin-alerts.yml
+  - /etc/prometheus/alertmanager-mixin-alerts.yml
 
 alerting:
   alertmanagers:
@@ -29,6 +32,19 @@ scrape_configs:
   - job_name: gatus
     static_configs:
       - targets: ["{{ hub_host_loopback }}:{{ hub_gatus_port }}"]
+
+  # The alert path is watched too (Monitoring and alerting decision #42). Alertmanager's /metrics
+  # needs the same password as its API.
+  - job_name: alertmanager
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/alertmanager-password
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_alertmanager_port }}"]
+
+  - job_name: ntfy
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_ntfy_metrics_port }}"]
 {% for host in groups['droplets'] %}
 
   # node_exporter on {{ host }}, over HTTPS with its own password (decisions #26, #29 and #32).

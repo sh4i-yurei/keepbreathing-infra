@@ -5,3 +5,9 @@
 hub_grafana_dashboards: >-
   {{ lookup('ansible.builtin.pipe', 'find ' ~ (role_path ~ '/files/dashboards') | quote ~ " -name '*.json'").splitlines()
   | map('regex_replace', '^.*/files/dashboards/', '') | sort }}
+
+# Every container this role installs, derived from the Quadlet template names so the missing-
+# container alert cannot drift from the role's services (Monitoring and alerting decision #48).
+hub_container_names: >-
+  {{ query('ansible.builtin.fileglob', role_path ~ '/templates/*.container.j2')
+  | map('basename') | map('regex_replace', '\.container\.j2$', '') | sort }}

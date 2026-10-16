@@ -4,27 +4,61 @@
 # own subnet on the main table (decision #28). The rule is set first, so the hub's subnet is
 # protected before any subnet route is installed in Tailscale's table 52.
 
-- name: tailnet-routes-setup | Read which NetworkManager connection the hub's interface uses
-  ansible.builtin.command: nmcli -g GENERAL.CONNECTION device show {{ ansible_default_ipv4.interface }}
-  register: hub_nm_connection
+- name: tailnet-routes-setup | Read which NetworkManager connection UUID the hub's interface uses
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -g
+      - GENERAL.CON-UUID
+      - device
+      - show
+      - "{{ ansible_default_ipv4.interface }}"
+  register: hub_nm_connection_uuid
   changed_when: false
   check_mode: false
 
 - name: tailnet-routes-setup | Read that connection's policy routing rules
-  ansible.builtin.command: nmcli -g ipv4.routing-rules connection show {{ hub_nm_connection.stdout }}
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -g
+      - ipv4.routing-rules
+      - connection
+      - show
+      - uuid
+      - "{{ hub_nm_connection_uuid.stdout }}"
   register: hub_routing_rules
   changed_when: false
   check_mode: false
 
-# nmcli device reapply pushes the changed profile onto the live interface without deactivating it.
 - name: tailnet-routes-setup | Keep the hub's own subnet on the main table, ahead of Tailscale's
-  ansible.builtin.shell: >-
-    nmcli connection modify {{ hub_nm_connection.stdout }} ipv4.routing-rules
-    "priority 2500 to {{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.prefix }} table 254" &&
-    nmcli device reapply {{ ansible_default_ipv4.interface }}
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - uuid
+      - "{{ hub_nm_connection_uuid.stdout }}"
+      - ipv4.routing-rules
+      - "priority 2500 to {{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.prefix }} table 254"
+  register: hub_routing_rule_change
   when: >-
     hub_routing_rules.stdout !=
     'priority 2500 to ' ~ ansible_default_ipv4.network ~ '/' ~ ansible_default_ipv4.prefix ~ ' table 254'
+  changed_when: true
+  become: true
+
+# This stays immediately after the profile change instead of becoming a handler: accepted tailnet
+# routes are enabled later in this task file, after the protective rule is live. nmcli device
+# reapply pushes the changed profile onto the interface without deactivating it.
+- name: tailnet-routes-setup | Apply the changed routing rule to the live interface # noqa: no-handler
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - device
+      - reapply
+      - "{{ ansible_default_ipv4.interface }}"
+  when: hub_routing_rule_change is changed
   changed_when: true
   become: true
 

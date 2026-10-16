@@ -36,6 +36,15 @@
     mode: "0600"
   notify: Restart prometheus
 
+- name: prometheus-setup | Write the missing-container rule from the role's Quadlet templates
+  ansible.builtin.template:
+    src: container-missing-rules.yml.j2
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/container-missing-rules.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart prometheus
+
 # node_exporter's mixin recording rules, copied unchanged from monitoring.mixins.dev at commit
 # 8607c0eb5d9de22d796dd092ee4c9348eec3d6bb (SHA-256 4dce2ad9...). The USE Method / Cluster dashboard
 # reads them (Monitoring and alerting decision #40).
@@ -68,6 +77,17 @@
   ansible.builtin.template:
     src: prometheus-alertmanager-password.j2
     dest: "/home/{{ hub_container_user }}/.config/prometheus/alertmanager-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart prometheus
+
+- name: prometheus-setup | Write Prometheus's password for Grafana
+  ansible.builtin.template:
+    src: grafana-prometheus-password.j2
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/grafana-password"
     owner: "{{ hub_container_user }}"
     group: "{{ hub_container_user }}"
     mode: "0600"

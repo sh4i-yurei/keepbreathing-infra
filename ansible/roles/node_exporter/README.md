@@ -24,14 +24,17 @@ apart.
    certificate is remade on any run where fewer than 30 days remain, because `x509_certificate`
    does not look at dates on its own (decisions #26 and #29).
 5. Writes `/etc/systemd/system/node_exporter.service`, which runs the binary as `node_exporter`
-   with a read-only view of the filesystem, listening on `node_exporter_listen_address`, with
-   `--web.config.file` when there is one. It retries every 5 seconds with no start limit, so a
+   with a read-only view of the filesystem, listening on `node_exporter_listen_address`. The unit
+   switches on the systemd, processes, tcpstat and interrupts collectors, and enables systemd's
+   restart metrics so the mixin's crash-loop alert has `node_systemd_service_restart_total`. It
+   adds `--web.config.file` when there is one. It retries every 5 seconds with no start limit, so a
    tailnet listen address that appears after boot is picked up.
 6. Opens the port in firewalld's `public` zone to each address in `node_exporter_allowed_sources`.
    It only adds rules: an address removed from the list keeps its rule until it is removed by hand.
 7. Starts it and enables it at boot, then checks it: the metrics page answers with the pinned
    version, using the password and checking the certificate when those are on; a request without
-   the password gets `401`; plain HTTP is refused; and the process runs as `node_exporter`.
+   the password gets `401`; plain HTTP is refused; each explicitly enabled collector returns a
+   metric, including systemd service restart counts; and the process runs as `node_exporter`.
 
 ## Inputs
 

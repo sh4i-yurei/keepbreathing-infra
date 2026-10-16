@@ -29,12 +29,13 @@
       ansible.builtin.assert:
         that:
           - node_exporter_metrics.content is search('node_systemd_unit_state\\{')
+          - node_exporter_metrics.content is search('node_systemd_service_restart_total\\{')
           - node_exporter_metrics.content is search('node_processes_pids ')
           - node_exporter_metrics.content is search('node_tcp_connection_states\\{')
           - node_exporter_metrics.content is search('node_interrupts_total\\{')
         fail_msg: >-
-          node_exporter is missing the metrics of a collector the unit switches on: systemd,
-          processes, tcpstat or interrupts.
+          node_exporter is missing the metrics of a collector the unit switches on: systemd
+          (including service restart counts), processes, tcpstat or interrupts.
         quiet: true
 
     - name: verify | Without the password it is refused

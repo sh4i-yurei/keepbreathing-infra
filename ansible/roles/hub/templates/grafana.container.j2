@@ -16,6 +16,8 @@ Volume=/home/{{ hub_container_user }}/.config/grafana/secrets:/etc/grafana/secre
 Volume=/home/{{ hub_container_user }}/grafana:/var/lib/grafana:Z
 Environment=GF_PATHS_PLUGINS=/var/lib/grafana-plugins
 Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/secrets/admin-password
+Environment=GF_METRICS_BASIC_AUTH_USERNAME=prometheus
+Environment=GF_METRICS_BASIC_AUTH_PASSWORD__FILE=/etc/grafana/secrets/prometheus-password
 Environment=GF_SERVER_ROOT_URL=https://grafana.{{ hub_tailnet_domain }}/
 Environment=GF_SECURITY_COOKIE_SECURE=true
 Environment=GF_ANALYTICS_REPORTING_ENABLED=false

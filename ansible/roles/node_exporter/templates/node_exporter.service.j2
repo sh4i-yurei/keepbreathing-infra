@@ -9,7 +9,7 @@ StartLimitIntervalSec=0
 [Service]
 User=node_exporter
 Group=node_exporter
-ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ node_exporter_listen_address }} --collector.systemd --collector.processes --collector.tcpstat --collector.interrupts{{ ' --web.config.file=/etc/node_exporter/web.yml' if node_exporter_web_config | bool else '' }}
+ExecStart=/usr/local/bin/node_exporter --web.listen-address={{ node_exporter_listen_address }} --collector.systemd --collector.systemd.enable-restarts-metrics --collector.processes --collector.tcpstat --collector.interrupts{{ ' --web.config.file=/etc/node_exporter/web.yml' if node_exporter_web_config | bool else '' }}
 Restart=on-failure
 # Retried every 5 seconds with no start limit (StartLimitIntervalSec=0 above), so it starts once
 # its listen address exists, such as a tailnet address that appears after boot.

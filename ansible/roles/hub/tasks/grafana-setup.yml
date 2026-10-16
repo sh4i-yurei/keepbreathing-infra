@@ -34,6 +34,17 @@
   diff: false
   no_log: true
 
+- name: grafana-setup | Write Grafana's metrics password
+  ansible.builtin.template:
+    src: grafana-prometheus-password.j2
+    dest: "/home/{{ hub_container_user }}/.config/grafana/secrets/prometheus-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart grafana
+
 - name: grafana-setup | Write Grafana's data sources
   ansible.builtin.template:
     src: grafana-datasources.yml.j2

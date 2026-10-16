@@ -7,6 +7,7 @@
   vars:
     hub_grafana_url: "http://127.0.0.1:{{ hub_grafana_port }}"
     hub_grafana_admin_password: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'grafana admin (hub)' | quote) | from_json).login.password }}"
+    hub_grafana_metrics_password: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'grafana prometheus (hub)' | quote) | from_json).login.password }}"
 
   block:
     - name: grafana-verify | Wait for Grafana to report itself healthy
@@ -30,6 +31,20 @@
       ansible.builtin.uri:
         url: "{{ hub_grafana_url }}/api/search"
         status_code: 401
+
+    - name: grafana-verify | Metrics are refused without their password
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/metrics"
+        status_code: 401
+
+    - name: grafana-verify | The vault's metrics password is accepted
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/metrics"
+        url_username: prometheus
+        url_password: "{{ hub_grafana_metrics_password }}"
+        force_basic_auth: true
+        status_code: 200
+      no_log: true
 
     - name: grafana-verify | Try the vault's admin password
       ansible.builtin.uri:

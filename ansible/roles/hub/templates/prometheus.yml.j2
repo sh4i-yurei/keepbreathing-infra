@@ -5,6 +5,7 @@ global:
 
 rule_files:
   - /etc/prometheus/rules.yml
+  - /etc/prometheus/container-missing-rules.yml
   - /etc/prometheus/node-mixin-rules.yml
   - /etc/prometheus/node-mixin-alerts.yml
   - /etc/prometheus/prometheus-mixin-alerts.yml
@@ -51,6 +52,14 @@ scrape_configs:
       - targets: ["{{ hub_host_loopback }}:{{ hub_podman_exporter_port }}"]
         labels:
           instance: hub
+
+  # Grafana's metrics share its web port and require their own vault password (decision #48).
+  - job_name: grafana
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/grafana-password
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_grafana_port }}"]
 {% for host in groups['droplets'] %}
 
   # node_exporter on {{ host }}, over HTTPS with its own password (decisions #26, #29 and #32).

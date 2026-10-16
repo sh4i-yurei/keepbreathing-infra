@@ -1,0 +1,21 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# A removed hub container has no podman_container_state series. The container list comes from this
+# role's *.container.j2 filenames, whose base names equal ContainerName (decision #48).
+groups:
+  - name: missing-containers
+    rules:
+      - alert: ContainerMissing
+        expr: |
+          (
+{% for container in hub_container_names %}
+            absent(podman_container_state{job="podman",name="{{ container }}"}){{ ' or' if not loop.last else '' }}
+{% endfor %}
+          )
+            and on(job) (up{job="podman"} == 1)
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The {% raw %}{{ $labels.name }}{% endraw %} container has been missing for 5 minutes.
+          description: >-
+            The {% raw %}{{ $labels.name }}{% endraw %} container is missing from the Podman exporter's metrics on the hub.

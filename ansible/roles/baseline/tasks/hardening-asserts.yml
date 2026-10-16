@@ -18,19 +18,22 @@
       mid-session is hostile. Look at why it was changed (decision #39).
     quiet: true
 
-- name: hardening-asserts | Look for a repository with signature checking off
-  ansible.builtin.command: grep -rl '^gpgcheck\s*=\s*0' /etc/yum.repos.d/
+- name: hardening-asserts | Read each repository's effective signature-check setting
+  ansible.builtin.script:
+    cmd: "{{ role_path }}/files/repo-gpgcheck-check.py"
+    executable: /usr/bin/python3
   register: baseline_gpgcheck_off
   changed_when: false
-  failed_when: false
+  failed_when: baseline_gpgcheck_off.rc not in [0, 1, 2]
   check_mode: false
 
 - name: hardening-asserts | Every repository checks package signatures
   ansible.builtin.assert:
-    that: baseline_gpgcheck_off.stdout | length == 0
+    that: baseline_gpgcheck_off.rc == 0
     fail_msg: >-
-      A repository has gpgcheck=0: {{ baseline_gpgcheck_off.stdout_lines }}. Packages
-      from it install without their signature being verified. The role does not turn
-      checking back on, because that would break installs from that repository and hide
-      that it was ever off; somebody turned it off on purpose (decision #39).
+      The effective repository check reported: {{ baseline_gpgcheck_off.stdout_lines }}.
+      Packages from a listed repository install without their signature being verified.
+      The role does not turn checking back on, because that would break installs from
+      that repository and hide that it was ever off; somebody turned it off on purpose
+      (decision #39).
     quiet: true

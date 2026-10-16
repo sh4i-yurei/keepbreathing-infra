@@ -6,10 +6,19 @@ keep failing SSH logins. It installs and enables firewalld with cockpit removed 
 default zone, prepares Podman for rootless containers, and makes the journal persistent
 with a size cap. It also installs chrony for time sync, bounds how much disk core dumps can
 use, and blacklists filesystem modules nothing here uses. Two assertions stop the run if
-SELinux is not enforcing or if any package repository has signature checking turned off.
+SELinux is not enforcing or if an enabled package repository's effective configuration has
+signature checking turned off.
 
 The by-hand version is `server-bootstrap.md` in the operational manual. This role is that
 procedure written down, so a machine can be rebuilt without anyone having to remember it.
+
+The repository check uses DNF's Python interface rather than reading `.repo` files as text.
+That reports the setting DNF will actually use, including `false`, `no` and a repository
+that inherits `gpgcheck=0` from `/etc/dnf/dnf.conf`. DNF reads an indented line as a
+continuation of the setting above it, so an indented `gpgcheck=0` does not turn checking off.
+Disabled repositories are not checked because DNF cannot install from them. `files/repo-gpgcheck-check.py` exits 0 when
+every enabled repository is safe, 1 after printing each unsafe repository id, and 2 when DNF
+cannot be read safely. Both nonzero results stop the role (decision #39).
 
 ## Not in this role
 

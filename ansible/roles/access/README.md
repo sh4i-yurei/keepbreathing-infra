@@ -31,10 +31,14 @@ The by-hand version is steps 1a and 6 of `server-bootstrap.md` in the operationa
    to that directory, so someone who breaks into the admin account cannot add a key of
    their own (decision #37). The copy replaces the whole file, so a key added by hand is
    removed on the next run.
-4. `tasks/nopasswd.yml` reads every uncommented sudo rule that contains `NOPASSWD` and
-   stops the run if any of them is for an account or group other than root. Root's own
-   rule, which cloud-init wrote on the droplets built in August, is allowed (decision #38).
-   Droplets built from step 1a's user-data do not get it.
+4. `tasks/nopasswd.yml` asks `cvtsudoers` for sudo's parsed JSON policy and passes it to
+   `files/sudo-nopasswd-check.py`. The check catches command rules with `NOPASSWD` and
+   `Defaults !authenticate`, including user-bound defaults and rules continued across
+   lines. It stops the run if any entry lets an account or group other than exactly the
+   `root` user skip a password. Root's own rule, which cloud-init wrote on the droplets
+   built in August, is allowed (decision #38). Droplets built from step 1a's user-data do
+   not get it. A JSON parse error also stops the run, so unreadable policy never reports
+   safe.
 5. `tasks/sshd.yml` installs `10-hardening.conf`, which turns off password and
    keyboard-interactive login and limits root to key login only.
 6. `tasks/verify.yml` checks that those sshd settings took effect. It runs after the
@@ -143,12 +147,14 @@ some addresses would not show. No machine had one when that was checked on 19 Se
 
 The check is skipped under `--check`, because a rehearsal writes nothing.
 
-## Known limits
+## The sudo policy check
 
-The sudo check reads the files with `grep` rather than asking sudo. It reads files in
-`/etc/sudoers.d/` that sudo itself ignores, such as names containing a dot, which can only
-cause a false failure. It would misread a rule split across lines with a backslash, or one
-written through a `User_Alias`. The machines have not been checked for either.
+`cvtsudoers -f json /etc/sudoers` follows sudo's configured includes and parses aliases,
+continued lines, command tags and `Defaults` bindings the same way sudo does. The Python
+check reads that JSON rather than trying to reconstruct policy from individual text lines.
+It exits 0 only when it can parse the document and finds no passwordless entry for anything
+other than exactly the `root` user. Findings exit 1, and malformed or unexpected JSON exits
+2. Both nonzero results stop the role and print the check's lines.
 
 Nothing in this repository sets up the first run against a brand-new machine yet. That run
 has to connect as root (decision #34), and `inventory.ini` connects as `keepbreath0`

@@ -36,11 +36,20 @@
 			"dst": ["svc:ntfy"],
 			"ip":  ["443"],
 		},
+
 		// Grafana: my own devices (laptop, phone). Monitoring and alerting decisions #16 and #18.
 		{
 			"src": ["autogroup:member"],
 			"dst": ["svc:grafana"],
 			"ip":  ["443"],
+		},
+
+		// node_exporter: the hub scrapes port 9100 on every machine with host metrics.
+		// Monitoring and alerting decisions #26 and #30.
+		{
+			"src": ["tag:hub"],
+			"dst": ["tag:vault", "tag:bastion", "100.116.219.6", "10.128.0.3", "10.128.0.4"],
+			"ip":  ["9100"],
 		},
 
 		// Allow users in "group:example" to access "tag:example", but only from

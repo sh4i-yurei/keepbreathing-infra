@@ -1,0 +1,26 @@
+---
+argument_specs:
+  main:
+    short_description: What every machine gets before it gets its job
+    options:
+      baseline_swap_size:
+        type: str
+        default: 1G
+        description: Swap file size. 1G is enough to get dnf through EPEL's
+          metadata on a 1 GB droplet.
+      baseline_firewalld_remove_cockpit:
+        type: bool
+        default: true
+        description: Take cockpit out of the firewall's default zone.
+      baseline_container_user:
+        type: str
+        required: true
+        description: The unprivileged account that runs rootless containers on
+          this machine, supplied per host. An empty value means the machine has
+          no container account, and lingering is skipped.
+      baseline_blacklist_fs_modules:
+        type: list
+        elements: str
+        default: [cramfs, freevxfs, jffs2, hfs, hfsplus]
+        description: Filesystem kernel modules the role blacklists. Absent from the
+          AlmaLinux 9 and 10 kernels; a machine that needs one overrides the list.

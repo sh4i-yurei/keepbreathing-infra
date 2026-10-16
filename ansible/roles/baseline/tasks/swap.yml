@@ -1,0 +1,102 @@
+---
+# Bootstrap step 6a. Droplets come with no swap, and dnf parsing EPEL's metadata on a
+# 1 GB box gets killed for memory without it. Every command here carries its own
+# "already done?" test, because a command cannot tell Ansible that by itself.
+#
+# Two halves, guarded differently on purpose. A swap file is only ever *created* on a
+# machine with no swap at all, because the home VMs have a swap partition from the
+# installer (decision #16). But once a file exists its mode and its fstab entry are
+# checked on every run, whatever the machine's total swap is. Guarding the whole step on
+# "no swap at all" meant that after the first successful run the machine always had swap,
+# so the step skipped entirely and never looked at the file again — a mode loosened to
+# world-readable would have exposed paged-out memory and the run would still have reported
+# ok.
+
+- name: swap | Create a swap file, only on a machine with none at all
+  when: ansible_facts['swaptotal_mb'] == 0
+  block:
+    - name: swap | Allocate the swap file
+      ansible.builtin.command: fallocate -l {{ baseline_swap_size }} /swapfile
+      args:
+        creates: /swapfile
+
+    - name: swap | Close the window before the file is used
+      ansible.builtin.file:
+        path: /swapfile
+        owner: root
+        group: root
+        mode: "0600"
+      when: not ansible_check_mode
+
+    - name: swap | Check whether the file is formatted as swap
+      ansible.builtin.command: blkid -o value -s TYPE /swapfile
+      register: baseline_swap_type
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: swap | Format the swap file
+      ansible.builtin.command: mkswap /swapfile
+      when:
+        - not ansible_check_mode
+        - baseline_swap_type.stdout != "swap"
+      changed_when: true
+
+    - name: swap | Check whether it is active
+      ansible.builtin.command: grep -q ^/swapfile /proc/swaps
+      register: baseline_swap_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: swap | Switch it on
+      ansible.builtin.command: swapon /swapfile
+      when:
+        - not ansible_check_mode
+        - baseline_swap_active.rc != 0
+      changed_when: true
+
+# Everything below runs on every machine, and does nothing where there is no swap file.
+# This is the half that keeps checking after the file exists, which the old single guard
+# did not: once swap was on, the whole step skipped and never looked at the file again.
+#
+# Two limits worth knowing. Under --check the file does not really get created, so on a
+# machine that does not yet have one these tasks skip and the rehearsal under-reports what
+# the real run will do. And an fstab entry is only written for a file that blkid confirms
+# is formatted as swap, so a stray /swapfile on a machine that already has swap is left
+# alone rather than being mounted at the next boot. The create half does not have that
+# protection and should not: on a machine with no swap, an unformatted /swapfile is a
+# half-finished previous run, and mkswap overwriting it is the right outcome.
+
+- name: swap | Look for a swap file
+  ansible.builtin.stat:
+    path: /swapfile
+  register: baseline_swapfile
+  check_mode: false
+
+- name: swap | Check the file really is swap before trusting it
+  ansible.builtin.command: blkid -o value -s TYPE /swapfile
+  register: baseline_swapfile_type
+  when: baseline_swapfile.stat.exists
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: swap | Keep the swap file readable by root only
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - baseline_swapfile.stat.exists
+    - baseline_swapfile_type.stdout | default('') == 'swap'
+
+- name: swap | Bring it back after a reboot
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: '^/swapfile\s'
+    line: /swapfile none swap sw 0 0
+  when:
+    - baseline_swapfile.stat.exists
+    - baseline_swapfile_type.stdout | default('') == 'swap'

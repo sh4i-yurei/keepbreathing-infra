@@ -1,0 +1,3 @@
+---
+# Runs Vaultwarden as a rootless container.
+baseline_container_user: keepbreath4

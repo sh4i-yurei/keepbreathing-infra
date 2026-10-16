@@ -1,0 +1,48 @@
+---
+# Each step below is one from the server-bootstrap procedure, in the order it is done by
+# hand: step 1a's admin account, its key in a root-owned location and the check that no
+# account but root has passwordless sudo, then step 6's sshd hardening drop-in.
+
+- name: Check the admin account name is not null and is well formed
+  ansible.builtin.assert:
+    that:
+      - access_admin_user is not none
+      - access_admin_user is match('^[a-z_][a-z0-9_-]*\\Z|^\\Z')
+    fail_msg: >-
+      access_admin_user "{{ access_admin_user }}" must be a lowercase account name or
+      "", never left empty with nothing after the colon. The name becomes part of the
+      authorized-keys path, so a name with a slash or a wildcard would put the key
+      somewhere sshd never reads.
+    quiet: true
+
+- name: Check image_build is set and does not clash with an admin account
+  ansible.builtin.assert:
+    that:
+      - image_build is defined
+      - image_build is boolean
+      - not (image_build and access_admin_user | length > 0)
+    fail_msg: >-
+      image_build must be set to true or false, and an image build must not have an
+      admin account. Set image_build in the inventory as a real boolean, and set
+      access_admin_user to "" when image_build is true.
+    quiet: true
+
+- name: Create the admin account
+  ansible.builtin.import_tasks: admin.yml
+
+- name: Put the admin account's key in a root-owned location
+  ansible.builtin.import_tasks: keys.yml
+
+- name: Check no account but root has passwordless sudo
+  ansible.builtin.import_tasks: nopasswd.yml
+
+- name: Harden SSH
+  ansible.builtin.import_tasks: sshd.yml
+
+# The check below reads the sshd configuration after the handlers have checked and
+# reloaded it. Handlers otherwise run after the whole play.
+- name: Run the handlers before verifying
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the sshd configuration that takes effect
+  ansible.builtin.import_tasks: verify.yml

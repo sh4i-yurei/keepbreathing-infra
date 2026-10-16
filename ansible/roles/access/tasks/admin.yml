@@ -1,0 +1,12 @@
+---
+# Bootstrap step 1a. Creates the admin account if it is missing and sets its password
+# from the hash in the vault.
+
+- name: admin | Create the admin account and set its password
+  ansible.builtin.user:
+    name: "{{ access_admin_user }}"
+    groups: wheel
+    append: true
+    password: "{{ access_admin_password_hash }}"
+  no_log: true
+  when: access_admin_user | length > 0

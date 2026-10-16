@@ -1,8 +1,12 @@
 ---
-# Bring a box to the baseline every machine gets before it gets a job.
-# First target is the hub (Ansible decision #5), then the three droplets.
+# Bring a machine to the baseline every machine gets before it gets a job.
 #   ansible-playbook playbooks/baseline.yml --limit hub
+
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
 - name: Baseline
   hosts: all
+  force_handlers: true
   roles:
     - baseline

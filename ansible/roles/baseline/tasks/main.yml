@@ -1,43 +1,76 @@
 ---
-# Skeleton. Each step below is one from the server-bootstrap procedure, in the order
+# Each step below is one from the server-bootstrap procedure, in the order
 # it is done by hand. They become real tasks one at a time, each proven against the
 # hub before it is trusted on a droplet. Steps 1, 2, 11 and 12 of the procedure are
 # not here: creating the droplet and its cloud firewall is Terraform's job,
 # verifying from outside is a test, and recording the machine is a note.
+# Steps 1a and 6, the admin account and the sshd hardening drop-in, are in the access
+# role (decision #36).
 
-- name: Update everything and install the packages the base image lacks
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 4)"
+- name: Check the container account variable is not null
+  ansible.builtin.assert:
+    that:
+      - baseline_container_user is not none
+    fail_msg: >-
+      baseline_container_user is YAML null. A bare "key:" with nothing after it passes
+      argument validation as a string and then behaves like an empty value, which
+      silently means "this machine has no container account" — rootless containers would
+      never get lingering and nothing would report it. Write an empty value as "".
+    quiet: true
+
+- name: Check the container account name and the swap size are well formed
+  ansible.builtin.assert:
+    that:
+      - baseline_container_user is match('^[a-z_][a-z0-9_-]*\\Z|^\\Z')
+      - baseline_swap_size is match('^[0-9]+[KMGT]?\\Z')
+    fail_msg: >-
+      baseline_container_user "{{ baseline_container_user }}" and baseline_swap_size
+      "{{ baseline_swap_size }}" must each be well formed. The account name reaches a
+      `creates:` path, which is glob-expanded, so a name containing a wildcard or a slash
+      would silently test the wrong file and the task would run on every pass. The swap
+      size reaches a command argument list unquoted. The patterns end with an absolute
+      end-of-string anchor rather than $, because $ also matches before a trailing
+      newline and a name with one would pass and then behave as if it had not.
+    quiet: true
+
+- name: Install the packages the base image lacks
+  ansible.builtin.import_tasks: packages.yml
 
 - name: Enable automatic security updates
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 5)"
-
-- name: Harden SSH
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 6: sshd_config.d/10-hardening.conf)"
+  ansible.builtin.import_tasks: updates.yml
 
 - name: Add swap
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 6a)"
+  ansible.builtin.import_tasks: swap.yml
 
 - name: Install fail2ban with the sshd jail
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 7: EPEL first, jail.d/sshd.conf)"
+  ansible.builtin.import_tasks: fail2ban.yml
 
-- name: Install firewalld with rules matching the cloud firewall
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 8)"
+- name: Install and enable the host firewall
+  ansible.builtin.import_tasks: firewalld.yml
 
 - name: Install Podman and prepare it for rootless containers
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 9)"
+  ansible.builtin.import_tasks: podman.yml
 
 - name: Make the journal persistent
-  ansible.builtin.debug:
-    msg: "TODO (bootstrap step 10: journald, then rsyslog restart, then journalctl --flush)"
+  ansible.builtin.import_tasks: journald.yml
 
-- name: Create the admin account
-  ansible.builtin.debug:
-    msg: "TODO: {{ baseline_admin_user }}, wheel, key-only, password to sudo"
-  when: not baseline_image_build
+- name: Install and enable chrony for time synchronization
+  ansible.builtin.import_tasks: chrony.yml
+
+- name: Assert SELinux is enforcing and every repository checks signatures
+  ansible.builtin.import_tasks: hardening-asserts.yml
+
+- name: Bound how much disk core dumps may use
+  ansible.builtin.import_tasks: coredump.yml
+
+- name: Blacklist filesystem modules nothing here uses
+  ansible.builtin.import_tasks: modules.yml
+
+# Both checks below are only true once a handler has restarted something, and
+# handlers otherwise run after the whole play. Flushing them here means the role verifies
+# the state it actually left behind.
+- name: Run the handlers before verifying
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the machine is in the state the role claims
+  ansible.builtin.import_tasks: verify.yml

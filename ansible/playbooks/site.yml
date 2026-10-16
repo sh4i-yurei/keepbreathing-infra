@@ -1,0 +1,9 @@
+---
+# Build a machine completely: the baseline, then access.
+#   ansible-playbook playbooks/site.yml --limit <host>
+
+- name: Baseline
+  ansible.builtin.import_playbook: baseline.yml
+
+- name: Access
+  ansible.builtin.import_playbook: access.yml

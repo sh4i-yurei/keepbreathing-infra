@@ -1,2 +1,41 @@
 ---
-# Handlers are filled in as each task is written.
+# Handlers run once at the end of the play, only when a task that notifies them reported
+# a change, and in the order they are DEFINED here rather than the order they are
+# notified. Reordering this file changes what happens. The journal sequence below depends
+# on it: journald restarts, then the journal is flushed to disk, then the two services
+# that read the journal are reconnected.
+
+- name: Reload fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: reloaded
+
+- name: Restart systemd-journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+
+- name: Flush the journal to disk
+  ansible.builtin.command:
+    cmd: journalctl --flush
+  changed_when: true
+
+- name: Restart rsyslog
+  ansible.builtin.systemd_service:
+    name: rsyslog
+    state: restarted
+
+# fail2ban reads the journal with `backend = systemd`. Restarting journald and then
+# flushing the journal can leave its reader attached to files that have moved, and the
+# symptom is the silent one step 7 of the bootstrap procedure warns about: the jail stays loaded and
+# bans nobody. Restarting fail2ban afterwards is the cheap way to be certain. The exact
+# mechanism is not established here — the reader does watch both /run/log/journal and
+# /var/log/journal — so this is belt and braces rather than a known-necessary fix.
+#
+# Defined after the flush, because handlers run in definition order. Active bans survive:
+# fail2ban restores them from /var/lib/fail2ban/fail2ban.sqlite3 at startup.
+
+- name: Restart fail2ban after the journal moved
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted

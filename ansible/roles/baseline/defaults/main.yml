@@ -1,8 +1,20 @@
 ---
-# True when Packer is building an image from a fresh droplet as root. The role then
-# skips the admin account and everything that needs a password to escalate
-# (Ansible decision #7).
-baseline_image_build: false
+# Swap file size. 1G is enough to get dnf through EPEL's metadata on a 1 GB droplet.
+baseline_swap_size: 1G
 
-# The admin account on real boxes. Key-only login, password to sudo.
-baseline_admin_user: keepbreath0
+# Take cockpit out of the firewall's default zone. Cockpit is Red Hat's web admin panel on
+# port 9090; nothing here runs it, and the stock zone permits it whether it is installed or
+# not. It is socket-activated, so if cockpit is ever installed on a box whose baseline
+# removed this rule, it will run but be unreachable with nothing obviously wrong. Set this
+# to false on a machine that is meant to serve cockpit.
+baseline_firewalld_remove_cockpit: true
+
+# these are disk formats the AlmaLinux 9 and 10 kernels do not include; the file is
+# written so the oscap scan reports clean and to cover a kernel that does ship them;
+# udf and squashfs are left loadable because the VMs mount ISO images
+baseline_blacklist_fs_modules:
+  - cramfs
+  - freevxfs
+  - jffs2
+  - hfs
+  - hfsplus

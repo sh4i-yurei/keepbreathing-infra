@@ -1,0 +1,13 @@
+---
+# Set up who can log in to a machine and how: the admin account, its key, sudo and the
+# sshd hardening. These are the tasks that can make a machine unreachable (decision #36).
+#   ansible-playbook playbooks/access.yml --limit hub
+
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+- name: Access
+  hosts: all
+  force_handlers: true
+  roles:
+    - access

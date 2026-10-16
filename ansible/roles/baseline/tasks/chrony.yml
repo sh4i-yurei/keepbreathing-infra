@@ -1,0 +1,16 @@
+---
+# Configure chrony for time synchronization
+# AlmaLinux 9 and 10 ship with chrony installed and enabled, so this is a no-op on a
+# machine that has not been disabled. It is here so a machine where someone disabled it
+# does not silently lose the guarantee of time synchronization.
+
+- name: chrony | Ensure chrony is installed
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+
+- name: chrony | Ensure chrony is enabled and running
+  ansible.builtin.systemd_service:
+    name: chronyd
+    enabled: true
+    state: started

@@ -1,0 +1,13 @@
+---
+# Runs the site's nginx and the contact API as rootless containers.
+baseline_container_user: keepbreath1
+
+# Not on the tailnet. Reached only through the jump server, which is the control plane at
+# its public address — the same path as the ProxyJump entry for web in ~/.ssh/config.
+# Declared here rather than in ansible.cfg's ssh_args so it applies to this host alone and
+# not to the three machines that are reached directly over the tailnet.
+# IdentitiesOnly restricts ssh to the default identity files rather than offering every
+# key the agent holds. It makes no difference when the first key works, which it does
+# here; it matters when one does not, because each extra offer is another failed
+# authentication for a fail2ban jail to count.
+ansible_ssh_common_args: -o ProxyJump=keepbreath0@129.212.184.103 -o IdentitiesOnly=yes

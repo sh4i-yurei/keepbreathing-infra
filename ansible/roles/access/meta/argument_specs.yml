@@ -1,0 +1,10 @@
+---
+argument_specs:
+  main:
+    short_description: Who can log in to the machine, and how
+    options:
+      access_admin_user:
+        type: str
+        default: keepbreath0
+        description: The admin account's name. An empty value means the machine
+          has no admin account, as on an image build or a staging box.

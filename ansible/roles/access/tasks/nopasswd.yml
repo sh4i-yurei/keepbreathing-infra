@@ -1,0 +1,26 @@
+---
+# Decision #38. Root's own NOPASSWD rule, which cloud-init writes on the droplets, is
+# allowed. Any other account or group with one fails the run.
+
+- name: nopasswd | Read sudo's parsed policy for passwordless access
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      cvtsudoers -f json /etc/sudoers |
+      python3 -c
+      {{ lookup('ansible.builtin.file', role_path ~ '/files/sudo-nopasswd-check.py') | quote }}
+    executable: /bin/bash
+  register: access_nopasswd_check
+  changed_when: false
+  failed_when: access_nopasswd_check.rc not in [0, 1, 2]
+  check_mode: false
+
+- name: nopasswd | Check only root has passwordless sudo
+  ansible.builtin.assert:
+    that:
+      - access_nopasswd_check.rc == 0
+    fail_msg: >-
+      The parsed sudo policy check reported:
+      {{ access_nopasswd_check.stdout_lines }}.
+      Find where each one came from before removing it.
+    quiet: true

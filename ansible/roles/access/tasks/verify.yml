@@ -1,0 +1,36 @@
+---
+# Checks that the sshd configuration this role installs is the one that takes effect.
+# Runs after the handlers are flushed, so it checks the state the role left behind.
+# Skipped in check mode, where nothing was written.
+
+- name: verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: verify | Ask sshd which configuration wins
+      ansible.builtin.command: sshd -T
+      register: access_sshd_effective
+      changed_when: false
+      check_mode: false
+
+    - name: verify | The drop-ins are the configuration that wins
+      ansible.builtin.assert:
+        that:
+          - "'permitrootlogin prohibit-password' in _settings or 'permitrootlogin without-password' in _settings"
+          - "'passwordauthentication no' in _settings"
+          - "'kbdinteractiveauthentication no' in _settings"
+          - "access_admin_user | length == 0 or 'authorizedkeysfile /etc/ssh/authorized_keys/%u' in _settings"
+        fail_msg: >-
+          Parsing /etc/ssh/sshd_config and its drop-ins does not produce the settings in
+          10-hardening.conf and, on a machine with an admin account, 11-authorized-keys.conf.
+          sshd takes the FIRST occurrence of a keyword, and the drop-in directory holds
+          files from the distribution and from cloud-init, so a file sorting earlier, or an
+          Include placed below the main file's own settings, silently wins. `validate`
+          proves the file parses; this proves it is the one that takes effect.
+          Note what this does NOT prove: `sshd -T` re-parses the files from disk in a new
+          process, so it cannot see the running daemon's loaded configuration. If the
+          reload handler failed, this still passes.
+          Parsed: {{ _settings | select('match', '^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication|authorizedkeysfile) ') | list }}
+        quiet: true
+      vars:
+        _settings: "{{ access_sshd_effective.stdout_lines | map('lower') | list }}"

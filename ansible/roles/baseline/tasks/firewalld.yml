@@ -1,0 +1,35 @@
+---
+# Bootstrap step 8. The host firewall: installed, running, and starting at boot.
+# No ports here on purpose. Which ports are open is what makes one machine different
+# from another, so ports belong to the per-machine roles (decision #17).
+# Firewalld tasks set permanent and immediate together rather than notifying a reload
+# handler (decision #19).
+#
+# On a subnet router, firewalld's start could in principle discard the rules tailscaled
+# writes, because firewalld flushes its rules when it STARTS, not only on reload. It does
+# not on the nftables backend with no direct rules: firewalld then deletes only its own
+# `inet firewalld` table and skips the iptables flush. Read off control on 2026-09-19,
+# the one subnet router in the inventory: FirewallBackend=nftables, no direct rules,
+# tailscale's 16 rules in the iptables compatibility tables, which firewalld does not
+# own. Not tested by restarting firewalld. A reload is a different path and is still
+# avoided (decision #19).
+
+- name: firewalld | Ensure firewalld is installed
+  ansible.builtin.dnf:
+    name: firewalld
+    state: present
+
+- name: firewalld | Ensure firewalld is running and enabled
+  ansible.builtin.systemd_service:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: firewalld | Remove cockpit service from the default zone
+  ansible.posix.firewalld:
+    service: cockpit
+    zone: public
+    state: disabled
+    immediate: true
+    permanent: true
+  when: baseline_firewalld_remove_cockpit

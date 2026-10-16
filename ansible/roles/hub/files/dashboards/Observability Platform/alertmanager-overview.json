@@ -307,10 +307,12 @@
         "hide": 2,
         "includeAll": true,
         "name": "integration",
-        "query": "label_values(alertmanager_notifications_total{integration=~\".*\"}, integration)",
+        "query": "query_result(sum by (integration) (alertmanager_notifications_total{job=~\"$job\"}) > 0)",
         "refresh": 2,
         "sort": 1,
-        "type": "query"
+        "type": "query",
+        "definition": "query_result(sum by (integration) (alertmanager_notifications_total{job=~\"$job\"}) > 0)",
+        "regex": "/integration=\"([^\"]+)\"/"
       }
     ]
   },

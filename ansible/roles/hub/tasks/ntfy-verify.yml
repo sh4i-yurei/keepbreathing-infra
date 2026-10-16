@@ -1,0 +1,72 @@
+---
+# Notification service decision #18. Checks ntfy is in the state the role claims, after it
+# has been started. Skipped in check mode, where nothing was written or started.
+
+- name: ntfy-verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: ntfy-verify | Wait for ntfy's health check to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_ntfy_port }}/v1/health"
+        return_content: true
+      register: hub_ntfy_health
+      until: hub_ntfy_health.status == 200 and (hub_ntfy_health.json.healthy | default(false))
+      retries: 10
+      delay: 2
+
+    - name: ntfy-verify | Try to publish to pages without logging in
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_ntfy_port }}/pages"
+        method: POST
+        body: "anonymous publish attempt from the ntfy-verify check"
+        status_code: [200, 401, 403]
+      register: hub_ntfy_anonymous
+
+    - name: ntfy-verify | An anonymous publish to pages is refused
+      ansible.builtin.assert:
+        that:
+          - hub_ntfy_anonymous.status in [401, 403]
+        fail_msg: >-
+          ntfy accepted a message to pages with no login (HTTP {{ hub_ntfy_anonymous.status }}).
+          Anyone on the tailnet can page me. Check that auth-default-access is deny-all in
+          ~/.config/ntfy/server.yml and that ntfy restarted after the last change to it.
+        quiet: true
+
+    - name: ntfy-verify | Each token belongs to its own user
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_ntfy_port }}/v1/account"
+        headers:
+          Authorization: "Bearer {{ hub_ntfy_fields.token }}"
+        status_code: [200, 401, 403]
+      vars:
+        hub_ntfy_fields: >-
+          {{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ ('ntfy ' ~ item.name ~ ' (hub)') | quote)
+          | from_json).fields | items2dict(key_name='name', value_name='value') }}
+      register: hub_ntfy_token_check
+      failed_when: (hub_ntfy_token_check.json.username | default('')) != item.name
+      loop: "{{ hub_ntfy_users | selectattr('token', 'defined') | selectattr('token') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: ntfy-verify | Read the running ntfy container
+      containers.podman.podman_container_info:
+        name: ntfy
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_ntfy_container
+
+    - name: ntfy-verify | The ntfy container is running the pinned image
+      ansible.builtin.assert:
+        that:
+          - hub_ntfy_container.containers | length == 1
+          - hub_ntfy_container.containers[0].State.Running
+          - hub_ntfy_container.containers[0].ImageName == hub_ntfy_image
+        fail_msg: >-
+          The ntfy container is missing, stopped, or running an image other than the pinned
+          {{ hub_ntfy_image }}. Running:
+          {{ (hub_ntfy_container.containers | first | default({})).ImageName | default('nothing') }}.
+        quiet: true

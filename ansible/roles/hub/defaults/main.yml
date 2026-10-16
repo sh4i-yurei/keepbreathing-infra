@@ -1,0 +1,20 @@
+---
+# ntfy's image, pinned to the digest of the v2.29.0 tag (Notification service decisions #11
+# and #15). The digest fixes the exact image; the version is only readable from this comment.
+hub_ntfy_image: docker.io/binwiederhier/ntfy@sha256:4c599cf0818965782f93f652bd843e92714992e84d6b88ad17713dc0951cda1f
+
+# The port ntfy is published on, on 127.0.0.1 only. The Tailscale Service forwards to it (#16).
+hub_ntfy_port: 8080
+
+# ntfy's users and what each may do (Notification service decisions #8 and #9). Each one has a
+# vault item named "ntfy <name> (hub)" holding its bcrypt hash and, where token is true, its
+# token. Access is <topic>:ro for read-only or <topic>:wo for write-only.
+hub_ntfy_users:
+  - name: mark
+    access: [pages:ro, tickets:ro]
+  - name: laptop
+    access: [pages:wo, tickets:wo, test:wo]
+    token: true
+  - name: uptime-kuma
+    access: [pages:wo]
+    token: true

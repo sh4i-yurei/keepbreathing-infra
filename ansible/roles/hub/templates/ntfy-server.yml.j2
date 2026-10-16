@@ -1,0 +1,29 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+base-url: "https://ntfy.tail4cf2f3.ts.net"
+listen-http: ":80"
+behind-proxy: true
+cache-file: "/var/lib/ntfy/cache.db"
+auth-file: "/var/lib/ntfy/user.db"
+auth-default-access: "deny-all"
+
+{% set ntfy_vault = {} %}
+{% for user in hub_ntfy_users %}
+{%   set item = lookup('ansible.builtin.pipe', 'bw get item ' ~ ('ntfy ' ~ user.name ~ ' (hub)') | quote) | from_json %}
+{%   set _ = ntfy_vault.update({user.name: dict(item.fields | items2dict(key_name='name', value_name='value'))}) %}
+{% endfor %}
+auth-users:
+{% for user in hub_ntfy_users %}
+  - "{{ user.name }}:{{ ntfy_vault[user.name].bcrypt }}:user"
+{% endfor %}
+
+auth-access:
+{% for user in hub_ntfy_users %}
+{%   for rule in user.access %}
+  - "{{ user.name }}:{{ rule }}"
+{%   endfor %}
+{% endfor %}
+
+auth-tokens:
+{% for user in hub_ntfy_users if user.token | default(false) %}
+  - "{{ user.name }}:{{ ntfy_vault[user.name].token }}"
+{% endfor %}

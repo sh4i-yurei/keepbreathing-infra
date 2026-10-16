@@ -1,0 +1,28 @@
+---
+# Build the hub: its container account, then the generic build, then its services. The
+# account has to exist before baseline runs, because baseline checks the account rather
+# than creating it (Notification service decision #13).
+#   ansible-playbook playbooks/hub.yml --limit hub
+
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+- name: Hub container account
+  hosts: hub
+  tasks:
+    - name: Create the hub's container account
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: account
+
+- name: Baseline
+  ansible.builtin.import_playbook: baseline.yml
+
+- name: Access
+  ansible.builtin.import_playbook: access.yml
+
+- name: Hub services
+  hosts: hub
+  force_handlers: true
+  roles:
+    - hub

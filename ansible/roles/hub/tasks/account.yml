@@ -1,0 +1,9 @@
+---
+# Notification service decision #12. Creates the account the hub's containers run under.
+# useradd gives it a subuid and subgid range, as set in /etc/login.defs; baseline then
+# checks those ranges exist and turns on lingering. No uid is set (Ansible decision #35).
+
+- name: account | Create the container account
+  ansible.builtin.user:
+    name: "{{ hub_container_user }}"
+  register: hub_container_account

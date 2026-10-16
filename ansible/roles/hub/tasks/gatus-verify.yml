@@ -1,0 +1,37 @@
+---
+# Monitoring and alerting step 1. Checks Gatus is in the state the role claims, after it has
+# been started. Skipped in check mode, where nothing was written or started.
+
+- name: gatus-verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: gatus-verify | Wait for Gatus to report itself up
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_gatus_port }}/health"
+        return_content: true
+      register: hub_gatus_health
+      until: hub_gatus_health.status == 200 and ((hub_gatus_health.content | default('', true) or '{}') | from_json).status | default('') == 'UP'
+      retries: 10
+      delay: 2
+
+    - name: gatus-verify | Read the running Gatus container
+      containers.podman.podman_container_info:
+        name: gatus
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_gatus_container
+
+    - name: gatus-verify | The Gatus container is running the pinned image
+      ansible.builtin.assert:
+        that:
+          - hub_gatus_container.containers | length == 1
+          - hub_gatus_container.containers[0].State.Running
+          - hub_gatus_container.containers[0].ImageName == hub_gatus_image
+        fail_msg: >-
+          The gatus container is missing, stopped, or running an image other than the pinned
+          {{ hub_gatus_image }}. Running:
+          {{ (hub_gatus_container.containers | first | default({})).ImageName | default('nothing') }}.
+        quiet: true

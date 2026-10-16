@@ -1,0 +1,38 @@
+---
+argument_specs:
+  main:
+    short_description: Install node_exporter as a systemd service
+    options:
+      node_exporter_version:
+        type: str
+        default: "1.12.1"
+        description: The node_exporter release to install, without the leading v.
+      node_exporter_sha256:
+        type: str
+        default: b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+        description: The SHA-256 of that release's linux-amd64 archive, recorded when the
+          version is chosen.
+      node_exporter_listen_address:
+        type: str
+        default: "127.0.0.1:9100"
+        description: The address and port node_exporter listens on.
+      node_exporter_basic_auth_hash:
+        type: str
+        default: ""
+        description: The bcrypt hash of the scrape password for the user prometheus. Empty turns
+          the password off.
+      node_exporter_basic_auth_password:
+        type: str
+        default: ""
+        no_log: true
+        description: The scrape password itself, used only by the role's checks. Set together with
+          the hash.
+      node_exporter_tls:
+        type: bool
+        default: false
+        description: Serve HTTPS with a self-signed certificate made on the machine.
+      node_exporter_allowed_sources:
+        type: list
+        elements: str
+        default: []
+        description: The addresses firewalld lets reach node_exporter's port. Empty adds no rule.

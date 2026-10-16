@@ -1,0 +1,18 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Alertmanager, the hub's alert router
+
+[Container]
+ContainerName=alertmanager
+Image={{ hub_alertmanager_image }}
+UserNS=keep-id:uid=65534,gid=65534
+PublishPort=127.0.0.1:{{ hub_alertmanager_port }}:9093
+Volume=/home/{{ hub_container_user }}/.config/alertmanager:/etc/alertmanager:ro,Z
+Volume=/home/{{ hub_container_user }}/alertmanager:/alertmanager:Z
+Exec=--config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager --web.config.file=/etc/alertmanager/web.yml --cluster.listen-address=
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

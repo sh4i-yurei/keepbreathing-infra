@@ -1,0 +1,67 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+metrics: true
+
+storage:
+  type: sqlite
+  path: /data/data.db
+
+{% set gatus_vault = lookup('ansible.builtin.pipe', 'bw get item ' ~ 'ntfy gatus (hub)' | quote) | from_json %}
+{% set gatus_fields = gatus_vault.fields | items2dict(key_name='name', value_name='value') %}
+alerting:
+  ntfy:
+    url: "https://ntfy.tail4cf2f3.ts.net"
+    topic: pages
+    token: "{{ gatus_fields.token }}"
+    priority: 5
+    default-alert:
+      failure-threshold: 2
+      send-on-resolved: true
+
+endpoints:
+  - name: ntfy
+    group: hub
+    url: "https://ntfy.tail4cf2f3.ts.net/v1/health"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].healthy == true"
+
+
+  - name: apex
+    group: site
+    url: "https://keepbreath.ing/"
+    interval: 2m
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 336h"
+    alerts:
+      - type: ntfy
+
+  - name: www
+    group: site
+    url: "https://www.keepbreath.ing/"
+    interval: 2m
+    conditions:
+      - "[STATUS] == 200"
+    alerts:
+      - type: ntfy
+
+  - name: contact-form
+    group: site
+    url: "https://keepbreath.ing/api/challenge"
+    interval: 2m
+    conditions:
+      - "[STATUS] == 200"
+      - "len([BODY].signature) > 0"
+    alerts:
+      - type: ntfy
+
+  - name: mail-submission
+    group: mail
+    url: "starttls://mail.keepbreath.ing:587"
+    interval: 15m
+    conditions:
+      - "[CONNECTED] == true"
+      - "[CERTIFICATE_EXPIRATION] > 336h"
+    alerts:
+      - type: ntfy

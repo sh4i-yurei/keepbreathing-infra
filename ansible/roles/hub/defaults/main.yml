@@ -1,10 +1,21 @@
 ---
+# The tailnet's MagicDNS domain. A Tailscale Service named x is reached at x.<this domain>.
+hub_tailnet_domain: tail4cf2f3.ts.net
+
 # ntfy's image, pinned to the digest of the v2.29.0 tag (Notification service decisions #11
-# and #15). The digest fixes the exact image; the version is only readable from this comment.
+# and #15). The digest fixes the exact image; hub_ntfy_version is changed with it.
 hub_ntfy_image: docker.io/binwiederhier/ntfy@sha256:4c599cf0818965782f93f652bd843e92714992e84d6b88ad17713dc0951cda1f
+hub_ntfy_version: "2.29.0"
+
+# The ntfy version files/ntfy-alertmanager-page.yml was copied from (Monitoring and alerting
+# decision #27). ntfy-setup stops the run while this differs from hub_ntfy_version.
+hub_ntfy_alertmanager_template_from: "2.29.0"
 
 # The port ntfy is published on, on 127.0.0.1 only. The Tailscale Service forwards to it (#16).
 hub_ntfy_port: 8080
+
+# The port ntfy's metrics are published on, on 127.0.0.1 only, for Prometheus (decision #42).
+hub_ntfy_metrics_port: 9095
 
 # ntfy's users and what each may do (Notification service decisions #8 and #9). Each one has a
 # vault item named "ntfy <name> (hub)" holding its bcrypt hash and, where token is true, its
@@ -15,6 +26,69 @@ hub_ntfy_users:
   - name: laptop
     access: [pages:wo, tickets:wo, test:wo]
     token: true
-  - name: uptime-kuma
+  - name: gatus
     access: [pages:wo]
     token: true
+  - name: alertmanager
+    access: [pages:wo, tickets:wo]
+    token: true
+
+# Gatus's image, pinned to the digest of the v5.37.0 tag (Monitoring and alerting decision #17).
+# The digest fixes the exact image; the version is only readable from this comment.
+hub_gatus_image: ghcr.io/twin/gatus@sha256:094eb186e55235db367e90e9d56140e5897b7044c41de23cde4cc18e6da1242e
+
+# The port Gatus is published on, on 127.0.0.1 only. ntfy has 8080.
+hub_gatus_port: 8081
+
+# Prometheus's image, pinned to the digest of the v3.13.4 tag on Quay (Monitoring and alerting
+# decision #15). The digest fixes the exact image; the version is only readable from this comment.
+hub_prometheus_image: quay.io/prometheus/prometheus@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+
+# The port Prometheus is published on, on 127.0.0.1 only.
+hub_prometheus_port: 9090
+
+# The address inside Prometheus's container that pasta maps to the hub's loopback (decision #24).
+# Podman already uses 169.254.1.1 for DNS and 169.254.1.2 for host.containers.internal.
+hub_host_loopback: 169.254.1.3
+
+# Alertmanager's image, pinned to the digest of the v0.34.1 tag on Quay (Monitoring and alerting
+# decision #14). The digest fixes the exact image; the version is only readable from this comment.
+hub_alertmanager_image: quay.io/prometheus/alertmanager@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+
+# The port Alertmanager is published on, on 127.0.0.1 only. It requires a password (decision #25).
+hub_alertmanager_port: 9093
+
+# Machines whose node_exporter the hub scrapes over the tailnet, with a password and plain HTTP,
+# because the tailnet encrypts the traffic (Monitoring and alerting decision #30). Each has a vault
+# item named "node_exporter prometheus (<name>)". vaultserv is installed by playbooks/node-exporter.yml,
+# almaserv by hand.
+hub_node_exporter_tailnet_hosts:
+  - name: vaultserv
+    address: "100.65.221.62:9100"
+  - name: almaserv
+    address: "100.116.219.6:9100"
+
+# The Podman exporter's image, pinned to the digest of the v2.0.0 tag on Quay (Monitoring and alerting
+# decision #34). The digest fixes the exact image; the version is only readable from this comment.
+hub_podman_exporter_image: quay.io/navidys/prometheus-podman-exporter@sha256:ddaa9003e86f435f2d958ab68041959e4d2bb290a350a2649a123c449db032db
+
+# The port the Podman exporter is published on, on 127.0.0.1 only.
+hub_podman_exporter_port: 9882
+
+# Grafana's image, pinned to the digest of the 13.2.4 tag on Docker Hub (Monitoring and alerting
+# decision #41). The digest fixes the exact image; hub_grafana_version is changed with it.
+hub_grafana_image: docker.io/grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+hub_grafana_version: "13.2.4"
+
+# The port Grafana is published on, on 127.0.0.1 only. The Tailscale Service forwards to it.
+hub_grafana_port: 3000
+
+# Grafana's plugins, each pinned by the SHA-256 of its linux-amd64 zip from grafana.com's plugin
+# API, recorded when the version is chosen (decisions #39, #41 and #44).
+hub_grafana_plugins:
+  - id: yesoreyeram-infinity-datasource
+    version: "4.1.1"
+    sha256: e24f6030e998cf5dd76c70bb26a5bcb56a34bc530446358e21ae0164f21af3d5
+  - id: grafana-github-datasource
+    version: "2.9.3"
+    sha256: 8e77f6679afbb3a4d5a899692da65f60905bec6db50a1ad80f78c95a20ff6a12

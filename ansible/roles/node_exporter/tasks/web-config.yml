@@ -1,0 +1,85 @@
+---
+# node_exporter's web config file. On a machine that serves HTTPS, also its private key and
+# self-signed certificate, made on the machine so the key never leaves it (Monitoring and
+# alerting decisions #26 and #29). The certificate names the address in
+# node_exporter_listen_address, lasts a year, and is remade on any run where fewer than 30 days
+# remain.
+
+- name: web-config | Make the folder for the web config, key and certificate
+  ansible.builtin.file:
+    path: /etc/node_exporter
+    state: directory
+    owner: root
+    group: node_exporter
+    mode: "0755"
+  become: true
+
+- name: web-config | HTTPS only
+  when: node_exporter_tls
+  vars:
+    node_exporter_listen_ip: "{{ node_exporter_listen_address.split(':')[0] }}"
+  block:
+    # community.crypto's modules run on the managed machine and need this library there.
+    - name: web-config | Install the Python cryptography library
+      ansible.builtin.dnf:
+        name: python3-cryptography
+        state: present
+      become: true
+
+    - name: web-config | Make the private key
+      community.crypto.openssl_privatekey:
+        path: /etc/node_exporter/node_exporter.key
+        type: ECC
+        curve: secp256r1
+        owner: root
+        group: node_exporter
+        mode: "0640"
+      become: true
+
+    # The request is built in memory and written nowhere, so this task changes nothing.
+    - name: web-config | Build the certificate signing request for the listen address
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: /etc/node_exporter/node_exporter.key
+        common_name: "{{ node_exporter_listen_ip }}"
+        subject_alt_name:
+          - "IP:{{ node_exporter_listen_ip }}"
+      register: node_exporter_csr
+      changed_when: false
+      become: true
+
+    - name: web-config | Read whether a certificate exists
+      ansible.builtin.stat:
+        path: /etc/node_exporter/node_exporter.crt
+      register: node_exporter_cert_file
+      become: true
+
+    - name: web-config | Read whether the certificate is still valid in 30 days
+      community.crypto.x509_certificate_info:
+        path: /etc/node_exporter/node_exporter.crt
+        valid_at:
+          renewal: "+30d"
+      register: node_exporter_cert_info
+      when: node_exporter_cert_file.stat.exists
+      become: true
+
+    - name: web-config | Make the self-signed certificate, or remake it when it is due
+      community.crypto.x509_certificate:
+        path: /etc/node_exporter/node_exporter.crt
+        privatekey_path: /etc/node_exporter/node_exporter.key
+        csr_content: "{{ node_exporter_csr.csr }}"
+        provider: selfsigned
+        selfsigned_not_after: "+365d"
+        force: "{{ node_exporter_cert_file.stat.exists and not node_exporter_cert_info.valid_at.renewal }}"
+        owner: root
+        group: node_exporter
+        mode: "0644"
+      become: true
+
+- name: web-config | Write the web config
+  ansible.builtin.template:
+    src: node_exporter-web.yml.j2
+    dest: /etc/node_exporter/web.yml
+    owner: root
+    group: node_exporter
+    mode: "0640"
+  become: true

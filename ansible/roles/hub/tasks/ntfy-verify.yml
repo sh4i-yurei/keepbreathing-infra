@@ -22,6 +22,9 @@
         body: "anonymous publish attempt from the ntfy-verify check"
         status_code: [200, 401, 403]
       register: hub_ntfy_anonymous
+      until: hub_ntfy_anonymous is succeeded
+      retries: 3
+      delay: 2
 
     - name: ntfy-verify | An anonymous publish to pages is refused
       ansible.builtin.assert:

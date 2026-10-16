@@ -1,0 +1,8 @@
+---
+# Files copied unchanged from upstream projects. They keep upstream's formatting so they can be
+# compared byte for byte with their pinned source.
+exclude_paths:
+  - roles/hub/files/node-mixin-rules.yml
+  - roles/hub/files/node-mixin-alerts.yml
+  - roles/hub/files/prometheus-mixin-alerts.yml
+  - roles/hub/files/alertmanager-mixin-alerts.yml

@@ -20,3 +20,53 @@
   become_user: "{{ hub_container_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: Restart gatus
+  ansible.builtin.systemd_service:
+    name: gatus.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: Restart prometheus
+  ansible.builtin.systemd_service:
+    name: prometheus.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: Restart alertmanager
+  ansible.builtin.systemd_service:
+    name: alertmanager.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: Restart podman-exporter
+  ansible.builtin.systemd_service:
+    name: podman-exporter.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: Restart grafana
+  ansible.builtin.systemd_service:
+    name: grafana.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"

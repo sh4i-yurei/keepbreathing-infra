@@ -1,0 +1,16 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# Grafana loads every dashboard in files/dashboards from this folder (Monitoring and alerting
+# decisions #40 and #41), and each subfolder becomes a Grafana folder of the same name
+# (foldersFromFilesStructure). allowUiUpdates: false means changes made in the browser are exported as
+# JSON and committed over the file, not saved over it. disableDeletion: false means a dashboard whose
+# file is deleted is deleted from Grafana too, so the repo is the whole list.
+apiVersion: 1
+
+providers:
+  - name: hub
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: true

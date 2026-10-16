@@ -1,0 +1,16 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Gatus, the hub's uptime checks
+
+[Container]
+ContainerName=gatus
+Image={{ hub_gatus_image }}
+PublishPort=127.0.0.1:{{ hub_gatus_port }}:8080
+Volume=/home/{{ hub_container_user }}/gatus:/data:Z
+Volume=/home/{{ hub_container_user }}/.config/gatus:/config:ro,Z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

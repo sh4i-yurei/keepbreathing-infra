@@ -1,0 +1,68 @@
+---
+# Checks node_exporter is in the state the role claims, after it has been started. Skipped in
+# check mode, where nothing was installed or started.
+
+- name: verify | Only on a real run
+  when: not ansible_check_mode
+  vars:
+    node_exporter_url: "{{ 'https' if node_exporter_tls else 'http' }}://{{ node_exporter_listen_address }}/metrics"
+    node_exporter_password_set: "{{ node_exporter_basic_auth_hash | length > 0 }}"
+
+  block:
+    - name: verify | It answers on its listen address with the pinned version
+      ansible.builtin.uri:
+        url: "{{ node_exporter_url }}"
+        url_username: "{{ 'prometheus' if node_exporter_password_set | bool else omit }}"
+        url_password: "{{ node_exporter_basic_auth_password if node_exporter_password_set | bool else omit }}"
+        force_basic_auth: "{{ node_exporter_password_set | bool }}"
+        ca_path: "{{ '/etc/node_exporter/node_exporter.crt' if node_exporter_tls else omit }}"
+        return_content: true
+      register: node_exporter_metrics
+      until: >-
+        node_exporter_metrics.status == 200 and
+        node_exporter_metrics.content is search('node_exporter_build_info\{[^}]*version="' ~ node_exporter_version ~ '"')
+      retries: 10
+      delay: 2
+      no_log: "{{ node_exporter_password_set | bool }}"
+
+    - name: verify | It reports the collectors switched on beyond the defaults
+      ansible.builtin.assert:
+        that:
+          - node_exporter_metrics.content is search('node_systemd_unit_state\\{')
+          - node_exporter_metrics.content is search('node_systemd_service_restart_total\\{')
+          - node_exporter_metrics.content is search('node_processes_pids ')
+          - node_exporter_metrics.content is search('node_tcp_connection_states\\{')
+          - node_exporter_metrics.content is search('node_interrupts_total\\{')
+        fail_msg: >-
+          node_exporter is missing the metrics of a collector the unit switches on: systemd
+          (including service restart counts), processes, tcpstat or interrupts.
+        quiet: true
+
+    - name: verify | Without the password it is refused
+      ansible.builtin.uri:
+        url: "{{ node_exporter_url }}"
+        ca_path: "{{ '/etc/node_exporter/node_exporter.crt' if node_exporter_tls else omit }}"
+        status_code: 401
+      when: node_exporter_password_set | bool
+
+    - name: verify | Plain HTTP is refused
+      ansible.builtin.uri:
+        url: "http://{{ node_exporter_listen_address }}/metrics"
+      register: node_exporter_plain_http
+      failed_when: node_exporter_plain_http.status == 200
+      when: node_exporter_tls
+
+    - name: verify | Read which account it runs as
+      ansible.builtin.command: ps -o user:32= -C node_exporter
+      register: node_exporter_user
+      changed_when: false
+
+    - name: verify | It runs as its own account, not root
+      ansible.builtin.assert:
+        that:
+          - node_exporter_user.stdout_lines | length > 0
+          - node_exporter_user.stdout_lines | unique == ['node_exporter']
+        fail_msg: >-
+          node_exporter is not running as node_exporter. Running as:
+          {{ node_exporter_user.stdout_lines | unique | join(', ') | default('nothing', true) }}.
+        quiet: true

@@ -6,8 +6,44 @@
 - name: Create the container account
   ansible.builtin.import_tasks: account.yml
 
+- name: Route the droplets' VPC through the tailnet, keeping the hub's own subnet direct
+  ansible.builtin.import_tasks: tailnet-routes-setup.yml
+
+- name: Check the hub's routing is in the state the role claims
+  ansible.builtin.import_tasks: tailnet-routes-verify.yml
+
 - name: Run ntfy
-  ansible.builtin.import_tasks: ntfy.yml
+  ansible.builtin.import_tasks: ntfy-setup.yml
 
 - name: Check ntfy is in the state the role claims
   ansible.builtin.import_tasks: ntfy-verify.yml
+
+- name: Run Gatus
+  ansible.builtin.import_tasks: gatus-setup.yml
+
+- name: Check Gatus is in the state the role claims
+  ansible.builtin.import_tasks: gatus-verify.yml
+
+- name: Run Alertmanager
+  ansible.builtin.import_tasks: alertmanager-setup.yml
+
+- name: Check Alertmanager is in the state the role claims
+  ansible.builtin.import_tasks: alertmanager-verify.yml
+
+- name: Run the Podman exporter
+  ansible.builtin.import_tasks: podman-exporter-setup.yml
+
+- name: Check the Podman exporter is in the state the role claims
+  ansible.builtin.import_tasks: podman-exporter-verify.yml
+
+- name: Run Prometheus
+  ansible.builtin.import_tasks: prometheus-setup.yml
+
+- name: Run Grafana
+  ansible.builtin.import_tasks: grafana-setup.yml
+
+- name: Check Prometheus is in the state the role claims
+  ansible.builtin.import_tasks: prometheus-verify.yml
+
+- name: Check Grafana is in the state the role claims
+  ansible.builtin.import_tasks: grafana-verify.yml

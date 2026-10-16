@@ -1,0 +1,36 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Grafana, the hub's dashboards
+
+[Container]
+ContainerName=grafana
+Image={{ hub_grafana_image }}
+Network=pasta:--map-host-loopback,{{ hub_host_loopback }}
+UserNS=keep-id:uid=472,gid=0
+PublishPort=127.0.0.1:{{ hub_grafana_port }}:3000
+Volume=/home/{{ hub_container_user }}/.config/grafana/datasources:/etc/grafana/provisioning/datasources:ro,Z
+Volume=/home/{{ hub_container_user }}/.config/grafana/providers:/etc/grafana/provisioning/dashboards:ro,Z
+Volume=/home/{{ hub_container_user }}/.config/grafana/dashboards:/etc/grafana/dashboards:ro,z
+Volume=/home/{{ hub_container_user }}/.config/grafana/plugins:/var/lib/grafana-plugins:ro,Z
+Volume=/home/{{ hub_container_user }}/.config/grafana/secrets:/etc/grafana/secrets:ro,Z
+Volume=/home/{{ hub_container_user }}/grafana:/var/lib/grafana:Z
+Environment=GF_PATHS_PLUGINS=/var/lib/grafana-plugins
+Environment=GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/secrets/admin-password
+Environment=GF_METRICS_BASIC_AUTH_USERNAME=prometheus
+Environment=GF_METRICS_BASIC_AUTH_PASSWORD__FILE=/etc/grafana/secrets/prometheus-password
+Environment=GF_SERVER_ROOT_URL=https://grafana.{{ hub_tailnet_domain }}/
+Environment=GF_SECURITY_COOKIE_SECURE=true
+Environment=GF_ANALYTICS_REPORTING_ENABLED=false
+Environment=GF_ANALYTICS_CHECK_FOR_UPDATES=false
+Environment=GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+Environment=GF_PLUGINS_PREINSTALL_DISABLED=true
+Environment=GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/dashboards/home.json
+
+[Service]
+Restart=always
+# The first start translates the image's file owners for keep-id, which took longer than systemd's
+# default 90 seconds on the hub. Later starts reuse that copy.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

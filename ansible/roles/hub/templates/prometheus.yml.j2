@@ -1,0 +1,97 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+  - /etc/prometheus/container-missing-rules.yml
+  - /etc/prometheus/node-mixin-rules.yml
+  - /etc/prometheus/node-mixin-alerts.yml
+  - /etc/prometheus/prometheus-mixin-alerts.yml
+  - /etc/prometheus/alertmanager-mixin-alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["{{ hub_host_loopback }}:{{ hub_alertmanager_port }}"]
+      basic_auth:
+        username: prometheus
+        password_file: /etc/prometheus/alertmanager-password
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  - job_name: node
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:9100"]
+        labels:
+          instance: hub
+
+  - job_name: gatus
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_gatus_port }}"]
+
+  # The alert path is watched too (Monitoring and alerting decision #42). Alertmanager's /metrics
+  # needs the same password as its API.
+  - job_name: alertmanager
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/alertmanager-password
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_alertmanager_port }}"]
+
+  - job_name: ntfy
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_ntfy_metrics_port }}"]
+
+  - job_name: podman
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_podman_exporter_port }}"]
+        labels:
+          instance: hub
+
+  # Grafana's metrics share its web port and require their own vault password (decision #48).
+  - job_name: grafana
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/grafana-password
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_grafana_port }}"]
+{% for host in groups['droplets'] %}
+
+  # node_exporter on {{ host }}, over HTTPS with its own password (decisions #26, #29 and #32).
+  # Relabelled job="node", the job node_exporter's rules select.
+  - job_name: node-{{ host }}
+    scheme: https
+    tls_config:
+      ca_file: /etc/prometheus/droplets.crt
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/node-{{ host }}-password
+    static_configs:
+      - targets: ["{{ hostvars[host].node_exporter_listen_address }}"]
+        labels:
+          instance: {{ host }}
+    relabel_configs:
+      - target_label: job
+        replacement: node
+{% endfor %}
+{% for host in hub_node_exporter_tailnet_hosts %}
+
+  # node_exporter on {{ host.name }}, over the tailnet with its own password (decision #30).
+  # Relabelled job="node", the job node_exporter's rules select.
+  - job_name: node-{{ host.name }}
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/node-{{ host.name }}-password
+    static_configs:
+      - targets: ["{{ host.address }}"]
+        labels:
+          instance: {{ host.name }}
+    relabel_configs:
+      - target_label: job
+        replacement: node
+{% endfor %}

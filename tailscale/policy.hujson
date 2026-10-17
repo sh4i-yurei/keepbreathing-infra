@@ -22,9 +22,10 @@
 			"ip":  ["*"],
 		},
 
-		// Vaultwarden: members (laptop, phone) only. Tagged servers are not members.
+		// Vaultwarden: my own devices (laptop, phone), and the hub for Gatus's check of /alive.
+		// Monitoring and alerting decision #31.
 		{
-			"src": ["autogroup:member"],
+			"src": ["autogroup:member", "tag:hub"],
 			"dst": ["svc:vault"],
 			"ip":  ["443"],
 		},

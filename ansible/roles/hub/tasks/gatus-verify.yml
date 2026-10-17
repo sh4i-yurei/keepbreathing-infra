@@ -35,3 +35,16 @@
           {{ hub_gatus_image }}. Running:
           {{ (hub_gatus_container.containers | first | default({})).ImageName | default('nothing') }}.
         quiet: true
+
+    - name: gatus-verify | The password vault check is loaded and passing
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_gatus_port }}/api/v1/endpoints/statuses"
+        return_content: true
+      register: hub_gatus_statuses
+      until: >-
+        hub_gatus_statuses.status == 200
+        and (hub_gatus_statuses.json | selectattr('key', 'equalto', 'vault_password-vault')
+        | map(attribute='results') | first | default([], true)
+        | map(attribute='success') | list | last | default(false, true))
+      retries: 15
+      delay: 10

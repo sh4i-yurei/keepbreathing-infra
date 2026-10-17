@@ -65,3 +65,13 @@ endpoints:
       - "[CERTIFICATE_EXPIRATION] > 336h"
     alerts:
       - type: ntfy
+
+  - name: password-vault
+    group: vault
+    url: "https://vault.tail4cf2f3.ts.net/alive"
+    interval: 2m
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 336h"
+    alerts:
+      - type: ntfy

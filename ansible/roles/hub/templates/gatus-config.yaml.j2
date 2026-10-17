@@ -7,6 +7,8 @@ storage:
 
 {% set gatus_vault = lookup('ansible.builtin.pipe', 'bw get item ' ~ 'ntfy gatus (hub)' | quote) | from_json %}
 {% set gatus_fields = gatus_vault.fields | items2dict(key_name='name', value_name='value') %}
+{% set github_token = lookup('ansible.builtin.pipe', 'bw get password ' ~ 'github gatus (hub)' | quote) %}
+
 alerting:
   ntfy:
     url: "https://ntfy.tail4cf2f3.ts.net"
@@ -73,5 +75,45 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[CERTIFICATE_EXPIRATION] > 336h"
+    alerts:
+      - type: ntfy
+
+  - name: last-deploy
+    group: github
+    url: "https://api.github.com/repos/sh4i-yurei/keepbreathing/actions/workflows/deploy.yml/runs?status=completed&per_page=1"
+    interval: 5m
+    headers:
+      Authorization: "Bearer {{ github_token }}"
+      Accept: application/vnd.github+json
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].workflow_runs[0].conclusion == success"
+    alerts:
+      - type: ntfy
+
+  - name: deploy-queue
+    group: github
+    url: "https://api.github.com/repos/sh4i-yurei/keepbreathing/actions/workflows/deploy.yml/runs?status=queued&per_page=1"
+    interval: 5m
+    headers:
+      Authorization: "Bearer {{ github_token }}"
+      Accept: application/vnd.github+json
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].total_count == 0"
+    alerts:
+      - type: ntfy
+        failure-threshold: 3
+
+  - name: runner
+    group: github
+    url: "https://api.github.com/repos/sh4i-yurei/keepbreathing/actions/runners"
+    interval: 5m
+    headers:
+      Authorization: "Bearer {{ github_token }}"
+      Accept: application/vnd.github+json
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].runners[0].status == online"
     alerts:
       - type: ntfy

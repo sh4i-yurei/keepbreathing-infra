@@ -31,3 +31,16 @@ datasources:
     type: yesoreyeram-infinity-datasource
     uid: infinity
     editable: false
+
+{% set github_app = lookup('ansible.builtin.pipe', 'bw get item ' ~ 'github app grafana (hub)' | quote) | from_json %}
+{% set github_fields = github_app.fields | items2dict(key_name='name', value_name='value') %}
+  - name: GitHub
+    type: grafana-github-datasource
+    uid: github
+    jsonData:
+      selectedAuthType: github-app
+      appId: "{{ github_fields.app_id }}"
+      installationId: "{{ github_fields.installation_id }}"
+    secureJsonData:
+      privateKey: {{ github_fields.private_key | to_json }}
+    editable: false

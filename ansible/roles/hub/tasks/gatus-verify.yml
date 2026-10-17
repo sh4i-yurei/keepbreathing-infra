@@ -48,3 +48,20 @@
         | map(attribute='success') | list | last | default(false, true))
       retries: 15
       delay: 10
+
+    - name: gatus-verify | Each GitHub check is loaded and passing
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_gatus_port }}/api/v1/endpoints/statuses"
+        return_content: true
+      register: hub_gatus_github_statuses
+      until: >-
+        hub_gatus_github_statuses.status == 200
+        and (hub_gatus_github_statuses.json | selectattr('key', 'equalto', item)
+        | map(attribute='results') | first | default([], true)
+        | map(attribute='success') | list | last | default(false, true))
+      retries: 15
+      delay: 10
+      loop:
+        - github_last-deploy
+        - github_deploy-queue
+        - github_runner

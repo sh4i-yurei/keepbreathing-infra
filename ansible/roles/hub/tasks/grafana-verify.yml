@@ -131,6 +131,19 @@
         hub_grafana_alertmanager_status.status != 200
         or hub_grafana_alertmanager_status.json.cluster.status != 'disabled'
 
+    # The GitHub plugin has a server-side health check, which signs in to GitHub as the App
+    # (Monitoring and alerting decision #50).
+    - name: grafana-verify | Grafana signs in to GitHub as the App
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_url }}/api/datasources/uid/github/health"
+        url_username: admin
+        url_password: "{{ hub_grafana_admin_password }}"
+        force_basic_auth: true
+      register: hub_grafana_github_health
+      failed_when: >-
+        hub_grafana_github_health.status != 200
+        or hub_grafana_github_health.json.status != 'OK'
+
     - name: grafana-verify | Each dashboard in files/dashboards is loaded, with its title, in its folder
       ansible.builtin.uri:
         url: "{{ hub_grafana_url }}/api/dashboards/uid/{{ (lookup('ansible.builtin.file', 'dashboards/' ~ item) | from_json).uid }}"

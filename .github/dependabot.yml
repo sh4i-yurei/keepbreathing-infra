@@ -1,0 +1,11 @@
+# Watches the Actions that CI uses. Python packages are left out on purpose: requirements.txt
+# sets minimum versions, so CI already installs the newest release on every run.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

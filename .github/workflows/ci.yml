@@ -1,0 +1,52 @@
+# Runs the same checks I run on the laptop, on every pull request and every push to main.
+# The job names are what the ruleset on main requires by name, so renaming a job means
+# updating the ruleset in the same change.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ansible-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        # ansible.cfg sets a relative roles path, so the checks only work from ansible/.
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          # The laptop runs Ansible on 3.14; CI matches it.
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: ansible-lint
+
+  syntax-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      # Every playbook, so a new one is checked without editing this file. The secrets in
+      # group_vars come from bw lookups, which a syntax check never evaluates.
+      - run: |
+          for playbook in playbooks/*.yml; do
+            ansible-playbook --syntax-check "$playbook"
+          done

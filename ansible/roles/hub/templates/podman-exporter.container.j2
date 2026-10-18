@@ -14,7 +14,7 @@ Volume=%t/podman/podman.sock:/run/podman/podman.sock
 UserNS=keep-id:uid=65534
 SecurityLabelType=container_runtime_t
 PublishPort=127.0.0.1:{{ hub_podman_exporter_port }}:9882
-Exec=--collector.enhance-metrics
+Exec=--collector.enhance-metrics --collector.image --collector.system --collector.volume
 
 [Service]
 Restart=always

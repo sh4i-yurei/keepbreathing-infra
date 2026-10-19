@@ -1,0 +1,25 @@
+#!/usr/bin/bash
+# Managed by Ansible (roles/node_exporter). Edits here are overwritten.
+set -euo pipefail
+
+destination={{ (node_exporter_textfile_directory ~ '/reboot-required.prom') | quote }}
+temporary=$(mktemp "${destination}.XXXXXX")
+trap 'rm -f -- "$temporary"' EXIT
+
+if /usr/bin/needs-restarting -r >/dev/null 2>&1; then
+    reboot_required=0
+else
+    status=$?
+    if [[ $status -ne 1 ]]; then
+        exit "$status"
+    fi
+    reboot_required=1
+fi
+
+printf '%s\n' \
+    '# HELP node_reboot_required Whether this machine needs a reboot after package updates.' \
+    '# TYPE node_reboot_required gauge' \
+    "node_reboot_required ${reboot_required}" >"$temporary"
+chmod 0644 "$temporary"
+mv -f -- "$temporary" "$destination"
+trap - EXIT

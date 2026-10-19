@@ -19,6 +19,10 @@ node_exporter_basic_auth_password: ""
 # address in node_exporter_listen_address (Monitoring and alerting decisions #26 and #29).
 node_exporter_tls: false
 
+# The textfile collector reads metrics written by system services that do not expose an HTTP
+# endpoint. The reboot-required timer writes its metric here.
+node_exporter_textfile_directory: /var/lib/node_exporter/textfile_collector
+
 # The addresses firewalld lets reach node_exporter's port. The role removes its source-address
 # rich rules when their addresses leave this list. Empty removes every rule the role manages.
 node_exporter_allowed_sources: []

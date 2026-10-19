@@ -12,3 +12,17 @@
     name: node_exporter.service
     state: restarted
   become: true
+
+- name: Run node_exporter reboot-required check
+  ansible.builtin.systemd_service:
+    name: node-exporter-reboot-required.service
+    state: started
+  become: true
+  when: not ansible_check_mode
+
+- name: Restart node_exporter reboot-required timer
+  ansible.builtin.systemd_service:
+    name: node-exporter-reboot-required.timer
+    state: restarted
+  become: true
+  when: not ansible_check_mode

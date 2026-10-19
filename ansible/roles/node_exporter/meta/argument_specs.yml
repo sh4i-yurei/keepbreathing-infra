@@ -31,6 +31,11 @@ argument_specs:
         type: bool
         default: false
         description: Serve HTTPS with a self-signed certificate made on the machine.
+      node_exporter_textfile_directory:
+        type: path
+        default: /var/lib/node_exporter/textfile_collector
+        description: Directory node_exporter's textfile collector reads. The reboot-required
+          timer writes its metric here.
       node_exporter_allowed_sources:
         type: list
         elements: str

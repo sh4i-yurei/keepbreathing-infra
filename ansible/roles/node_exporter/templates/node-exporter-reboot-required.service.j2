@@ -1,0 +1,13 @@
+# Managed by Ansible (roles/node_exporter). Edits here are overwritten.
+[Unit]
+Description=Write whether package updates require a reboot for node_exporter
+Documentation=man:needs-restarting(1)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/node-exporter-reboot-required
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ node_exporter_textfile_directory }}

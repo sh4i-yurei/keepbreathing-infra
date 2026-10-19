@@ -33,10 +33,30 @@
           - node_exporter_metrics.content is search('node_processes_pids ')
           - node_exporter_metrics.content is search('node_tcp_connection_states\\{')
           - node_exporter_metrics.content is search('node_interrupts_total\\{')
+          - node_exporter_metrics.content is search('node_reboot_required [01](\\n|$)')
         fail_msg: >-
           node_exporter is missing the metrics of a collector the unit switches on: systemd
-          (including service restart counts), processes, tcpstat or interrupts.
+          (including service restart counts), processes, tcpstat, interrupts or the
+          reboot-required textfile metric.
         quiet: true
+
+    - name: verify | The reboot-required timer is enabled
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-enabled
+          - --quiet
+          - node-exporter-reboot-required.timer
+      changed_when: false
+
+    - name: verify | The reboot-required timer is active
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - is-active
+          - --quiet
+          - node-exporter-reboot-required.timer
+      changed_when: false
 
     - name: verify | Without the password it is refused
       ansible.builtin.uri:

@@ -29,8 +29,9 @@ apart.
    restart metrics so the mixin's crash-loop alert has `node_systemd_service_restart_total`. It
    adds `--web.config.file` when there is one. It retries every 5 seconds with no start limit, so a
    tailnet listen address that appears after boot is picked up.
-6. Opens the port in firewalld's `public` zone to each address in `node_exporter_allowed_sources`.
-   It only adds rules: an address removed from the list keeps its rule until it is removed by hand.
+6. Reconciles the port's source-address rich rules in firewalld's `public` zone with
+   `node_exporter_allowed_sources`, adding current addresses and removing stale ones. It touches only
+   IPv4 TCP accept rules on node_exporter's port, read by `filter_plugins/node_exporter_firewall.py`.
 7. Starts it and enables it at boot, then checks it: the metrics page answers with the pinned
    version, using the password and checking the certificate when those are on; a request without
    the password gets `401`; plain HTTP is refused; each explicitly enabled collector returns a
@@ -46,7 +47,7 @@ apart.
 | `node_exporter_basic_auth_hash` | empty | The bcrypt hash of the scrape password for the user `prometheus`; empty turns the password off |
 | `node_exporter_basic_auth_password` | empty | The password itself, used only by the checks |
 | `node_exporter_tls` | `false` | Serve HTTPS with a self-signed certificate made on the machine |
-| `node_exporter_allowed_sources` | empty | Addresses firewalld lets reach the port; empty adds no rule |
+| `node_exporter_allowed_sources` | empty | Complete set of addresses firewalld lets reach the port; empty removes every managed rule |
 
 To change version, set both the version and its checksum together. On the droplets the password
 settings come from `group_vars/droplets.yml`, which reads them from each droplet's own vault item.

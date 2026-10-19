@@ -19,5 +19,6 @@ node_exporter_basic_auth_password: ""
 # address in node_exporter_listen_address (Monitoring and alerting decisions #26 and #29).
 node_exporter_tls: false
 
-# The addresses firewalld lets reach node_exporter's port. Empty means the role adds no rule.
+# The addresses firewalld lets reach node_exporter's port. The role removes its source-address
+# rich rules when their addresses leave this list. Empty removes every rule the role manages.
 node_exporter_allowed_sources: []

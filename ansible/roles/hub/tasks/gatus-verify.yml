@@ -65,3 +65,21 @@
         - github_last-deploy
         - github_deploy-queue
         - github_runner
+
+    - name: gatus-verify | Each new health, certificate and domain check is loaded and passing
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_gatus_port }}/api/v1/endpoints/statuses"
+        return_content: true
+      register: hub_gatus_added_statuses
+      until: >-
+        hub_gatus_added_statuses.status == 200
+        and (hub_gatus_added_statuses.json | selectattr('key', 'equalto', item)
+        | map(attribute='results') | first | default([], true)
+        | map(attribute='success') | list | last | default(false, true))
+      retries: 15
+      delay: 10
+      loop:
+        - hub_ntfy
+        - hub_grafana
+        - site_www
+        - site_domain-expiration

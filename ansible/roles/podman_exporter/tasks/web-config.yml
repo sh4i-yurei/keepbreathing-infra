@@ -1,0 +1,123 @@
+---
+- name: web-config | Make the folder for web config, key and certificate
+  ansible.builtin.file:
+    path: /etc/podman_exporter
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: web-config | HTTPS only
+  when: podman_exporter_tls
+  vars:
+    podman_exporter_listen_ip: "{{ podman_exporter_listen_address.split(':')[0] }}"
+  block:
+    - name: web-config | Install the Python cryptography library
+      ansible.builtin.dnf:
+        name: python3-cryptography
+        state: present
+      become: true
+
+    - name: web-config | Read whether the private key already exists
+      ansible.builtin.stat:
+        path: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.key
+      register: podman_exporter_private_key
+      become: true
+
+    - name: web-config | Make the private key
+      community.crypto.openssl_privatekey:
+        path: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.key
+        type: ECC
+        curve: secp256r1
+        owner: "{{ podman_exporter_container_user }}"
+        group: "{{ podman_exporter_container_user }}"
+        mode: "0600"
+      become: true
+      notify: Restart podman_exporter
+      when: not ansible_check_mode or podman_exporter_config_directory.stat.isdir | default(false)
+
+    - name: web-config | Build the certificate signing request for the listen address
+      community.crypto.openssl_csr_pipe:
+        privatekey_path: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.key
+        common_name: "{{ podman_exporter_listen_ip }}"
+        subject_alt_name:
+          - "IP:{{ podman_exporter_listen_ip }}"
+      register: podman_exporter_csr
+      changed_when: false
+      become: true
+      when: not ansible_check_mode or podman_exporter_private_key.stat.exists
+
+    - name: web-config | Read whether a certificate exists
+      ansible.builtin.stat:
+        path: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.crt
+      register: podman_exporter_cert_file
+      become: true
+
+    - name: web-config | Read whether the certificate is still valid in 30 days
+      community.crypto.x509_certificate_info:
+        path: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.crt
+        valid_at:
+          renewal: "+30d"
+      register: podman_exporter_cert_info
+      when: podman_exporter_cert_file.stat.exists
+      become: true
+
+    - name: web-config | Make the self-signed certificate, or remake it when it is due
+      community.crypto.x509_certificate:
+        path: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.crt
+        privatekey_path: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.key
+        csr_content: "{{ podman_exporter_csr.csr }}"
+        provider: selfsigned
+        selfsigned_not_after: "+365d"
+        force: >-
+          {{ podman_exporter_cert_file.stat.exists and
+          not podman_exporter_cert_info.valid_at.renewal }}
+        owner: "{{ podman_exporter_container_user }}"
+        group: "{{ podman_exporter_container_user }}"
+        mode: "0644"
+      become: true
+      notify: Restart podman_exporter
+      when: not ansible_check_mode or podman_exporter_private_key.stat.exists
+
+    # Prometheus reads this public copy without sudo during a hub-only run. The private key stays
+    # in the workload account's 0700 configuration directory and never leaves the machine.
+    - name: web-config | Publish the certificate for Prometheus's trust bundle
+      ansible.builtin.copy:
+        src: >-
+          /home/{{ podman_exporter_container_user
+          }}/.config/podman-exporter/podman_exporter.crt
+        dest: /etc/podman_exporter/podman_exporter.crt
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+      when: not ansible_check_mode
+
+- name: web-config | Write the web config
+  ansible.builtin.template:
+    src: podman-exporter-web.yml.j2
+    dest: >-
+      /home/{{ podman_exporter_container_user }}/.config/podman-exporter/web.yml
+    owner: "{{ podman_exporter_container_user }}"
+    group: "{{ podman_exporter_container_user }}"
+    mode: "0600"
+  become: true
+  no_log: true
+  notify: Restart podman_exporter
+  when: not ansible_check_mode or podman_exporter_config_directory.stat.isdir | default(false)

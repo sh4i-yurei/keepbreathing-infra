@@ -18,3 +18,9 @@ ansible_ssh_common_args: -o ProxyJump=keepbreath0@129.212.184.103 -o IdentitiesO
 node_exporter_listen_address: "10.128.0.4:9100"
 node_exporter_allowed_sources:
   - 10.128.0.5
+
+# The 2026-10-18 read-only inventory found no containers under keepbreath2. Keep mail in the
+# rehearsal play, but do not install an exporter whose only subject would be itself.
+podman_exporter_enabled: false
+podman_exporter_container_user: "{{ baseline_container_user }}"
+podman_exporter_expected_containers: []

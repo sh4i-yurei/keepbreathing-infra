@@ -1,0 +1,24 @@
+# Managed by Ansible (roles/podman_exporter). Edits here are overwritten.
+# The v2.0.0 install guide's rootless socket, user namespace and SELinux arrangement.
+[Unit]
+Description=Podman exporter for {{ inventory_hostname }}'s rootless workload containers
+Requires=podman.socket
+After=podman.socket
+
+[Container]
+ContainerName=podman-exporter
+Image={{ podman_exporter_image }}
+Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
+Volume=%t/podman/podman.sock:/run/podman/podman.sock
+Volume=/home/{{ podman_exporter_container_user }}/.config/podman-exporter:/etc/podman_exporter:ro,Z
+UserNS=keep-id:uid=65534
+SecurityLabelType=container_runtime_t
+PublishPort={{ podman_exporter_listen_address }}:9882
+Exec=--collector.enhance-metrics --collector.image --collector.system --collector.volume --web.config.file=/etc/podman_exporter/web.yml
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

@@ -11,3 +11,11 @@ node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get pa
 node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
   ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
   | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"
+
+# The Podman exporter uses the same droplet protection with a separate per-host credential.
+podman_exporter_tls: true
+podman_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
+  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
+podman_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
+  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
+  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"

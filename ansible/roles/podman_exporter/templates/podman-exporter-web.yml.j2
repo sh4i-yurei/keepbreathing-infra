@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/podman_exporter). Edits here are overwritten.
+{% if podman_exporter_tls %}
+tls_server_config:
+  cert_file: /etc/podman_exporter/podman_exporter.crt
+  key_file: /etc/podman_exporter/podman_exporter.key
+{% endif %}
+basic_auth_users:
+  prometheus: "{{ podman_exporter_basic_auth_hash }}"

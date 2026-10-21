@@ -1,0 +1,102 @@
+---
+- name: verify | Only on a real run
+  when: not ansible_check_mode
+  vars:
+    podman_exporter_url: >-
+      {{ 'https' if podman_exporter_tls else 'http' }}://{{ podman_exporter_listen_address }}/metrics
+    podman_exporter_uid: "{{ ansible_facts.getent_passwd[podman_exporter_container_user][1] }}"
+  block:
+    - name: verify | It reports every expected container as running
+      ansible.builtin.uri:
+        url: "{{ podman_exporter_url }}"
+        url_username: prometheus
+        url_password: "{{ podman_exporter_basic_auth_password }}"
+        force_basic_auth: true
+        ca_path: "{{ '/etc/podman_exporter/podman_exporter.crt' if podman_exporter_tls else omit }}"
+        return_content: true
+      register: podman_exporter_metrics
+      until: >-
+        podman_exporter_metrics.status == 200 and
+        (podman_exporter_expected_containers | reject('in', podman_exporter_metrics.content
+        | regex_findall('podman_container_state\\{[^}]*name="([^"]+)"[^}]*\\} 2')) | list) == []
+      retries: 20
+      delay: 6
+      no_log: true
+
+    - name: verify | A request without the password is refused
+      ansible.builtin.uri:
+        url: "{{ podman_exporter_url }}"
+        ca_path: "{{ '/etc/podman_exporter/podman_exporter.crt' if podman_exporter_tls else omit }}"
+        status_code: 401
+
+    - name: verify | Plain HTTP is refused on a TLS host
+      ansible.builtin.uri:
+        url: "http://{{ podman_exporter_listen_address }}/metrics"
+      register: podman_exporter_plain_http
+      failed_when: podman_exporter_plain_http.status == 200
+      when: podman_exporter_tls
+
+    - name: verify | Read the running exporter container
+      containers.podman.podman_container_info:
+        name: podman-exporter
+      become: true
+      become_user: "{{ podman_exporter_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ podman_exporter_uid }}"
+      register: podman_exporter_container
+
+    - name: verify | It is running the pinned image
+      ansible.builtin.assert:
+        that:
+          - podman_exporter_container.containers | length == 1
+          - podman_exporter_container.containers[0].State.Running
+          - podman_exporter_container.containers[0].ImageName == podman_exporter_image
+        fail_msg: >-
+          podman-exporter is missing, stopped, or running an image other than
+          {{ podman_exporter_image }}.
+        quiet: true
+
+    - name: verify | Read the permanent rich rules
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - --permanent
+          - --zone=public
+          - --list-rich-rules
+      register: podman_exporter_verified_permanent_rules
+      changed_when: false
+
+    - name: verify | Read the runtime rich rules
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - --zone=public
+          - --list-rich-rules
+      register: podman_exporter_verified_runtime_rules
+      changed_when: false
+
+    - name: verify | Permanent and runtime rules contain exactly the current scrape sources
+      ansible.builtin.assert:
+        that:
+          - podman_exporter_verified_permanent_plan.stale_rules | length == 0
+          - podman_exporter_verified_runtime_plan.stale_rules | length == 0
+          - podman_exporter_verified_permanent_plan.managed_sources == podman_exporter_verified_permanent_plan.allowed_sources
+          - podman_exporter_verified_runtime_plan.managed_sources == podman_exporter_verified_runtime_plan.allowed_sources
+        fail_msg: >-
+          Podman exporter's firewalld rules do not match podman_exporter_allowed_sources.
+          Permanent: {{ podman_exporter_verified_permanent_plan }}.
+          Runtime: {{ podman_exporter_verified_runtime_plan }}.
+        quiet: true
+      vars:
+        podman_exporter_verified_permanent_plan: >-
+          {{ podman_exporter_verified_permanent_rules.stdout_lines
+             | node_exporter_firewall_plan(
+                 podman_exporter_listen_address.split(':')[-1],
+                 podman_exporter_allowed_sources
+               ) }}
+        podman_exporter_verified_runtime_plan: >-
+          {{ podman_exporter_verified_runtime_rules.stdout_lines
+             | node_exporter_firewall_plan(
+                 podman_exporter_listen_address.split(':')[-1],
+                 podman_exporter_allowed_sources
+               ) }}

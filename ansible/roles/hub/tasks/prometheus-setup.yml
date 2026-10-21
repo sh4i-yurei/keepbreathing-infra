@@ -142,6 +142,51 @@
   no_log: true
   notify: Restart prometheus
 
+# As with node_exporter, Prometheus trusts the exact self-signed certificates read from the
+# droplets themselves. vaultserv uses the tailnet and therefore needs no certificate here.
+- name: prometheus-setup | Read each droplet's Podman exporter certificate
+  ansible.builtin.slurp:
+    src: /etc/podman_exporter/podman_exporter.crt
+  delegate_to: "{{ item }}"
+  loop: "{{ hub_podman_exporter_droplet_hosts }}"
+  become: false
+  register: hub_podman_exporter_certificates
+
+- name: prometheus-setup | Write the Podman exporter certificates Prometheus trusts
+  ansible.builtin.copy:
+    content: >-
+      {{ hub_podman_exporter_certificates.results | map(attribute='content')
+      | map('b64decode') | join('') }}
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/podman-exporters.crt"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  notify: Restart prometheus
+
+- name: prometheus-setup | Write each droplet's Podman exporter password
+  ansible.builtin.copy:
+    content: "{{ hostvars[item].podman_exporter_basic_auth_password }}"
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/podman-{{ item }}-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  loop: "{{ hub_podman_exporter_droplet_hosts }}"
+  diff: false
+  no_log: true
+  notify: Restart prometheus
+
+- name: prometheus-setup | Write each tailnet Podman exporter's password
+  ansible.builtin.copy:
+    content: "{{ hostvars[item].podman_exporter_basic_auth_password }}"
+    dest: "/home/{{ hub_container_user }}/.config/prometheus/podman-{{ item }}-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  loop: "{{ hub_podman_exporter_tailnet_hosts }}"
+  diff: false
+  no_log: true
+  notify: Restart prometheus
+
 - name: prometheus-setup | Write Prometheus's Quadlet file
   ansible.builtin.template:
     src: prometheus.container.j2

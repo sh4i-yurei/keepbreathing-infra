@@ -21,7 +21,9 @@
       until: >-
         (hub_prometheus_targets.json.data.activeTargets | map(attribute='scrapePool') | sort)
         == (['alertmanager', 'gatus', 'grafana', 'node', 'ntfy', 'podman', 'prometheus'] + (groups['droplets']
-        + (hub_node_exporter_tailnet_hosts | map(attribute='name') | list)) | map('regex_replace', '^', 'node-') | list) | sort
+        + (hub_node_exporter_tailnet_hosts | map(attribute='name') | list))
+        | map('regex_replace', '^', 'node-') | list
+        + (hub_podman_exporter_hosts | map('regex_replace', '^', 'podman-') | list)) | sort
         and (hub_prometheus_targets.json.data.activeTargets | map(attribute='health') | unique)
         == ['up']
       retries: 15
@@ -39,6 +41,26 @@
             == groups['droplets'] | length
         fail_msg: >-
           A droplet's node_exporter job is not scraped over HTTPS or is not labelled job="node".
+        quiet: true
+
+    - name: prometheus-verify | Every remote Podman exporter has the common job and its host name
+      ansible.builtin.assert:
+        that:
+          - >-
+            (hub_prometheus_targets.json.data.activeTargets
+            | selectattr('scrapePool', 'match', '^podman-')
+            | map(attribute='labels.job') | unique | list) == ['podman']
+          - >-
+            (hub_prometheus_targets.json.data.activeTargets
+            | selectattr('scrapePool', 'match', '^podman-')
+            | map(attribute='labels.instance') | sort)
+            == (hub_podman_exporter_hosts | sort)
+          - >-
+            (hub_prometheus_targets.json.data.activeTargets
+            | selectattr('scrapePool', 'match', '^podman-')
+            | map(attribute='scrapeUrl') | select('match', '^https://') | list | length)
+            == hub_podman_exporter_droplet_hosts | length
+        fail_msg: A remote Podman exporter has the wrong job, instance, or transport.
         quiet: true
 
     - name: prometheus-verify | Read the loaded rules and the retention settings

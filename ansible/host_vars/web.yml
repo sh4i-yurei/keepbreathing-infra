@@ -17,3 +17,14 @@ ansible_ssh_common_args: -o ProxyJump=keepbreath0@129.212.184.103 -o IdentitiesO
 node_exporter_listen_address: "10.128.0.3:9100"
 node_exporter_allowed_sources:
   - 10.128.0.5
+
+podman_exporter_enabled: true
+podman_exporter_container_user: "{{ baseline_container_user }}"
+podman_exporter_listen_address: "10.128.0.3:9882"
+podman_exporter_allowed_sources: "{{ node_exporter_allowed_sources }}"
+podman_exporter_expected_containers:
+  - contact-api
+  - contact-worker
+  - keepbreath
+  - keepbreath-redis
+  - podman-exporter

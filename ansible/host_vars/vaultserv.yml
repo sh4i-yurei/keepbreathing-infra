@@ -13,3 +13,16 @@ node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get pa
 node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
   ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
   | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"
+
+podman_exporter_enabled: true
+podman_exporter_container_user: "{{ baseline_container_user }}"
+podman_exporter_listen_address: "100.65.221.62:9882"
+podman_exporter_allowed_sources: "{{ node_exporter_allowed_sources }}"
+podman_exporter_expected_containers:
+  - podman-exporter
+  - vaultwarden
+podman_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
+  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
+podman_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
+  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
+  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"

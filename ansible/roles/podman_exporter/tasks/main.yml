@@ -1,0 +1,142 @@
+---
+- name: Check the enabled host's inputs
+  ansible.builtin.assert:
+    that:
+      - podman_exporter_container_user | length > 0
+      - podman_exporter_listen_address is match('^[0-9.]+:[0-9]+$')
+      - podman_exporter_allowed_sources | length > 0
+      - podman_exporter_expected_containers | length > 0
+      - podman_exporter_basic_auth_hash | length > 0
+      - podman_exporter_basic_auth_password | length > 0
+    fail_msg: >-
+      An enabled Podman exporter needs its container account, listen address, allowed source,
+      expected containers, and both forms of its scrape password.
+    quiet: true
+
+- name: Read the workload account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ podman_exporter_container_user }}"
+
+- name: Make the Quadlet folders
+  ansible.builtin.file:
+    path: "/home/{{ podman_exporter_container_user }}/{{ item }}"
+    state: directory
+    owner: "{{ podman_exporter_container_user }}"
+    group: "{{ podman_exporter_container_user }}"
+    mode: "0700"
+  loop:
+    - .config
+    - .config/containers
+    - .config/containers/systemd
+    - .config/podman-exporter
+  become: true
+
+- name: Read whether the private configuration folder exists
+  ansible.builtin.stat:
+    path: "/home/{{ podman_exporter_container_user }}/.config/podman-exporter"
+  register: podman_exporter_config_directory
+  become: true
+
+- name: Read whether the Quadlet folder exists
+  ansible.builtin.stat:
+    path: "/home/{{ podman_exporter_container_user }}/.config/containers/systemd"
+  register: podman_exporter_quadlet_directory
+  become: true
+
+- name: Turn on the workload account's Podman socket
+  ansible.builtin.systemd_service:
+    name: podman.socket
+    state: started
+    enabled: true
+    scope: user
+  become: true
+  become_user: "{{ podman_exporter_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[podman_exporter_container_user][1] }}"
+
+- name: Write the web configuration and TLS material
+  ansible.builtin.import_tasks: web-config.yml
+
+- name: Write the Podman exporter's Quadlet file
+  ansible.builtin.template:
+    src: podman-exporter.container.j2
+    dest: >-
+      /home/{{ podman_exporter_container_user }}/.config/containers/systemd/podman-exporter.container
+    owner: "{{ podman_exporter_container_user }}"
+    group: "{{ podman_exporter_container_user }}"
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for podman_exporter
+    - Restart podman_exporter
+  when: not ansible_check_mode or podman_exporter_quadlet_directory.stat.isdir | default(false)
+
+- name: Download the pinned image into the workload account's storage
+  containers.podman.podman_image:
+    name: "{{ podman_exporter_image }}"
+  become: true
+  become_user: "{{ podman_exporter_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[podman_exporter_container_user][1] }}"
+
+- name: Let the hub reach the exporter through firewalld
+  ansible.posix.firewalld:
+    rich_rule: >-
+      rule family="ipv4" source address="{{ item }}"
+      port port="{{ podman_exporter_listen_address.split(':')[-1] }}" protocol="tcp" accept
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ podman_exporter_allowed_sources }}"
+  become: true
+
+- name: Read the permanent rich rules after adding the current sources
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --zone=public
+      - --list-rich-rules
+  register: podman_exporter_permanent_rich_rules
+  changed_when: false
+  check_mode: false
+
+- name: Plan removal of obsolete Podman exporter rich rules
+  ansible.builtin.set_fact:
+    podman_exporter_firewall_plan: >-
+      {{ podman_exporter_permanent_rich_rules.stdout_lines
+         | node_exporter_firewall_plan(
+             podman_exporter_listen_address.split(':')[-1],
+             podman_exporter_allowed_sources
+           ) }}
+
+- name: Remove obsolete Podman exporter rich rules
+  ansible.posix.firewalld:
+    rich_rule: "{{ item }}"
+    zone: public
+    permanent: true
+    immediate: true
+    state: disabled
+  loop: "{{ podman_exporter_firewall_plan.stale_rules }}"
+  loop_control:
+    label: "{{ item }}"
+  become: true
+
+- name: Run the handlers before making sure the exporter is running
+  ansible.builtin.meta: flush_handlers
+
+- name: Make sure the exporter is running
+  ansible.builtin.systemd_service:
+    name: podman-exporter.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ podman_exporter_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[podman_exporter_container_user][1] }}"
+  when: not ansible_check_mode
+
+- name: Check it is in the state the role claims
+  ansible.builtin.import_tasks: verify.yml

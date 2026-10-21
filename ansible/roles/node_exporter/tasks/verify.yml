@@ -66,3 +66,48 @@
           node_exporter is not running as node_exporter. Running as:
           {{ node_exporter_user.stdout_lines | unique | join(', ') | default('nothing', true) }}.
         quiet: true
+
+    - name: verify | Read the permanent rich rules
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - --permanent
+          - --zone=public
+          - --list-rich-rules
+      register: node_exporter_verified_permanent_rules
+      changed_when: false
+
+    - name: verify | Read the runtime rich rules
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - --zone=public
+          - --list-rich-rules
+      register: node_exporter_verified_runtime_rules
+      changed_when: false
+
+    - name: verify | Permanent and runtime rules contain exactly the current scrape sources
+      ansible.builtin.assert:
+        that:
+          - node_exporter_verified_permanent_plan.stale_rules | length == 0
+          - node_exporter_verified_runtime_plan.stale_rules | length == 0
+          - node_exporter_verified_permanent_plan.managed_sources == node_exporter_verified_permanent_plan.allowed_sources
+          - node_exporter_verified_runtime_plan.managed_sources == node_exporter_verified_runtime_plan.allowed_sources
+        fail_msg: >-
+          node_exporter's firewalld rules do not match node_exporter_allowed_sources.
+          Permanent: {{ node_exporter_verified_permanent_plan }}.
+          Runtime: {{ node_exporter_verified_runtime_plan }}.
+        quiet: true
+      vars:
+        node_exporter_verified_permanent_plan: >-
+          {{ node_exporter_verified_permanent_rules.stdout_lines
+             | node_exporter_firewall_plan(
+                 node_exporter_listen_address.split(':')[-1],
+                 node_exporter_allowed_sources
+               ) }}
+        node_exporter_verified_runtime_plan: >-
+          {{ node_exporter_verified_runtime_rules.stdout_lines
+             | node_exporter_firewall_plan(
+                 node_exporter_listen_address.split(':')[-1],
+                 node_exporter_allowed_sources
+               ) }}

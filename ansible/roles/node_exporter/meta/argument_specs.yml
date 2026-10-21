@@ -35,4 +35,5 @@ argument_specs:
         type: list
         elements: str
         default: []
-        description: The addresses firewalld lets reach node_exporter's port. Empty adds no rule.
+        description: The complete set of addresses firewalld lets reach node_exporter's port.
+          Rich rules for addresses outside this list are removed; empty removes all managed rules.

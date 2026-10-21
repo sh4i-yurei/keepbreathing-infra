@@ -76,6 +76,38 @@
   loop: "{{ node_exporter_allowed_sources }}"
   become: true
 
+- name: Read the permanent rich rules after adding the current sources
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --zone=public
+      - --list-rich-rules
+  register: node_exporter_permanent_rich_rules
+  changed_when: false
+  check_mode: false
+
+- name: Plan removal of obsolete node_exporter rich rules
+  ansible.builtin.set_fact:
+    node_exporter_firewall_plan: >-
+      {{ node_exporter_permanent_rich_rules.stdout_lines
+         | node_exporter_firewall_plan(
+             node_exporter_listen_address.split(':')[-1],
+             node_exporter_allowed_sources
+           ) }}
+
+- name: Remove obsolete node_exporter rich rules
+  ansible.posix.firewalld:
+    rich_rule: "{{ item }}"
+    zone: public
+    permanent: true
+    immediate: true
+    state: disabled
+  loop: "{{ node_exporter_firewall_plan.stale_rules }}"
+  loop_control:
+    label: "{{ item }}"
+  become: true
+
 - name: Run the handlers before making sure it is running
   ansible.builtin.meta: flush_handlers
 

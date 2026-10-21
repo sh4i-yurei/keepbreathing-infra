@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/node_exporter). Edits here are overwritten.
+[Unit]
+Description=Check hourly whether package updates require a reboot
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+Unit=node-exporter-reboot-required.service
+
+[Install]
+WantedBy=timers.target

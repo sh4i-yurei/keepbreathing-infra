@@ -39,6 +39,20 @@ groups:
             Prometheus has not been able to scrape {{ $labels.job }} on {{ $labels.instance }} for 5
             minutes.
 
+  # A reboot needed after package updates is a ticket, after it has remained true for an hour
+  # (Monitoring and alerting step 16, decision #54).
+  - name: reboots
+    rules:
+      - alert: NodeRebootRequired
+        expr: node_reboot_required{job="node"} == 1
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: A machine has needed a reboot for one hour.
+          description: >-
+            {{ $labels.instance }} needs a reboot to finish applying package updates.
+
   # A hub container that is not running for 5 minutes pages (Monitoring and alerting decision #34).
   # 2 is running in podman_container_state.
   - name: containers

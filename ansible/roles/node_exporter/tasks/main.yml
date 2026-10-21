@@ -10,6 +10,57 @@
     create_home: false
   become: true
 
+# AlmaLinux 9 and 10 package the DNF needs-restarting plugin as yum-utils. There is no
+# dnf-utils package in their repositories (checked on the hub on 2026-10-18).
+- name: Install the package that provides needs-restarting
+  ansible.builtin.dnf:
+    name: yum-utils
+    state: present
+  become: true
+
+- name: Make the textfile collector directory
+  ansible.builtin.file:
+    path: "{{ node_exporter_textfile_directory }}"
+    state: directory
+    owner: root
+    group: node_exporter
+    mode: "0750"
+  become: true
+
+- name: Install the atomic reboot-required metric writer
+  ansible.builtin.template:
+    src: node-exporter-reboot-required
+    dest: /usr/local/libexec/node-exporter-reboot-required
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  notify: Run node_exporter reboot-required check
+
+- name: Install the reboot-required service
+  ansible.builtin.template:
+    src: node-exporter-reboot-required.service.j2
+    dest: /etc/systemd/system/node-exporter-reboot-required.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for node_exporter
+    - Run node_exporter reboot-required check
+
+- name: Install the reboot-required timer
+  ansible.builtin.template:
+    src: node-exporter-reboot-required.timer.j2
+    dest: /etc/systemd/system/node-exporter-reboot-required.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for node_exporter
+    - Restart node_exporter reboot-required timer
+
 - name: Make the folder the release is kept in
   ansible.builtin.file:
     path: /var/cache/node_exporter
@@ -110,6 +161,21 @@
 
 - name: Run the handlers before making sure it is running
   ansible.builtin.meta: flush_handlers
+
+- name: Write the first reboot-required metric when it is absent
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/node-exporter-reboot-required
+    creates: "{{ node_exporter_textfile_directory }}/reboot-required.prom"
+  become: true
+
+- name: Check for a needed reboot every hour
+  ansible.builtin.systemd_service:
+    name: node-exporter-reboot-required.timer
+    state: started
+    enabled: true
+  become: true
+  when: not ansible_check_mode
 
 - name: Make sure it is running and starts at boot
   ansible.builtin.systemd_service:

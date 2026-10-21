@@ -32,7 +32,9 @@ apart.
 6. Reconciles the port's source-address rich rules in firewalld's `public` zone with
    `node_exporter_allowed_sources`, adding current addresses and removing stale ones. It touches only
    IPv4 TCP accept rules on node_exporter's port, read by `filter_plugins/node_exporter_firewall.py`.
-7. Starts it and enables it at boot, then checks it: the metrics page answers with the pinned
+7. Runs `needs-restarting -r` from `yum-utils` every hour and atomically writes
+   `node_reboot_required` for node_exporter's textfile collector.
+8. Starts it and enables it at boot, then checks it: the metrics page answers with the pinned
    version, using the password and checking the certificate when those are on; a request without
    the password gets `401`; plain HTTP is refused; each explicitly enabled collector returns a
    metric, including systemd service restart counts; and the process runs as `node_exporter`.
@@ -47,6 +49,7 @@ apart.
 | `node_exporter_basic_auth_hash` | empty | The bcrypt hash of the scrape password for the user `prometheus`; empty turns the password off |
 | `node_exporter_basic_auth_password` | empty | The password itself, used only by the checks |
 | `node_exporter_tls` | `false` | Serve HTTPS with a self-signed certificate made on the machine |
+| `node_exporter_textfile_directory` | `/var/lib/node_exporter/textfile_collector` | Directory for service-written Prometheus metrics |
 | `node_exporter_allowed_sources` | empty | Complete set of addresses firewalld lets reach the port; empty removes every managed rule |
 
 To change version, set both the version and its checksum together. On the droplets the password

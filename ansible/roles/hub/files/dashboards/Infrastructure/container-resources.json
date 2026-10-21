@@ -70,7 +70,7 @@
       }
     ]
   },
-  "description": "Each hub container's CPU, memory, disk and network use, with its state and image.",
+  "description": "CPU, memory, disk and network use for containers on the selected machine, with their state and image.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "gnetId": 17639,
@@ -289,36 +289,6 @@
                 "value": 121
               }
             ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Mem Usage"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 100
-              },
-              {
-                "id": "unit",
-                "value": "percentunit"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "mode": "continuous-GrYlRd"
-                }
-              },
-              {
-                "id": "custom.displayMode",
-                "value": "gradient-gauge"
-              },
-              {
-                "id": "decimals",
-                "value": 2
-              }
-            ]
           }
         ]
       },
@@ -349,11 +319,11 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "podman_container_info",
+          "expr": "podman_container_info{instance=\"$instance\"}",
           "format": "table",
           "hide": false,
           "instant": true,
-          "legendFormat": "\u57fa\u672c\u4fe1\u606f",
+          "legendFormat": "Info",
           "range": false,
           "refId": "info"
         },
@@ -364,11 +334,11 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "podman_container_state",
+          "expr": "max by (name) (podman_container_state{instance=\"$instance\"})",
           "format": "table",
           "hide": false,
           "instant": true,
-          "legendFormat": "\u72b6\u6001",
+          "legendFormat": "State",
           "range": false,
           "refId": "state"
         },
@@ -379,7 +349,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "podman_container_mem_usage_bytes",
+          "expr": "max by (name) (podman_container_mem_usage_bytes{instance=\"$instance\"})",
           "format": "table",
           "hide": false,
           "instant": true,
@@ -394,7 +364,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "podman_container_exit_code",
+          "expr": "max by (name) (podman_container_exit_code{instance=\"$instance\"})",
           "format": "table",
           "hide": false,
           "instant": true,
@@ -409,7 +379,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "time() - podman_container_started_seconds",
+          "expr": "max by (name) (time() - podman_container_started_seconds{instance=\"$instance\"})",
           "format": "table",
           "hide": false,
           "instant": true,
@@ -424,28 +394,13 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "podman_container_pids",
+          "expr": "max by (name) (podman_container_pids{instance=\"$instance\"})",
           "format": "table",
           "hide": false,
           "instant": true,
           "legendFormat": "__auto",
           "range": false,
           "refId": "PID"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "podman_container_mem_usage_bytes / (podman_container_mem_limit_bytes)",
-          "format": "table",
-          "hide": false,
-          "instant": true,
-          "legendFormat": "__auto",
-          "range": false,
-          "refId": "mem_percentage"
         }
       ],
       "title": "Container Overview",
@@ -464,15 +419,17 @@
                 "Value #momery",
                 "Value #exit_code",
                 "Value #uptime",
-                "Value #PID",
-                "Value #mem_percentage"
+                "Value #PID"
               ]
             }
           }
         },
         {
-          "id": "merge",
-          "options": {}
+          "id": "joinByField",
+          "options": {
+            "byField": "name",
+            "mode": "outer"
+          }
         },
         {
           "id": "organize",
@@ -485,27 +442,24 @@
               "job": true
             },
             "indexByName": {
-              "Value #PID": 8,
-              "Value #exit_code": 10,
-              "Value #mem_percentage": 4,
+              "Value #PID": 7,
+              "Value #exit_code": 9,
               "Value #momery": 3,
-              "Value #state": 7,
-              "Value #uptime": 9,
+              "Value #state": 6,
+              "Value #uptime": 8,
               "id": 1,
-              "image": 5,
+              "image": 4,
               "instance": 2,
               "name": 0,
-              "ports": 6
+              "ports": 5
             },
             "renameByName": {
               "Value": "",
-              "Value #B": "\u72b6\u6001",
-              "Value #C": "\u9000\u51fa\u4ee3\u7801",
+              "Value #B": "Status",
+              "Value #C": "Exit code",
               "Value #PID": "PID",
               "Value #exit_code": "Exit code",
-              "Value #ext_code": "\u9519\u8bef\u4ee3\u7801",
-              "Value #mem_max": "\u5185\u5b58\u4f7f\u7528\u7387",
-              "Value #mem_percentage": "Mem Usage",
+              "Value #ext_code": "Exit code",
               "Value #momery": "Memory",
               "Value #state": "Status",
               "Value #uptime": "Uptime",
@@ -514,7 +468,7 @@
               "instance": "Host",
               "name": "name",
               "ports": "Port",
-              "state": "\u72b6\u6001"
+              "state": "Status"
             }
           }
         }
@@ -609,7 +563,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum(rate(podman_container_cpu_seconds_total{instance=~\"$instance\"}[$__rate_interval])) / count(node_cpu_seconds_total{instance=~\"$instance\",mode=\"idle\"})",
+          "expr": "sum(rate(podman_container_cpu_seconds_total{instance=\"$instance\"}[$__rate_interval])) / count(node_cpu_seconds_total{instance=\"$instance\",mode=\"idle\"})",
           "format": "time_series",
           "instant": false,
           "legendFormat": "__auto",
@@ -633,7 +587,7 @@
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "",
+            "axisLabel": "cores",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
@@ -674,7 +628,7 @@
               }
             ]
           },
-          "unit": "percentunit"
+          "unit": "short"
         },
         "overrides": []
       },
@@ -704,8 +658,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "increase(podman_container_cpu_seconds_total{instance=~\"$instance\"}[$__rate_interval]) / 60",
-          "legendFormat": "{{id}}",
+          "expr": "rate(podman_container_cpu_seconds_total{instance=\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "A"
         }
@@ -768,22 +722,7 @@
           },
           "unit": "bytes"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".+(\u4e0a\u9650)$"
-            },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "fill": "solid"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -812,25 +751,12 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "podman_container_mem_usage_bytes{instance=~\"$instance\"}",
+          "expr": "podman_container_mem_usage_bytes{instance=\"$instance\"}",
           "format": "time_series",
           "instant": false,
-          "legendFormat": "{{id}}_current",
+          "legendFormat": "{{name}}",
           "range": true,
           "refId": "container_usage"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "editorMode": "code",
-          "exemplar": false,
-          "expr": "podman_container_mem_limit_bytes{instance=~\"$instance\"}",
-          "hide": false,
-          "legendFormat": "{{id}}_max",
-          "range": true,
-          "refId": "container_max"
         }
       ],
       "title": "Memory",
@@ -914,7 +840,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum(podman_container_mem_usage_bytes{instance=~\"$instance\"}) / sum(node_memory_MemTotal_bytes{instance=~\"$instance\"})",
+          "expr": "sum(podman_container_mem_usage_bytes{instance=\"$instance\"}) / sum(node_memory_MemTotal_bytes{instance=\"$instance\"})",
           "format": "time_series",
           "instant": false,
           "legendFormat": "__auto",
@@ -979,7 +905,7 @@
               }
             ]
           },
-          "unit": "bytes"
+          "unit": "Bps"
         },
         "overrides": []
       },
@@ -1009,8 +935,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "increase(podman_container_block_input_total{instance=\"$instance\"}[$__rate_interval])",
-          "legendFormat": "{{id}}_in",
+          "expr": "rate(podman_container_block_input_total{instance=\"$instance\"}[$__rate_interval])",
+          "legendFormat": "{{name}}_in",
           "range": true,
           "refId": "input"
         },
@@ -1020,9 +946,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "increase(podman_container_block_output_total{instance=\"$instance\"}[$__rate_interval])",
+          "expr": "rate(podman_container_block_output_total{instance=\"$instance\"}[$__rate_interval])",
           "hide": false,
-          "legendFormat": "{{id}}_out",
+          "legendFormat": "{{name}}_out",
           "range": true,
           "refId": "output"
         }
@@ -1110,8 +1036,8 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "increase(podman_container_net_input_total{instance=\"$instance\"}[$__rate_interval]) * 8",
-          "legendFormat": "{{id}}_in",
+          "expr": "rate(podman_container_net_input_total{instance=\"$instance\"}[$__rate_interval]) * 8",
+          "legendFormat": "{{name}}_in",
           "range": true,
           "refId": "input"
         },
@@ -1121,9 +1047,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "increase(podman_container_net_output_total{instance=\"$instance\"}[$__rate_interval]) * 8",
+          "expr": "rate(podman_container_net_output_total{instance=\"$instance\"}[$__rate_interval]) * 8",
           "hide": false,
-          "legendFormat": "{{id}}_out",
+          "legendFormat": "{{name}}_out",
           "range": true,
           "refId": "output"
         }
@@ -1200,7 +1126,7 @@
           },
           "editorMode": "code",
           "exemplar": false,
-          "expr": "sum(podman_image_size{instance=~\"$instance\"})",
+          "expr": "sum(podman_image_size{instance=\"$instance\"})",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -1272,7 +1198,7 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(podman_image_size{instance=~\"$instance\"}) / sum(node_filesystem_size_bytes{instance=~\"$instance\"})",
+          "expr": "sum(podman_image_size{instance=\"$instance\"}) / sum(node_filesystem_size_bytes{instance=\"$instance\",mountpoint=\"/\"})",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"

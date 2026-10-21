@@ -4,6 +4,17 @@
 # than creating it (Notification service decision #13).
 #   ansible-playbook playbooks/hub.yml --limit hub
 
+# Open the droplet SSH connections before hub work; ControlPersist=30m keeps them open for later tasks.
+- name: Open droplet SSH connections
+  hosts: hub
+  gather_facts: false
+  tasks:
+    - name: Ping each droplet before hub work
+      ansible.builtin.ping:
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['droplets'] }}"
+      become: false
+
 - name: Fetch the become password
   ansible.builtin.import_playbook: become-password.yml
 

@@ -26,5 +26,6 @@ Fleet Resource Utilization reads node-mixin's recording rules, such as
 `instance:node_cpu_utilisation:rate5m`, which Prometheus has to be evaluating for its panels to fill.
 The upstream dashboards choose their Prometheus data source through a dashboard variable or, for ntfy,
 Container Resources and Grafana, by the provisioned uid `prometheus`, so none needs further editing
-before it is provisioned. Service Availability's domain-expiry
-panel stays empty, because Gatus does not check domain expiry here.
+before it is provisioned. Service Availability's Domain Expiration panel reads
+`gatus_results_domain_expiration_seconds`, which Gatus's daily `domain-expiration` check of
+`keepbreath.ing` exports.

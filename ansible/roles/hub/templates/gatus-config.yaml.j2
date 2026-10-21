@@ -27,7 +27,21 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[BODY].healthy == true"
+      - "[CERTIFICATE_EXPIRATION] > 336h"
+    # Alert when ntfy's certificate nears expiry.
+    alerts:
+      - type: ntfy
 
+  - name: grafana
+    group: hub
+    url: "https://grafana.tail4cf2f3.ts.net/api/health"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY].database == ok"
+      - "[CERTIFICATE_EXPIRATION] > 336h"
+    alerts:
+      - type: ntfy
 
   - name: apex
     group: site
@@ -45,6 +59,16 @@ endpoints:
     interval: 2m
     conditions:
       - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 336h"
+    alerts:
+      - type: ntfy
+
+  - name: domain-expiration
+    group: site
+    url: "https://keepbreath.ing/"
+    interval: 24h
+    conditions:
+      - "[DOMAIN_EXPIRATION] > 720h"
     alerts:
       - type: ntfy
 

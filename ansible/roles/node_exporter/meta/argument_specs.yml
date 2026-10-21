@@ -35,7 +35,7 @@ argument_specs:
         type: path
         default: /var/lib/node_exporter/textfile_collector
         description: Directory node_exporter's textfile collector reads. The reboot-required
-          timer writes its metric here.
+          timer writes its metric here only when needs-restarting's exit status and message agree.
       node_exporter_allowed_sources:
         type: list
         elements: str

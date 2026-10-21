@@ -58,6 +58,48 @@
           - node-exporter-reboot-required.timer
       changed_when: false
 
+    - name: verify | Run the reboot check through its systemd sandbox
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - start
+          - node-exporter-reboot-required.service
+      changed_when: false
+
+    - name: verify | Ask needs-restarting directly whether a reboot is required
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/needs-restarting
+          - -r
+      register: node_exporter_unsandboxed_reboot
+      failed_when: false
+      changed_when: false
+
+    - name: verify | Read the reboot check's metric
+      ansible.builtin.slurp:
+        src: "{{ node_exporter_textfile_directory }}/reboot-required.prom"
+      register: node_exporter_reboot_metric
+
+    - name: verify | The sandboxed result agrees with needs-restarting
+      ansible.builtin.assert:
+        that:
+          - >-
+            (node_exporter_unsandboxed_reboot.rc == 0 and
+             'Reboot should not be necessary' in node_exporter_unsandboxed_reboot.stdout and
+             node_exporter_reboot_metric_values == ['0']) or
+            (node_exporter_unsandboxed_reboot.rc == 1 and
+             'Reboot is required' in node_exporter_unsandboxed_reboot.stdout and
+             node_exporter_reboot_metric_values == ['1'])
+        fail_msg: >-
+          The reboot check's metric {{ node_exporter_reboot_metric_values }} does not match
+          needs-restarting's exit status {{ node_exporter_unsandboxed_reboot.rc }} and output
+          {{ node_exporter_unsandboxed_reboot.stdout | to_json }}.
+        quiet: true
+      vars:
+        node_exporter_reboot_metric_values: >-
+          {{ (node_exporter_reboot_metric.content | b64decode)
+             | regex_findall('(?m)^node_reboot_required (.*)$') }}
+
     - name: verify | Without the password it is refused
       ansible.builtin.uri:
         url: "{{ node_exporter_url }}"

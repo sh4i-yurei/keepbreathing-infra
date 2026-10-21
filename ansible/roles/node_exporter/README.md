@@ -32,12 +32,15 @@ apart.
 6. Reconciles the port's source-address rich rules in firewalld's `public` zone with
    `node_exporter_allowed_sources`, adding current addresses and removing stale ones. It touches only
    IPv4 TCP accept rules on node_exporter's port, read by `filter_plugins/node_exporter_firewall.py`.
-7. Runs `needs-restarting -r` from `yum-utils` every hour and atomically writes
-   `node_reboot_required` for node_exporter's textfile collector.
+7. Runs `needs-restarting -r` from `yum-utils` every hour in a systemd sandbox that lets dnf write
+   under `/var/log` and `/var/cache/dnf`. It atomically writes `node_reboot_required` only when the
+   exit status and message agree: 0 means no reboot, and 1 means a reboot is required. Any other
+   result removes the old metric and fails the service.
 8. Starts it and enables it at boot, then checks it: the metrics page answers with the pinned
    version, using the password and checking the certificate when those are on; a request without
    the password gets `401`; plain HTTP is refused; each explicitly enabled collector returns a
-   metric, including systemd service restart counts; and the process runs as `node_exporter`.
+   metric, including systemd service restart counts; the reboot-check service's metric agrees with
+   a direct `needs-restarting -r` run; and the process runs as `node_exporter`.
 
 ## Inputs
 

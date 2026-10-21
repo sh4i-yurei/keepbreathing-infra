@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+"""Write Loki's allocated disk usage as an atomic node_exporter textfile metric."""
+
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+data = Path("/home/{{ hub_container_user }}/loki")
+textfile = Path("{{ node_exporter_textfile_directory }}/loki-data-size.prom")
+result = subprocess.run(
+    ["du", "--summarize", "--block-size=1", "--", str(data)],
+    capture_output=True,
+    check=True,
+    text=True,
+)
+size = int(result.stdout.split()[0])
+with tempfile.NamedTemporaryFile(
+    mode="w", encoding="utf-8", dir=textfile.parent, prefix=".loki-data-size-", delete=False
+) as temporary:
+    temporary.write("# HELP loki_data_directory_size_bytes Allocated bytes in Loki's data directory.\n")
+    temporary.write("# TYPE loki_data_directory_size_bytes gauge\n")
+    temporary.write(f"loki_data_directory_size_bytes {size}\n")
+    temporary.flush()
+    os.fchmod(temporary.fileno(), 0o644)
+    os.fsync(temporary.fileno())
+    pending = Path(temporary.name)
+os.replace(pending, textfile)

@@ -13,6 +13,13 @@ datasources:
     isDefault: true
     editable: false
 
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: "http://{{ hub_host_loopback }}:{{ hub_loki_port }}"
+    editable: false
+
   - name: Alertmanager
     type: alertmanager
     uid: alertmanager

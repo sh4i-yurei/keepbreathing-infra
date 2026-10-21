@@ -1,0 +1,23 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Alloy, the hub's journal reader
+After=loki.service
+Requires=loki.service
+
+[Container]
+ContainerName=alloy
+Image={{ hub_alloy_image }}
+Network=pasta:--map-host-loopback,{{ hub_host_loopback }}
+GroupAdd=keep-groups
+SecurityLabelDisable=true
+Volume=/home/{{ hub_container_user }}/.config/alloy:/etc/alloy:ro
+Volume=/home/{{ hub_container_user }}/alloy:/var/lib/alloy
+Volume=/var/log/journal:/var/log/journal:ro
+Exec=run --storage.path=/var/lib/alloy /etc/alloy/config.alloy
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

@@ -53,6 +53,19 @@ groups:
           description: >-
             {{ $labels.instance }} needs a reboot to finish applying package updates.
 
+  # The hub's Loki data directory is watched before it reaches 5 GiB (decision #56).
+  - name: logs
+    rules:
+      - alert: LokiDataDirectoryGrowing
+        expr: loki_data_directory_size_bytes{job="node",instance="hub"} > 4 * 1024 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Loki's data directory has grown beyond 4 GiB.
+          description: >-
+            Loki on the hub uses {{ $value }} bytes; the planned review point is 5 GiB.
+
   # A container on any scraped machine that is not running for 5 minutes pages.
   # 2 is running in podman_container_state.
   - name: containers

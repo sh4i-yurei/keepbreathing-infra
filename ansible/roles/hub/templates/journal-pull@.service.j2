@@ -1,0 +1,39 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Pull %i's journal into the hub
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=systemd-journal-remote
+Group=systemd-journal-remote
+LoadCredential=client.key:/etc/journal_pull/client.key
+ExecStart=/usr/local/libexec/journal-pull --config /etc/journal_pull/hosts/%i.json
+Restart=on-failure
+RestartSec=30s
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectProc=invisible
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/journal/remote/%i
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,265 @@
+---
+- name: Check the journal gateway's inputs
+  ansible.builtin.assert:
+    that:
+      - journal_gateway_listen_address is match('^[0-9.]+:19531$')
+      - journal_gateway_allowed_sources | length > 0
+    quiet: true
+
+- name: Install journal gatewayd and its certificate library
+  ansible.builtin.dnf:
+    name:
+      - systemd-journal-remote
+      - python3-cryptography
+    state: present
+  become: true
+
+- name: Make the gateway's private folder
+  ansible.builtin.file:
+    path: /etc/journal_gateway
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  become: true
+
+- name: Read whether the private folder exists
+  ansible.builtin.stat:
+    path: /etc/journal_gateway
+  register: journal_gateway_private_directory
+  become: true
+
+- name: Read whether the private key exists
+  ansible.builtin.stat:
+    path: /etc/journal_gateway/server.key
+  register: journal_gateway_private_key
+  become: true
+
+- name: Make the gateway's private key
+  community.crypto.openssl_privatekey:
+    path: /etc/journal_gateway/server.key
+    type: ECC
+    curve: secp256r1
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  notify: Restart journal gateway service
+  when: not ansible_check_mode or journal_gateway_private_directory.stat.isdir | default(false)
+
+- name: Build the server certificate request with its exact listen address
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: /etc/journal_gateway/server.key
+    common_name: "{{ journal_gateway_listen_address.split(':')[0] }}"
+    subject_alt_name:
+      - "IP:{{ journal_gateway_listen_address.split(':')[0] }}"
+    extended_key_usage:
+      - serverAuth
+  register: journal_gateway_csr
+  changed_when: false
+  become: true
+  when: not ansible_check_mode or journal_gateway_private_key.stat.exists
+
+- name: Read whether the server certificate exists
+  ansible.builtin.stat:
+    path: /etc/journal_gateway/server.crt
+  register: journal_gateway_cert_file
+  become: true
+
+- name: Check whether the server certificate is valid in 30 days
+  community.crypto.x509_certificate_info:
+    path: /etc/journal_gateway/server.crt
+    valid_at:
+      renewal: "+30d"
+  register: journal_gateway_cert_info
+  become: true
+  when: journal_gateway_cert_file.stat.exists
+
+- name: Make or renew the self-signed server certificate
+  community.crypto.x509_certificate:
+    path: /etc/journal_gateway/server.crt
+    privatekey_path: /etc/journal_gateway/server.key
+    csr_content: "{{ journal_gateway_csr.csr }}"
+    provider: selfsigned
+    selfsigned_not_after: "+365d"
+    force: >-
+      {{ journal_gateway_cert_file.stat.exists and
+      not journal_gateway_cert_info.valid_at.renewal }}
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart journal gateway service
+  when: not ansible_check_mode or journal_gateway_private_key.stat.exists
+
+- name: Make the public certificate folder
+  ansible.builtin.file:
+    path: /etc/journal_gateway-public
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Publish the server certificate for the hub
+  ansible.builtin.copy:
+    src: /etc/journal_gateway/server.crt
+    dest: /etc/journal_gateway-public/server.crt
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: not ansible_check_mode
+
+- name: Read whether the hub's public client certificate exists
+  ansible.builtin.stat:
+    path: /etc/journal_pull-public/client.crt
+  delegate_to: hub
+  become: false
+  register: journal_gateway_hub_client_file
+
+- name: Read the hub's public client certificate
+  ansible.builtin.slurp:
+    src: /etc/journal_pull-public/client.crt
+  delegate_to: hub
+  become: false
+  register: journal_gateway_hub_client_cert
+  when: not ansible_check_mode or journal_gateway_hub_client_file.stat.exists
+
+- name: Trust only the hub's client certificate
+  ansible.builtin.copy:
+    content: "{{ journal_gateway_hub_client_cert.content | b64decode }}"
+    dest: /etc/journal_gateway/hub-client.crt
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart journal gateway service
+  when: >-
+    not ansible_check_mode or
+    (journal_gateway_hub_client_file.stat.exists and
+     journal_gateway_private_directory.stat.isdir | default(false))
+
+- name: Read the gateway's public certificate for the hub
+  ansible.builtin.slurp:
+    src: /etc/journal_gateway-public/server.crt
+  become: false
+  register: journal_gateway_public_cert
+  when: not ansible_check_mode
+
+- name: Install this server's exact certificate as the hub's trust anchor
+  ansible.builtin.copy:
+    content: "{{ journal_gateway_public_cert.content | b64decode }}"
+    dest: "/etc/journal_pull/servers/{{ inventory_hostname }}.crt"
+    owner: root
+    group: root
+    mode: "0644"
+  delegate_to: hub
+  become: true
+  vars:
+    ansible_become_password: "{{ hostvars['hub'].ansible_become_password }}"
+  when: not ansible_check_mode
+
+- name: Make the systemd drop-in folders
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - systemd-journal-gatewayd.socket
+    - systemd-journal-gatewayd.service
+  become: true
+
+- name: Read whether the socket drop-in folder exists
+  ansible.builtin.stat:
+    path: /etc/systemd/system/systemd-journal-gatewayd.socket.d
+  register: journal_gateway_socket_dropin_directory
+  become: true
+
+- name: Read whether the service drop-in folder exists
+  ansible.builtin.stat:
+    path: /etc/systemd/system/systemd-journal-gatewayd.service.d
+  register: journal_gateway_service_dropin_directory
+  become: true
+
+- name: Bind the gateway socket to only this machine's specified address
+  ansible.builtin.template:
+    src: systemd-journal-gatewayd.socket.conf.j2
+    dest: /etc/systemd/system/systemd-journal-gatewayd.socket.d/10-listen-address.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for journal gateway
+    - Restart journal gateway socket
+  when: not ansible_check_mode or journal_gateway_socket_dropin_directory.stat.isdir | default(false)
+
+- name: Give gatewayd its key as a systemd credential and require the hub certificate
+  ansible.builtin.template:
+    src: systemd-journal-gatewayd.service.conf.j2
+    dest: /etc/systemd/system/systemd-journal-gatewayd.service.d/10-mutual-tls.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for journal gateway
+    - Restart journal gateway service
+  when: not ansible_check_mode or journal_gateway_service_dropin_directory.stat.isdir | default(false)
+
+- name: Admit only node exporter's allowed sources to the gateway port
+  ansible.posix.firewalld:
+    rich_rule: >-
+      rule family="ipv4" source address="{{ item }}"
+      port port="19531" protocol="tcp" accept
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ journal_gateway_allowed_sources }}"
+  become: true
+
+- name: Read the permanent rich rules after admitting the current sources
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --zone=public
+      - --list-rich-rules
+  register: journal_gateway_permanent_rich_rules
+  changed_when: false
+  check_mode: false
+
+- name: Plan removal of obsolete gateway rich rules
+  ansible.builtin.set_fact:
+    journal_gateway_firewall_plan: >-
+      {{ journal_gateway_permanent_rich_rules.stdout_lines
+         | node_exporter_firewall_plan(19531, journal_gateway_allowed_sources) }}
+
+- name: Remove obsolete gateway rich rules
+  ansible.posix.firewalld:
+    rich_rule: "{{ item }}"
+    zone: public
+    permanent: true
+    immediate: true
+    state: disabled
+  loop: "{{ journal_gateway_firewall_plan.stale_rules }}"
+  become: true
+
+- name: Run gateway handlers before starting the socket
+  ansible.builtin.meta: flush_handlers
+
+- name: Make sure the gateway socket is enabled and listening
+  ansible.builtin.systemd_service:
+    name: systemd-journal-gatewayd.socket
+    state: started
+    enabled: true
+  become: true
+  when: not ansible_check_mode
+
+- name: Check the journal gateway's claimed state
+  ansible.builtin.import_tasks: verify.yml

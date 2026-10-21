@@ -115,6 +115,33 @@ argument_specs:
         type: int
         default: 3000
         description: The port Grafana is published on, on 127.0.0.1 only.
+      hub_journal_sources:
+        type: list
+        elements: dict
+        description: Remote journal gateways the hub pulls from.
+        options:
+          name:
+            type: str
+            required: true
+          address:
+            type: str
+            required: true
+      hub_loki_image:
+        type: str
+        default: docker.io/grafana/loki@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
+        description: Loki 3.7.8 image pinned by digest.
+      hub_loki_port:
+        type: int
+        default: 3100
+        description: Loopback port for Loki.
+      hub_alloy_image:
+        type: str
+        default: docker.io/grafana/alloy@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+        description: Alloy 1.20.1 image pinned by digest.
+      hub_journal_probe_image:
+        type: str
+        default: docker.io/library/almalinux@sha256:838c2fafefb1a8a0d7f8cdbc3b0551c2a2b1eb0cd87aad6d62aecadb18311f1b
+        description: AlmaLinux 10.2 image with journalctl for the rootless journal read probe.
       hub_grafana_plugins:
         type: list
         elements: dict

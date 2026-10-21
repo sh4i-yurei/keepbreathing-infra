@@ -53,6 +53,22 @@
 			"ip":  ["9100"],
 		},
 
+		// Journal gateway: the hub pulls logs from every other server.
+		// Monitoring and alerting decisions #36 and #56.
+		{
+			"src": ["tag:hub"],
+			"dst": ["tag:vault", "tag:bastion", "100.116.219.6", "10.128.0.3", "10.128.0.4"],
+			"ip":  ["19531"],
+		},
+
+		// Podman exporter: the hub scrapes web, control and vaultserv, as step 8h requires.
+		// Monitoring and alerting decision #55.
+		{
+			"src": ["tag:hub"],
+			"dst": ["tag:vault", "tag:bastion", "10.128.0.3"],
+			"ip":  ["9882"],
+		},
+
 		// Allow users in "group:example" to access "tag:example", but only from
 		// devices that are running macOS and have enabled Tailscale client auto-updating.
 		// {"src": ["group:example"], "dst": ["tag:example"], "ip": ["*"], "srcPosture":["posture:autoUpdateMac"]},

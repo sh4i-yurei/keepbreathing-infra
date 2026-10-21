@@ -26,3 +26,68 @@ comes from the Login item `grafana prometheus (hub)` and reaches Grafana through
 `GF_METRICS_BASIC_AUTH_PASSWORD__FILE`. The secret file has the same `0600` mode and ownership as
 Grafana's admin-password file. The verify tasks require an anonymous metrics request to return
 `401` and the vault password to return `200`.
+
+## Journals, Loki and Alloy
+
+The hub creates its client certificate under `/etc/journal_pull`; the private
+key stays there. The gateway play publishes each source's exact server
+certificate to `/etc/journal_pull/servers`. The hub play requires all five
+server certificates before starting the pullers, including the certificate
+installed by hand for `almaserv` as described in
+`../journal_gateway/README.md`.
+
+Each `journal-pull@<host>.service` runs the Python wrapper. It reads the last
+committed `REMOTE_SOURCE_CURSOR` from that host's imported journal, confirms
+that source cursor still exists, then streams new entries into its child
+`systemd-journal-remote`. On a first run, it imports all entries still at the
+source. A missing cursor, failed child, or unplanned stream end fails the
+unit. Systemd uses `Restart=on-failure`, `RestartSec=30s`,
+`StartLimitIntervalSec=600`, and `StartLimitBurst=5`; repeated failure makes
+the unit failed for the existing service-failed alert. Each host has a
+separate output journal. Journal remote uses `MaxUse=1G`, `KeepFree=10G`, and
+`MaxFileSize=64M`.
+
+The rootless Loki and Alloy Quadlets use pinned image digests. Loki listens
+only on hub loopback and retains logs for 2160 hours. Alloy reads the hub's
+own journal and the five imported directories, with one `host` label per
+reader. The node exporter textfile collector reads an hourly measurement of
+Loki's data directory, and the warning rule fires above 4 GiB. The hub
+verify checks Loki readiness, effective retention, running images, every
+puller, the size metric, and a Loki write and query round trip.
+
+### Live resume test
+
+The hub play installs `/usr/local/libexec/journal-resume-test`. The source
+marker mode can use the same repository script on the source. Do this only
+during the authorized live run, after the hub and a gateway are healthy.
+Run the source and hub steps concurrently in separate host shells; choose a
+fresh run ID and a count such as 24. The source interval should leave enough
+time for all three hub stop and start cycles. In the commands below, the
+working directory is `/` on the named host.
+
+1. Copy `roles/hub/files/journal-resume-test.py` to
+   `/usr/local/libexec/journal-resume-test` on the source. On that **source
+   host shell**, run
+   `/usr/local/libexec/journal-resume-test source-markers --run-id logs-test-1 --count 24 --interval 5`.
+   It writes numbered `logger` entries to the source journal.
+2. At the same time on the **hub host shell**, run
+   `journal-resume-test hub-cycle --host web --run-id logs-test-1 --count 24`.
+   It stops and starts `journal-pull@web.service` at three observed points,
+   then waits for all markers to be imported.
+3. On the **hub host shell**, run
+   `journal-resume-test verify --host web --run-id logs-test-1 --count 24`.
+   It requires every numbered marker exactly once in the imported journal
+   and Loki. Use the actual source name in `--host`.
+
+The lost-cursor test is deliberately separate because it deletes archived
+source journals. On the **hub host shell**, run
+`journal-resume-test prepare-loss --host web` to stop the puller. After
+confirming the source's archived journals may be removed, on that **source
+host shell** run
+`/usr/local/libexec/journal-resume-test source-vacuum --confirm-delete-archived-journals`.
+On the **hub host shell**, run
+`journal-resume-test verify-loss --host web`. It starts the puller and
+requires a failed unit and the lost-cursor error. This procedure needs a
+source whose saved cursor is actually removed by the vacuum; the script
+fails if the cursor remains available. Do not run this on an irreplaceable
+source journal.

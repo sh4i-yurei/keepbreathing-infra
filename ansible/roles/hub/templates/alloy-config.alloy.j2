@@ -1,0 +1,46 @@
+// Managed by Ansible (roles/hub). Monitoring and alerting decisions #36 and #56.
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label = "unit"
+  }
+  rule {
+    source_labels = ["__journal_syslog_identifier"]
+    target_label = "identifier"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label = "level"
+  }
+  rule {
+    source_labels = ["__journal__transport"]
+    target_label = "transport"
+  }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://{{ hub_host_loopback }}:{{ hub_loki_port }}/loki/api/v1/push"
+  }
+}
+
+loki.source.journal "hub" {
+  path = "/var/log/journal"
+  max_age = "2160h"
+  labels = {host = "hub"}
+  relabel_rules = loki.relabel.journal.rules
+  forward_to = [loki.write.local.receiver]
+}
+
+{% for source in hub_journal_sources %}
+loki.source.journal "{{ source.name }}" {
+  path = "/var/log/journal/remote/{{ source.name }}"
+  max_age = "2160h"
+  labels = {host = "{{ source.name }}"}
+  relabel_rules = loki.relabel.journal.rules
+  forward_to = [loki.write.local.receiver]
+}
+
+{% endfor %}

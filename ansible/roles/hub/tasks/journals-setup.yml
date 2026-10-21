@@ -1,0 +1,319 @@
+---
+# Gateway play prepares the hub client certificate and installs the remote public certificates.
+- name: journals-setup | Keep the hub client certificate current
+  ansible.builtin.import_tasks: journal-client-cert.yml
+
+- name: journals-setup | Install the importer and HTTP client
+  ansible.builtin.dnf:
+    name:
+      - systemd-journal-remote
+      - curl
+    state: present
+  become: true
+
+- name: journals-setup | Make the importer configuration folder
+  ansible.builtin.file:
+    path: /etc/systemd/journal-remote.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: journals-setup | Read whether the importer configuration folder exists
+  ansible.builtin.stat:
+    path: /etc/systemd/journal-remote.conf.d
+  register: hub_journal_remote_config_directory
+  become: true
+
+- name: journals-setup | Set the importer's journal space limits
+  ansible.builtin.template:
+    src: journal-remote-limits.conf.j2
+    dest: /etc/systemd/journal-remote.conf.d/10-limits.conf
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart journal pullers
+  when: not ansible_check_mode or hub_journal_remote_config_directory.stat.isdir | default(false)
+
+- name: journals-setup | Make the persistent container folders
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/{{ item }}"
+    state: directory
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0700"
+  loop:
+    - .config/loki
+    - .config/alloy
+    - loki
+    - alloy
+  become: true
+
+- name: journals-setup | Read whether Loki's configuration folder exists
+  ansible.builtin.stat:
+    path: "/home/{{ hub_container_user }}/.config/loki"
+  register: hub_loki_config_directory
+  become: true
+
+- name: journals-setup | Read whether Alloy's configuration folder exists
+  ansible.builtin.stat:
+    path: "/home/{{ hub_container_user }}/.config/alloy"
+  register: hub_alloy_config_directory
+  become: true
+
+- name: journals-setup | Make the host journal directories
+  ansible.builtin.file:
+    path: /var/log/journal/remote
+    state: directory
+    owner: systemd-journal-remote
+    group: systemd-journal
+    mode: "2750"
+  become: true
+
+- name: journals-setup | Make each source's journal directory
+  ansible.builtin.file:
+    path: "/var/log/journal/remote/{{ item.name }}"
+    state: directory
+    owner: systemd-journal-remote
+    group: systemd-journal
+    mode: "2750"
+  loop: "{{ hub_journal_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+
+- name: journals-setup | Restore the package policy's journal directory labels
+  ansible.builtin.command:
+    argv:
+      - restorecon
+      - -R
+      - -v
+      - /var/log/journal/remote
+  register: hub_journal_restorecon
+  changed_when: hub_journal_restorecon.stdout | length > 0
+  become: true
+  when: not ansible_check_mode
+
+- name: journals-setup | Make the puller configuration folder
+  ansible.builtin.file:
+    path: /etc/journal_pull/hosts
+    state: directory
+    owner: root
+    group: systemd-journal-remote
+    mode: "0750"
+  become: true
+
+- name: journals-setup | Read whether the puller configuration folder exists
+  ansible.builtin.stat:
+    path: /etc/journal_pull/hosts
+  register: hub_journal_pull_host_directory
+  become: true
+
+- name: journals-setup | Read every server certificate installed by the gateway play
+  ansible.builtin.stat:
+    path: "/etc/journal_pull/servers/{{ item.name }}.crt"
+  loop: "{{ hub_journal_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: hub_journal_server_cert_files
+  become: true
+
+- name: journals-setup | Require every gateway certificate before starting a puller
+  ansible.builtin.assert:
+    that:
+      - >-
+        hub_journal_server_cert_files.results
+        | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      A gateway certificate is missing. Run journal-gateway.yml and install almaserv by hand
+      before starting the hub pullers.
+    quiet: true
+  when: not ansible_check_mode
+
+- name: journals-setup | Write Loki's 90-day configuration
+  ansible.builtin.template:
+    src: loki-config.yml.j2
+    dest: "/home/{{ hub_container_user }}/.config/loki/config.yml"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  become: true
+  notify: Restart loki
+  when: not ansible_check_mode or hub_loki_config_directory.stat.isdir | default(false)
+
+- name: journals-setup | Write Loki's Quadlet file
+  ansible.builtin.template:
+    src: loki.container.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/systemd/loki.container"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for the container account
+    - Restart loki
+
+- name: journals-setup | Write Alloy's journal readers
+  ansible.builtin.template:
+    src: alloy-config.alloy.j2
+    dest: "/home/{{ hub_container_user }}/.config/alloy/config.alloy"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  become: true
+  notify: Restart alloy
+  when: not ansible_check_mode or hub_alloy_config_directory.stat.isdir | default(false)
+
+- name: journals-setup | Write Alloy's Quadlet file
+  ansible.builtin.template:
+    src: alloy.container.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/systemd/alloy.container"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for the container account
+    - Restart alloy
+
+- name: journals-setup | Download the pinned logs images and journal read probe
+  containers.podman.podman_image:
+    name: "{{ item }}"
+  loop:
+    - "{{ hub_loki_image }}"
+    - "{{ hub_alloy_image }}"
+    - "{{ hub_journal_probe_image }}"
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: journals-setup | Install the cursor-preserving puller
+  ansible.builtin.copy:
+    src: journal-pull.py
+    dest: /usr/local/libexec/journal-pull
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  notify: Restart journal pullers
+
+- name: journals-setup | Install the live resume test helper
+  ansible.builtin.copy:
+    src: journal-resume-test.py
+    dest: /usr/local/libexec/journal-resume-test
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: journals-setup | Write the puller service template
+  ansible.builtin.template:
+    src: journal-pull@.service.j2
+    dest: /etc/systemd/system/journal-pull@.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for journal pullers
+    - Restart journal pullers
+
+- name: journals-setup | Write each gateway's puller configuration
+  ansible.builtin.template:
+    src: journal-pull-host.json.j2
+    dest: "/etc/journal_pull/hosts/{{ item.name }}.json"
+    owner: root
+    group: systemd-journal-remote
+    mode: "0640"
+  loop: "{{ hub_journal_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+  notify: Restart journal pullers
+  when: not ansible_check_mode or hub_journal_pull_host_directory.stat.isdir | default(false)
+
+- name: journals-setup | Install the Loki data size metric writer
+  ansible.builtin.template:
+    src: loki-data-size.j2
+    dest: /usr/local/libexec/loki-data-size
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: journals-setup | Write the Loki data size service
+  ansible.builtin.template:
+    src: loki-data-size.service.j2
+    dest: /etc/systemd/system/loki-data-size.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd for journal pullers
+
+- name: journals-setup | Write the hourly Loki data size timer
+  ansible.builtin.template:
+    src: loki-data-size.timer.j2
+    dest: /etc/systemd/system/loki-data-size.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify:
+    - Reload systemd for journal pullers
+    - Restart Loki data size timer
+
+- name: journals-setup | Run handlers before starting the logs services
+  ansible.builtin.meta: flush_handlers
+
+- name: journals-setup | Make sure Loki is running
+  ansible.builtin.systemd_service:
+    name: loki.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+  when: not ansible_check_mode
+
+- name: journals-setup | Make sure Alloy is running
+  ansible.builtin.systemd_service:
+    name: alloy.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+  when: not ansible_check_mode
+
+- name: journals-setup | Make sure every puller is running
+  ansible.builtin.systemd_service:
+    name: "journal-pull@{{ item.name }}.service"
+    state: started
+    enabled: true
+  loop: "{{ hub_journal_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+  when: not ansible_check_mode
+
+- name: journals-setup | Write the first Loki data size metric
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/loki-data-size
+    creates: "{{ node_exporter_textfile_directory }}/loki-data-size.prom"
+  become: true
+  when: not ansible_check_mode
+
+- name: journals-setup | Enable the hourly Loki data size measurement
+  ansible.builtin.systemd_service:
+    name: loki-data-size.timer
+    state: started
+    enabled: true
+  become: true
+  when: not ansible_check_mode

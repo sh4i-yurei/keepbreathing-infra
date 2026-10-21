@@ -1,0 +1,288 @@
+---
+- name: journals-verify | Check the running logs stack
+  when: not ansible_check_mode
+  block:
+    - name: journals-verify | Record the installed importer, systemd and curl NEVRAs
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - -q
+          - --qf
+          - "%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n"
+          - systemd
+          - systemd-journal-remote
+          - curl
+      register: hub_journal_installed_nevras
+      changed_when: false
+
+    - name: journals-verify | Check matching systemd version-releases
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - -q
+          - --qf
+          - "%{VERSION}-%{RELEASE}\n"
+          - systemd
+          - systemd-journal-remote
+      register: hub_journal_package_versions
+      changed_when: false
+
+    - name: journals-verify | Require the importer to match systemd's exact build
+      ansible.builtin.assert:
+        that:
+          - hub_journal_package_versions.stdout_lines | length == 2
+          - hub_journal_package_versions.stdout_lines[0] == hub_journal_package_versions.stdout_lines[1]
+        fail_msg: "Installed NEVRAs: {{ hub_journal_installed_nevras.stdout_lines }}"
+        quiet: true
+
+    - name: journals-verify | Read the installer's journal-remote options
+      ansible.builtin.command:
+        argv:
+          - /usr/lib/systemd/systemd-journal-remote
+          - --help
+      register: hub_journal_remote_help
+      changed_when: false
+
+    - name: journals-verify | Require the output option used by the wrapper
+      ansible.builtin.assert:
+        that:
+          - "'--output' in hub_journal_remote_help.stdout"
+        quiet: true
+
+    - name: journals-verify | Read the merged importer settings
+      ansible.builtin.command:
+        argv:
+          - systemd-analyze
+          - cat-config
+          - systemd/journal-remote.conf
+      register: hub_journal_remote_settings
+      changed_when: false
+
+    - name: journals-verify | Require the journal space settings
+      ansible.builtin.assert:
+        that:
+          - "'MaxUse=1G' in hub_journal_remote_settings.stdout"
+          - "'KeepFree=10G' in hub_journal_remote_settings.stdout"
+          - "'MaxFileSize=64M' in hub_journal_remote_settings.stdout"
+        quiet: true
+
+    - name: journals-verify | Wait for Loki to accept requests
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_loki_port }}/ready"
+      register: hub_loki_ready
+      until: hub_loki_ready.status == 200
+      retries: 20
+      delay: 3
+
+    - name: journals-verify | Read Loki's effective configuration
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_loki_port }}/config"
+        return_content: true
+      register: hub_loki_effective_config
+
+    - name: journals-verify | Require the live 90-day compactor configuration
+      ansible.builtin.assert:
+        that:
+          - hub_loki_config.limits_config.retention_period | string is match('^2160h')
+          - hub_loki_config.compactor.retention_enabled | bool
+          - hub_loki_config.compactor.delete_request_store == 'filesystem'
+          - hub_loki_config.schema_config.configs[-1].schema == 'v13'
+          - hub_loki_config.schema_config.configs[-1].index.period | string is match('^24h')
+        fail_msg: Loki's live configuration does not show the required 90-day retention.
+        quiet: true
+      vars:
+        hub_loki_config: "{{ hub_loki_effective_config.content | from_yaml }}"
+
+    - name: journals-verify | Read Loki's compactor metrics
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_loki_port }}/metrics"
+        return_content: true
+      register: hub_loki_metrics
+
+    - name: journals-verify | Require the compactor retention metric
+      ansible.builtin.assert:
+        that:
+          - "'loki_compactor_apply_retention_operation_total' in hub_loki_metrics.content"
+        quiet: true
+
+    - name: journals-verify | Read the running Loki and Alloy containers
+      containers.podman.podman_container_info:
+        name: "{{ item.name }}"
+      loop:
+        - {name: loki, image: "{{ hub_loki_image }}"}
+        - {name: alloy, image: "{{ hub_alloy_image }}"}
+      register: hub_log_containers
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+    - name: journals-verify | Require both running containers to use pinned images
+      ansible.builtin.assert:
+        that:
+          - item.containers | length == 1
+          - item.containers[0].State.Running
+          - item.containers[0].ImageName == item.item.image
+        fail_msg: "{{ item.item.name }} is stopped or not running its pinned image."
+        quiet: true
+      loop: "{{ hub_log_containers.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
+    - name: journals-verify | Read the host journal reader group ID
+      ansible.builtin.command:
+        argv:
+          - getent
+          - group
+          - systemd-journal
+      register: hub_journal_reader_group
+      changed_when: false
+
+    - name: journals-verify | Require a host process ID for Alloy
+      ansible.builtin.assert:
+        that:
+          - hub_log_containers.results[1].containers[0].State.Pid | int > 0
+        quiet: true
+
+    - name: journals-verify | Read the running Alloy process's groups
+      ansible.builtin.slurp:
+        src: "/proc/{{ hub_log_containers.results[1].containers[0].State.Pid }}/status"
+      register: hub_alloy_process_status
+      become: true
+
+    - name: journals-verify | Require Alloy to hold the journal reader group
+      ansible.builtin.assert:
+        that:
+          - hub_journal_reader_group.stdout.split(':')[2] in hub_alloy_groups_line.split()[1:]
+        fail_msg: Alloy's running process lacks the systemd-journal group.
+        quiet: true
+      vars:
+        hub_alloy_groups_line: >-
+          {{ (hub_alloy_process_status.content | b64decode).splitlines()
+             | select('match', '^Groups:') | first }}
+
+    - name: journals-verify | Read the hub journal in a rootless container
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --pull=never
+          - --group-add=keep-groups
+          - --security-opt=label=disable
+          - --volume=/var/log/journal:/var/log/journal:ro
+          - --entrypoint=/usr/bin/journalctl
+          - "{{ hub_journal_probe_image }}"
+          - --directory=/var/log/journal
+          - --lines=1
+          - --no-pager
+          - --output=short
+          - --quiet
+      register: hub_local_journal_probe
+      until: hub_local_journal_probe.rc == 0 and hub_local_journal_probe.stdout | trim | length > 0
+      retries: 20
+      delay: 3
+      changed_when: false
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+    - name: journals-verify | Read every imported journal in a rootless container
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --pull=never
+          - --group-add=keep-groups
+          - --security-opt=label=disable
+          - --volume=/var/log/journal:/var/log/journal:ro
+          - --entrypoint=/usr/bin/journalctl
+          - "{{ hub_journal_probe_image }}"
+          - "--directory=/var/log/journal/remote/{{ item.name }}"
+          - --lines=1
+          - --no-pager
+          - --output=short
+          - --quiet
+      loop: "{{ hub_journal_sources }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: hub_remote_journal_probe
+      until: hub_remote_journal_probe.rc == 0 and hub_remote_journal_probe.stdout | trim | length > 0
+      retries: 20
+      delay: 3
+      changed_when: false
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+    - name: journals-verify | Check every puller is active
+      ansible.builtin.systemd_service:
+        name: "journal-pull@{{ item.name }}.service"
+      loop: "{{ hub_journal_sources }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: hub_journal_puller_units
+      changed_when: false
+      become: true
+
+    - name: journals-verify | Require all puller units to stay active
+      ansible.builtin.assert:
+        that:
+          - >-
+            hub_journal_puller_units.results
+            | rejectattr('status.ActiveState', 'equalto', 'active') | list | length == 0
+        quiet: true
+
+    - name: journals-verify | Read the hourly Loki size metric
+      ansible.builtin.slurp:
+        src: "{{ node_exporter_textfile_directory }}/loki-data-size.prom"
+      register: hub_loki_size_metric
+      become: true
+
+    - name: journals-verify | Require the data size metric to contain a byte count
+      ansible.builtin.assert:
+        that:
+          - >-
+            (hub_loki_size_metric.content | b64decode)
+            is regex('(?m)^loki_data_directory_size_bytes [0-9]+$')
+        quiet: true
+
+    - name: journals-verify | Make a unique write-query marker
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import time,uuid; print(time.time_ns(), uuid.uuid4().hex)"
+      register: hub_loki_marker_parts
+      changed_when: false
+
+    - name: journals-verify | Push one marker through Loki's write API
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_loki_port }}/loki/api/v1/push"
+        method: POST
+        body_format: json
+        body:
+          streams:
+            - stream: {job: journal-build-verify, host: hub}
+              values:
+                - - "{{ hub_loki_marker_parts.stdout.split()[0] }}"
+                  - "{{ hub_loki_marker_parts.stdout.split()[1] }}"
+        status_code: 204
+
+    - name: journals-verify | Query the marker back exactly once
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ hub_loki_port }}/loki/api/v1/query_range?since=5m&query={{
+          ('{job="journal-build-verify",host="hub"} |= "' ~ hub_loki_marker_parts.stdout.split()[1] ~ '"')
+          | urlencode }}
+      register: hub_loki_marker_query
+      until: >-
+        hub_loki_marker_query.status == 200 and
+        (hub_loki_marker_query.json.data.result
+        | map(attribute='values') | flatten(levels=1) | map('last')
+        | select('equalto', hub_loki_marker_parts.stdout.split()[1]) | list | length) == 1
+      retries: 15
+      delay: 2

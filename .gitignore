@@ -24,6 +24,10 @@ secrets*
 *.retry
 .ansible/
 
+# Python bytecode and test caches, rebuilt whenever code or tests run
+__pycache__/
+.pytest_cache/
+
 # Editor and OS cruft
 .vscode/
 .idea/

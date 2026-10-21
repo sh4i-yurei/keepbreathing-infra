@@ -1,0 +1,7 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Measure the Loki data directory for node_exporter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/loki-data-size

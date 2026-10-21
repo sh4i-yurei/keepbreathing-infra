@@ -1,0 +1,7 @@
+# Managed by Ansible (roles/journal_gateway). Edits here are overwritten.
+[Service]
+LoadCredential=journal-gateway.key:/etc/journal_gateway/server.key
+LoadCredential=journal-gateway.crt:/etc/journal_gateway/server.crt
+LoadCredential=journal-hub-client.crt:/etc/journal_gateway/hub-client.crt
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-journal-gatewayd --cert=%d/journal-gateway.crt --key=%d/journal-gateway.key --trust=%d/journal-hub-client.crt

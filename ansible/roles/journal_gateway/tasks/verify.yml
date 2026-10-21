@@ -1,0 +1,170 @@
+---
+- name: verify | Check the gateway's installed package, options, socket, firewall and client trust
+  when: not ansible_check_mode
+  block:
+    - name: verify | Record the installed systemd and journal-remote NEVRAs
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - -q
+          - --qf
+          - "%{NAME}-%{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n"
+          - systemd
+          - systemd-journal-remote
+      register: journal_gateway_installed_nevras
+      changed_when: false
+
+    - name: verify | Read the matching systemd version-releases
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - -q
+          - --qf
+          - "%{VERSION}-%{RELEASE}\n"
+          - systemd
+          - systemd-journal-remote
+      register: journal_gateway_package_versions
+      changed_when: false
+
+    - name: verify | Require the package to match systemd's exact build
+      ansible.builtin.assert:
+        that:
+          - journal_gateway_package_versions.stdout_lines | length == 2
+          - journal_gateway_package_versions.stdout_lines[0] == journal_gateway_package_versions.stdout_lines[1]
+        fail_msg: >-
+          systemd and systemd-journal-remote must have the same version-release.
+          Installed NEVRAs: {{ journal_gateway_installed_nevras.stdout_lines }}
+        quiet: true
+
+    - name: verify | Read gatewayd's installed options
+      ansible.builtin.command:
+        argv:
+          - /usr/lib/systemd/systemd-journal-gatewayd
+          - --help
+      register: journal_gateway_help
+      changed_when: false
+
+    - name: verify | Require certificate, key and trust support
+      ansible.builtin.assert:
+        that:
+          - "'--cert' in journal_gateway_help.stdout"
+          - "'--key' in journal_gateway_help.stdout"
+          - "'--trust' in journal_gateway_help.stdout"
+        quiet: true
+
+    - name: verify | Read journal-remote's installed options
+      ansible.builtin.command:
+        argv:
+          - /usr/lib/systemd/systemd-journal-remote
+          - --help
+      register: journal_gateway_remote_help
+      changed_when: false
+
+    - name: verify | Require output and standard-input import support
+      ansible.builtin.assert:
+        that:
+          - "'--output' in journal_gateway_remote_help.stdout"
+        quiet: true
+
+    - name: verify | Confirm the gateway socket is active
+      ansible.builtin.systemd_service:
+        name: systemd-journal-gatewayd.socket
+      register: journal_gateway_socket_status
+      changed_when: false
+      become: true
+
+    - name: verify | Require the gateway socket to be active and enabled
+      ansible.builtin.assert:
+        that:
+          - journal_gateway_socket_status.status.ActiveState == 'active'
+          - journal_gateway_socket_status.status.UnitFileState == 'enabled'
+        quiet: true
+
+    - name: verify | Read permanent rich rules
+      ansible.builtin.command:
+        argv:
+          - firewall-cmd
+          - --permanent
+          - --zone=public
+          - --list-rich-rules
+      register: journal_gateway_verified_rich_rules
+      changed_when: false
+
+    - name: verify | Require exactly the allowed sources on the gateway port
+      ansible.builtin.assert:
+        that:
+          - journal_gateway_verified_plan.stale_rules | length == 0
+          - journal_gateway_verified_plan.managed_sources == journal_gateway_verified_plan.allowed_sources
+        quiet: true
+      vars:
+        journal_gateway_verified_plan: >-
+          {{ journal_gateway_verified_rich_rules.stdout_lines
+             | node_exporter_firewall_plan(19531, journal_gateway_allowed_sources) }}
+
+    - name: verify | A request with the hub's client certificate succeeds
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - --max-time
+          - "15"
+          - --noproxy
+          - "*"
+          - --cacert
+          - "/etc/journal_pull/servers/{{ inventory_hostname }}.crt"
+          - --cert
+          - /etc/journal_pull/client.crt
+          - --key
+          - /etc/journal_pull/client.key
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - "https://{{ journal_gateway_listen_address }}/"
+      delegate_to: hub
+      become: true
+      vars:
+        ansible_become_password: "{{ hostvars['hub'].ansible_become_password }}"
+      register: journal_gateway_authenticated_request
+      changed_when: false
+
+    - name: verify | Require the authenticated request to succeed
+      ansible.builtin.assert:
+        that:
+          - journal_gateway_authenticated_request.stdout == '200'
+        quiet: true
+
+    - name: verify | A request without the hub's client certificate is refused
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - --max-time
+          - "15"
+          - --noproxy
+          - "*"
+          - --cacert
+          - "/etc/journal_pull/servers/{{ inventory_hostname }}.crt"
+          - --output
+          - /dev/null
+          - --write-out
+          - "%{http_code}"
+          - "https://{{ journal_gateway_listen_address }}/"
+      delegate_to: hub
+      become: true
+      vars:
+        ansible_become_password: "{{ hostvars['hub'].ansible_become_password }}"
+      register: journal_gateway_unauthenticated_request
+      failed_when: false
+      changed_when: false
+
+    - name: verify | Require the unauthenticated request to fail
+      ansible.builtin.assert:
+        that:
+          - journal_gateway_unauthenticated_request.rc != 0
+          - journal_gateway_unauthenticated_request.stdout != '200'
+        quiet: true

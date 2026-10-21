@@ -1,0 +1,20 @@
+---
+- name: Reload systemd for journal gateway
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  become: true
+  when: not ansible_check_mode
+
+- name: Restart journal gateway socket
+  ansible.builtin.systemd_service:
+    name: systemd-journal-gatewayd.socket
+    state: restarted
+  become: true
+  when: not ansible_check_mode
+
+- name: Restart journal gateway service
+  ansible.builtin.systemd_service:
+    name: systemd-journal-gatewayd.service
+    state: restarted
+  become: true
+  when: not ansible_check_mode

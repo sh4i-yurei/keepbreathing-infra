@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Measure Loki's data directory hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=loki-data-size.service
+
+[Install]
+WantedBy=timers.target

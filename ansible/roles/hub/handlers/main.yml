@@ -1,6 +1,14 @@
 ---
 # Handlers run once, after the tasks that notify them, in the order they are DEFINED here.
-# The reload comes first so systemd has reread a changed Quadlet file before ntfy restarts.
+# Restart the user manager first when its groups change. Later Quadlet handlers
+# reload that manager before restarting a changed service.
+
+- name: Restart the container account's user manager
+  ansible.builtin.systemd_service:
+    name: "user@{{ hub_container_account.uid }}.service"
+    state: restarted
+  become: true
+  when: not ansible_check_mode
 
 - name: Reload systemd for the container account
   ansible.builtin.systemd_service:
@@ -70,3 +78,46 @@
   become_user: "{{ hub_container_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+
+- name: Restart loki
+  ansible.builtin.systemd_service:
+    name: loki.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+  when: not ansible_check_mode
+
+- name: Restart alloy
+  ansible.builtin.systemd_service:
+    name: alloy.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ hub_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+  when: not ansible_check_mode
+
+- name: Reload systemd for journal pullers
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  become: true
+  when: not ansible_check_mode
+
+- name: Restart journal pullers
+  ansible.builtin.systemd_service:
+    name: "journal-pull@{{ item.name }}.service"
+    state: restarted
+  loop: "{{ hub_journal_sources }}"
+  become: true
+  when: not ansible_check_mode
+
+- name: Restart Loki data size timer
+  ansible.builtin.systemd_service:
+    name: loki-data-size.timer
+    state: restarted
+  become: true
+  when: not ansible_check_mode

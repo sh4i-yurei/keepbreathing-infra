@@ -6,6 +6,19 @@
 - name: Create the container account
   ansible.builtin.import_tasks: account.yml
 
+- name: Give the container account its journal reader groups
+  ansible.builtin.user:
+    name: "{{ hub_container_user }}"
+    groups:
+      - adm
+      - systemd-journal
+    append: true
+  become: true
+  notify: Restart the container account's user manager
+
+- name: Apply changed groups before starting or verifying containers
+  ansible.builtin.meta: flush_handlers
+
 - name: Route the droplets' VPC through the tailnet, keeping the hub's own subnet direct
   ansible.builtin.import_tasks: tailnet-routes-setup.yml
 
@@ -35,6 +48,12 @@
 
 - name: Check the Podman exporter is in the state the role claims
   ansible.builtin.import_tasks: podman-exporter-verify.yml
+
+- name: Run the journal pullers, Loki and Alloy
+  ansible.builtin.import_tasks: journals-setup.yml
+
+- name: Check the logs stack is in the state the role claims
+  ansible.builtin.import_tasks: journals-verify.yml
 
 - name: Run Prometheus
   ansible.builtin.import_tasks: prometheus-setup.yml

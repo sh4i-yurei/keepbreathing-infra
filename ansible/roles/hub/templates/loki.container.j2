@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+[Unit]
+Description=Loki, the hub's 90-day log store
+
+[Container]
+ContainerName=loki
+Image={{ hub_loki_image }}
+UserNS=keep-id:uid=10001,gid=10001
+PublishPort=127.0.0.1:{{ hub_loki_port }}:3100
+Volume=/home/{{ hub_container_user }}/.config/loki:/etc/loki:ro,Z
+Volume=/home/{{ hub_container_user }}/loki:/loki:Z
+Exec=-config.file=/etc/loki/config.yml
+
+[Service]
+Restart=always
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

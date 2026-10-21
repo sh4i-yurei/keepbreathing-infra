@@ -1,0 +1,131 @@
+---
+# The private key is generated and kept on the hub. Gateways read only client.crt.
+- name: journal-client-cert | Install the importer account before setting folder ownership
+  ansible.builtin.dnf:
+    name: systemd-journal-remote
+    state: present
+  become: true
+
+- name: journal-client-cert | Check whether the importer group exists yet
+  ansible.builtin.command:
+    argv:
+      - getent
+      - group
+      - systemd-journal-remote
+  register: hub_journal_remote_group
+  changed_when: false
+  failed_when: not ansible_check_mode and hub_journal_remote_group.rc != 0
+  check_mode: false
+
+- name: journal-client-cert | Install the Python cryptography library
+  ansible.builtin.dnf:
+    name: python3-cryptography
+    state: present
+  become: true
+
+- name: journal-client-cert | Make the private client certificate folder
+  ansible.builtin.file:
+    path: /etc/journal_pull
+    state: directory
+    owner: root
+    group: systemd-journal-remote
+    mode: "0750"
+  become: true
+  when: not ansible_check_mode or hub_journal_remote_group.rc == 0
+
+- name: journal-client-cert | Make the folder for each exact server trust anchor
+  ansible.builtin.file:
+    path: /etc/journal_pull/servers
+    state: directory
+    owner: root
+    group: systemd-journal-remote
+    mode: "0750"
+  become: true
+  when: not ansible_check_mode or hub_journal_remote_group.rc == 0
+
+- name: journal-client-cert | Read whether the client certificate folder exists
+  ansible.builtin.stat:
+    path: /etc/journal_pull
+  register: hub_journal_client_directory
+  become: true
+
+- name: journal-client-cert | Read whether the client key exists
+  ansible.builtin.stat:
+    path: /etc/journal_pull/client.key
+  register: hub_journal_client_key
+  become: true
+
+- name: journal-client-cert | Make the client key
+  community.crypto.openssl_privatekey:
+    path: /etc/journal_pull/client.key
+    type: ECC
+    curve: secp256r1
+    owner: root
+    group: root
+    mode: "0600"
+  become: true
+  when: not ansible_check_mode or hub_journal_client_directory.stat.isdir | default(false)
+
+- name: journal-client-cert | Build the client certificate request
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: /etc/journal_pull/client.key
+    common_name: journal-pull-hub
+    extended_key_usage:
+      - clientAuth
+  register: hub_journal_client_csr
+  changed_when: false
+  become: true
+  when: not ansible_check_mode or hub_journal_client_key.stat.exists
+
+- name: journal-client-cert | Read whether the client certificate exists
+  ansible.builtin.stat:
+    path: /etc/journal_pull/client.crt
+  register: hub_journal_client_cert_file
+  become: true
+
+- name: journal-client-cert | Check whether the client certificate is valid in 30 days
+  community.crypto.x509_certificate_info:
+    path: /etc/journal_pull/client.crt
+    valid_at:
+      renewal: "+30d"
+  register: hub_journal_client_cert_info
+  become: true
+  when: hub_journal_client_cert_file.stat.exists
+
+- name: journal-client-cert | Make or renew the self-signed client certificate
+  community.crypto.x509_certificate:
+    path: /etc/journal_pull/client.crt
+    privatekey_path: /etc/journal_pull/client.key
+    csr_content: "{{ hub_journal_client_csr.csr }}"
+    provider: selfsigned
+    selfsigned_not_after: "+365d"
+    force: >-
+      {{ hub_journal_client_cert_file.stat.exists and
+      not hub_journal_client_cert_info.valid_at.renewal }}
+    owner: root
+    group: systemd-journal-remote
+    mode: "0640"
+  become: true
+  when: >-
+    not ansible_check_mode or
+    (hub_journal_client_key.stat.exists and hub_journal_remote_group.rc == 0)
+
+- name: journal-client-cert | Make the public client certificate folder
+  ansible.builtin.file:
+    path: /etc/journal_pull-public
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: journal-client-cert | Publish the client certificate for gateways
+  ansible.builtin.copy:
+    src: /etc/journal_pull/client.crt
+    dest: /etc/journal_pull-public/client.crt
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: not ansible_check_mode

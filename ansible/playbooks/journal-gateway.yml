@@ -1,0 +1,18 @@
+---
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+# The hub's client certificate must exist before a gateway can trust it.
+- name: Prepare the journal pull client's certificate
+  hosts: hub
+  tasks:
+    - name: Create the hub's journal client certificate
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: journal-client-cert
+
+- name: Journal gateways
+  hosts: droplets:vaultserv
+  force_handlers: true
+  roles:
+    - journal_gateway

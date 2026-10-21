@@ -1,0 +1,8 @@
+{
+  "url": "https://{{ item.address }}",
+  "server_certificate": "/etc/journal_pull/servers/{{ item.name }}.crt",
+  "client_certificate": "/etc/journal_pull/client.crt",
+  "client_key": "$CREDENTIALS_DIRECTORY/client.key",
+  "output_directory": "/var/log/journal/remote/{{ item.name }}",
+  "output_file": "/var/log/journal/remote/{{ item.name }}/{{ item.name }}.journal"
+}

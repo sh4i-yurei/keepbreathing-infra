@@ -8,6 +8,8 @@ baseline_container_user: keepbreath4
 node_exporter_listen_address: "100.65.221.62:9100"
 node_exporter_allowed_sources:
   - 100.95.89.6
+journal_gateway_listen_address: "100.65.221.62:19531"
+journal_gateway_allowed_sources: "{{ node_exporter_allowed_sources }}"
 node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
   ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
 node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~

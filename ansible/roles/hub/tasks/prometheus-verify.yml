@@ -80,8 +80,10 @@
             (hub_prometheus_status.results[0].json.data.groups | map(attribute='rules') | flatten
             | map(attribute='name') | list)
           - >-
-            (['TargetDown', 'NodeRebootRequired', 'ContainerNotRunning', 'ContainerMissing', 'NodeFilesystemAlmostOutOfSpace', 'PrometheusRuleFailures',
-            'AlertmanagerFailedToSendAlerts'] | difference(hub_prometheus_status.results[0].json.data.groups
+            (['TargetDown', 'NodeRebootRequired', 'LokiDataDirectoryGrowing',
+            'ContainerNotRunning', 'ContainerMissing', 'NodeFilesystemAlmostOutOfSpace',
+            'PrometheusRuleFailures', 'AlertmanagerFailedToSendAlerts']
+            | difference(hub_prometheus_status.results[0].json.data.groups
             | map(attribute='rules') | flatten | map(attribute='name') | list)) == []
           - >-
             'instance:node_cpu_utilisation:rate5m' in

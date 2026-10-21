@@ -1,0 +1,14 @@
+---
+argument_specs:
+  main:
+    short_description: Serve a machine's journal to the hub over mutual TLS
+    options:
+      journal_gateway_listen_address:
+        type: str
+        required: true
+        description: The exact address and port on which the gateway socket listens.
+      journal_gateway_allowed_sources:
+        type: list
+        elements: str
+        required: true
+        description: Sources allowed through firewalld to the gateway port.

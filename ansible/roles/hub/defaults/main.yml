@@ -93,6 +93,30 @@ hub_grafana_version: "13.2.4"
 # The port Grafana is published on, on 127.0.0.1 only. The Tailscale Service forwards to it.
 hub_grafana_port: 3000
 
+# Logs are pulled from these gateways. The first four addresses come from the gateway role's
+# host_vars; almaserv is deliberately absent from the Ansible inventory (decision #30).
+hub_journal_sources:
+  - name: web
+    address: "{{ hostvars['web'].journal_gateway_listen_address }}"
+  - name: mail
+    address: "{{ hostvars['mail'].journal_gateway_listen_address }}"
+  - name: control
+    address: "{{ hostvars['control'].journal_gateway_listen_address }}"
+  - name: vaultserv
+    address: "{{ hostvars['vaultserv'].journal_gateway_listen_address }}"
+  - name: almaserv
+    address: "100.116.219.6:19531"
+
+# Monitoring and alerting decisions #36, #56 and #57. Immutable image digests are from the
+# approved Part 5 design; the version names document which upstream release they identify.
+hub_loki_image: docker.io/grafana/loki@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
+hub_loki_version: "3.7.8"
+hub_loki_port: 3100
+hub_alloy_image: docker.io/grafana/alloy@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+hub_alloy_version: "1.20.1"
+# AlmaLinux 10.2 includes journalctl for the rootless read-access probe.
+hub_journal_probe_image: docker.io/library/almalinux@sha256:838c2fafefb1a8a0d7f8cdbc3b0551c2a2b1eb0cd87aad6d62aecadb18311f1b
+
 # Grafana's plugins, each pinned by the SHA-256 of its linux-amd64 zip from grafana.com's plugin
 # API, recorded when the version is chosen (decisions #39, #41 and #44).
 hub_grafana_plugins:

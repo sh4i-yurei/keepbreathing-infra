@@ -19,6 +19,9 @@ node_exporter_listen_address: "10.128.0.4:9100"
 node_exporter_allowed_sources:
   - 10.128.0.5
 
+journal_gateway_listen_address: "10.128.0.4:19531"
+journal_gateway_allowed_sources: "{{ node_exporter_allowed_sources }}"
+
 # The 2026-10-18 read-only inventory found no containers under keepbreath2. Keep mail in the
 # rehearsal play, but do not install an exporter whose only subject would be itself.
 podman_exporter_enabled: false

@@ -3,18 +3,24 @@
 set -euo pipefail
 
 destination={{ (node_exporter_textfile_directory ~ '/reboot-required.prom') | quote }}
-temporary=$(mktemp "${destination}.XXXXXX")
-trap 'rm -f -- "$temporary"' EXIT
-
-if /usr/bin/needs-restarting -r >/dev/null 2>&1; then
-    reboot_required=0
+if output=$(/usr/bin/needs-restarting -r 2>&1); then
+    status=0
 else
     status=$?
-    if [[ $status -ne 1 ]]; then
-        exit "$status"
-    fi
-    reboot_required=1
 fi
+
+if [[ $status -eq 0 && $output == *'Reboot should not be necessary'* ]]; then
+    reboot_required=0
+elif [[ $status -eq 1 && $output == *'Reboot is required'* ]]; then
+    reboot_required=1
+else
+    rm -f -- "$destination"
+    printf 'needs-restarting -r exited %s\n%s\n' "$status" "$output" >&2
+    exit 1
+fi
+
+temporary=$(mktemp "${destination}.XXXXXX")
+trap 'rm -f -- "$temporary"' EXIT
 
 printf '%s\n' \
     '# HELP node_reboot_required Whether this machine needs a reboot after package updates.' \

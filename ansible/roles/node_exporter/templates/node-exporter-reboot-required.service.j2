@@ -10,4 +10,5 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths={{ node_exporter_textfile_directory }}
+# needs-restarting loads dnf, which writes under /var/log and /var/cache/dnf.
+ReadWritePaths={{ node_exporter_textfile_directory }} /var/log /var/cache/dnf

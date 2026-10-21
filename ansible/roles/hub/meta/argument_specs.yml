@@ -88,6 +88,20 @@ argument_specs:
         type: int
         default: 9882
         description: The port the Podman exporter is published on, on 127.0.0.1 only.
+      hub_podman_exporter_droplet_hosts:
+        type: list
+        elements: str
+        default: [web, control]
+        description: Droplets whose Podman exporters Prometheus scrapes over HTTPS.
+      hub_podman_exporter_tailnet_hosts:
+        type: list
+        elements: str
+        default: [vaultserv]
+        description: Machines whose Podman exporters Prometheus scrapes over the tailnet.
+      hub_podman_exporter_hosts:
+        type: list
+        elements: str
+        description: Every non-hub machine with a Podman exporter.
 
       hub_grafana_image:
         type: str

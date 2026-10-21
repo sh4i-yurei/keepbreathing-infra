@@ -1,0 +1,18 @@
+---
+# The same digest-pinned v2.0.0 image the hub role uses (Monitoring and alerting decision #34).
+podman_exporter_image: quay.io/navidys/prometheus-podman-exporter@sha256:ddaa9003e86f435f2d958ab68041959e4d2bb290a350a2649a123c449db032db
+
+# A host opts in after its workload container account and expected containers have been recorded.
+podman_exporter_enabled: false
+podman_exporter_container_user: ""
+podman_exporter_listen_address: "127.0.0.1:9882"
+podman_exporter_expected_containers: []
+
+# The bcrypt hash and its password are paired. The hash goes in exporter-toolkit's web config;
+# the password is used only by the role's verification and by Prometheus on the hub.
+podman_exporter_basic_auth_hash: ""
+podman_exporter_basic_auth_password: ""
+podman_exporter_tls: false
+
+# The addresses firewalld lets reach the exporter. An enabled host must name at least one.
+podman_exporter_allowed_sources: []

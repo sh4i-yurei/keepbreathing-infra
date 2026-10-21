@@ -75,6 +75,16 @@ hub_podman_exporter_image: quay.io/navidys/prometheus-podman-exporter@sha256:dda
 # The port the Podman exporter is published on, on 127.0.0.1 only.
 hub_podman_exporter_port: 9882
 
+# Non-hub exporters. Droplets serve HTTPS; vaultserv is encrypted by the tailnet. mail is absent
+# because its workload account had no containers when read on 2026-10-18.
+hub_podman_exporter_droplet_hosts:
+  - web
+  - control
+hub_podman_exporter_tailnet_hosts:
+  - vaultserv
+hub_podman_exporter_hosts: >-
+  {{ hub_podman_exporter_droplet_hosts + hub_podman_exporter_tailnet_hosts }}
+
 # Grafana's image, pinned to the digest of the 13.2.4 tag on Docker Hub (Monitoring and alerting
 # decision #41). The digest fixes the exact image; hub_grafana_version is changed with it.
 hub_grafana_image: docker.io/grafana/grafana@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f

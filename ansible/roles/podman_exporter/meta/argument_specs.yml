@@ -1,0 +1,44 @@
+---
+argument_specs:
+  main:
+    short_description: Run the Podman exporter beside a rootless workload account
+    options:
+      podman_exporter_image:
+        type: str
+        default: quay.io/navidys/prometheus-podman-exporter@sha256:ddaa9003e86f435f2d958ab68041959e4d2bb290a350a2649a123c449db032db
+        description: The v2.0.0 image pinned by digest, matching the hub.
+      podman_exporter_enabled:
+        type: bool
+        default: false
+        description: Whether this host has workload containers whose account should be exported.
+      podman_exporter_container_user:
+        type: str
+        default: ""
+        description: The account that owns the rootless workload containers.
+      podman_exporter_listen_address:
+        type: str
+        default: "127.0.0.1:9882"
+        description: The host address and port that publish the container's port 9882.
+      podman_exporter_expected_containers:
+        type: list
+        elements: str
+        default: []
+        description: Container names that must be reported running, including podman-exporter.
+      podman_exporter_basic_auth_hash:
+        type: str
+        default: ""
+        description: The bcrypt hash for the Prometheus scrape user.
+      podman_exporter_basic_auth_password:
+        type: str
+        default: ""
+        no_log: true
+        description: The scrape password, used only by verification and Prometheus.
+      podman_exporter_tls:
+        type: bool
+        default: false
+        description: Serve HTTPS with a self-signed certificate made on the machine.
+      podman_exporter_allowed_sources:
+        type: list
+        elements: str
+        default: []
+        description: Addresses firewalld lets reach the exporter.

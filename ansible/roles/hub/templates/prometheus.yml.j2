@@ -79,6 +79,39 @@ scrape_configs:
       - target_label: job
         replacement: node
 {% endfor %}
+
+{% for host in hub_podman_exporter_droplet_hosts %}
+  # The Podman exporter on {{ host }}, over HTTPS with its own password.
+  - job_name: podman-{{ host }}
+    scheme: https
+    tls_config:
+      ca_file: /etc/prometheus/podman-exporters.crt
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/podman-{{ host }}-password
+    static_configs:
+      - targets: ["{{ hostvars[host].podman_exporter_listen_address }}"]
+        labels:
+          instance: {{ host }}
+    relabel_configs:
+      - target_label: job
+        replacement: podman
+{% endfor %}
+{% for host in hub_podman_exporter_tailnet_hosts %}
+
+  # The Podman exporter on {{ host }}, encrypted by the tailnet and protected by a password.
+  - job_name: podman-{{ host }}
+    basic_auth:
+      username: prometheus
+      password_file: /etc/prometheus/podman-{{ host }}-password
+    static_configs:
+      - targets: ["{{ hostvars[host].podman_exporter_listen_address }}"]
+        labels:
+          instance: {{ host }}
+    relabel_configs:
+      - target_label: job
+        replacement: podman
+{% endfor %}
 {% for host in hub_node_exporter_tailnet_hosts %}
 
   # node_exporter on {{ host.name }}, over the tailnet with its own password (decision #30).

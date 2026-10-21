@@ -53,7 +53,7 @@ groups:
           description: >-
             {{ $labels.instance }} needs a reboot to finish applying package updates.
 
-  # A hub container that is not running for 5 minutes pages (Monitoring and alerting decision #34).
+  # A container on any scraped machine that is not running for 5 minutes pages.
   # 2 is running in podman_container_state.
   - name: containers
     rules:
@@ -63,7 +63,7 @@ groups:
         labels:
           severity: page
         annotations:
-          summary: A hub container has not been running for 5 minutes.
+          summary: A container has not been running for 5 minutes.
           description: >-
-            The {{ $labels.name }} container on the hub is in state {{ $value }} (2 is running;
+            The {{ $labels.name }} container on {{ $labels.instance }} is in state {{ $value }} (2 is running;
             3 stopped, 5 exited).

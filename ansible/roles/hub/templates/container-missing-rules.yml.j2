@@ -1,6 +1,6 @@
 # Managed by Ansible (roles/hub). Edits here are overwritten.
-# A removed hub container has no podman_container_state series. The container list comes from this
-# role's *.container.j2 filenames, whose base names equal ContainerName (decision #48).
+# A removed container has no podman_container_state series. The hub list comes from this role's
+# Quadlet templates; every other list comes from that machine's host_vars (decision #48).
 groups:
   - name: missing-containers
     rules:
@@ -8,14 +8,22 @@ groups:
         expr: |
           (
 {% for container in hub_container_names %}
-            absent(podman_container_state{job="podman",name="{{ container }}"}){{ ' or' if not loop.last else '' }}
+            absent(podman_container_state{job="podman",instance="hub",name="{{ container }}"})
+              or
+{% endfor %}
+{% for host in hub_podman_exporter_hosts %}
+{% for container in hostvars[host].podman_exporter_expected_containers %}
+            absent(podman_container_state{job="podman",instance="{{ host }}",name="{{ container }}"})
+              {{ 'or' if not (loop.last and host == hub_podman_exporter_hosts | last) else '' }}
+{% endfor %}
 {% endfor %}
           )
-            and on(job) (up{job="podman"} == 1)
+            and on(job, instance) (up{job="podman"} == 1)
         for: 5m
         labels:
           severity: page
         annotations:
           summary: The {% raw %}{{ $labels.name }}{% endraw %} container has been missing for 5 minutes.
           description: >-
-            The {% raw %}{{ $labels.name }}{% endraw %} container is missing from the Podman exporter's metrics on the hub.
+            The {% raw %}{{ $labels.name }}{% endraw %} container is missing from the Podman
+            exporter's metrics on {% raw %}{{ $labels.instance }}{% endraw %}.

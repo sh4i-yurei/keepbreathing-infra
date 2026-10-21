@@ -1,0 +1,14 @@
+---
+# The Podman exporter beside each non-hub rootless workload account. mail participates in the play
+# but keeps podman_exporter_enabled=false while it has no workload containers.
+#   ansible-playbook playbooks/podman-exporter.yml --check --diff --limit web
+
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+- name: Podman exporter
+  hosts: droplets:vaultserv
+  force_handlers: true
+  roles:
+    - role: podman_exporter
+      when: podman_exporter_enabled | default(false) | bool

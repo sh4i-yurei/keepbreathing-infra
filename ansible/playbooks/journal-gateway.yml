@@ -1,4 +1,8 @@
 ---
+# Runs on the hub and the gateways. The limit has to include the hub, whose play below makes the
+# client certificate every gateway trusts:
+#   ansible-playbook playbooks/journal-gateway.yml --limit hub,web
+
 - name: Fetch the become password
   ansible.builtin.import_playbook: become-password.yml
 

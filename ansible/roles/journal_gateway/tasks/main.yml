@@ -14,6 +14,35 @@
     state: present
   become: true
 
+# A rehearsal on a machine without the package has no gatewayd to read, so it skips the check.
+- name: Read whether gatewayd is installed
+  ansible.builtin.stat:
+    path: /usr/lib/systemd/systemd-journal-gatewayd
+  register: journal_gateway_binary
+  when: journal_gateway_verify_client
+
+- name: Read gatewayd's installed TLS features
+  ansible.builtin.command:
+    argv:
+      - /usr/lib/systemd/systemd-journal-gatewayd
+      - --version
+  register: journal_gateway_version
+  changed_when: false
+  check_mode: false
+  when: journal_gateway_verify_client and (not ansible_check_mode or journal_gateway_binary.stat.exists)
+
+- name: Require a gatewayd build that can check client certificates
+  ansible.builtin.assert:
+    that:
+      - "'+GNUTLS' in journal_gateway_version.stdout"
+    fail_msg: >-
+      This host requires client-certificate checks, but its installed gatewayd
+      does not report +GNUTLS in --version. Use a gatewayd build with client
+      certificate support, or disable the check only on a host covered by
+      Monitoring and alerting decision 58.
+    quiet: true
+  when: journal_gateway_verify_client and (not ansible_check_mode or journal_gateway_binary.stat.exists)
+
 - name: Make the gateway's private folder
   ansible.builtin.file:
     path: /etc/journal_gateway
@@ -112,34 +141,45 @@
   become: true
   when: not ansible_check_mode
 
-- name: Read whether the hub's public client certificate exists
-  ansible.builtin.stat:
-    path: /etc/journal_pull-public/client.crt
-  delegate_to: hub
-  become: false
-  register: journal_gateway_hub_client_file
+- name: Install the hub's client certificate only where gatewayd checks it
+  when: journal_gateway_verify_client
+  block:
+    - name: Read whether the hub's public client certificate exists
+      ansible.builtin.stat:
+        path: /etc/journal_pull-public/client.crt
+      delegate_to: hub
+      become: false
+      register: journal_gateway_hub_client_file
 
-- name: Read the hub's public client certificate
-  ansible.builtin.slurp:
-    src: /etc/journal_pull-public/client.crt
-  delegate_to: hub
-  become: false
-  register: journal_gateway_hub_client_cert
-  when: not ansible_check_mode or journal_gateway_hub_client_file.stat.exists
+    - name: Read the hub's public client certificate
+      ansible.builtin.slurp:
+        src: /etc/journal_pull-public/client.crt
+      delegate_to: hub
+      become: false
+      register: journal_gateway_hub_client_cert
+      when: not ansible_check_mode or journal_gateway_hub_client_file.stat.exists
 
-- name: Trust only the hub's client certificate
-  ansible.builtin.copy:
-    content: "{{ journal_gateway_hub_client_cert.content | b64decode }}"
-    dest: /etc/journal_gateway/hub-client.crt
-    owner: root
-    group: root
-    mode: "0644"
+    - name: Trust only the hub's client certificate
+      ansible.builtin.copy:
+        content: "{{ journal_gateway_hub_client_cert.content | b64decode }}"
+        dest: /etc/journal_gateway/hub-client.crt
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+      notify: Restart journal gateway service
+      when: >-
+        not ansible_check_mode or
+        (journal_gateway_hub_client_file.stat.exists and
+         journal_gateway_private_directory.stat.isdir | default(false))
+
+- name: Remove a client certificate where gatewayd does not check it
+  ansible.builtin.file:
+    path: /etc/journal_gateway/hub-client.crt
+    state: absent
   become: true
   notify: Restart journal gateway service
-  when: >-
-    not ansible_check_mode or
-    (journal_gateway_hub_client_file.stat.exists and
-     journal_gateway_private_directory.stat.isdir | default(false))
+  when: not journal_gateway_verify_client
 
 - name: Read the gateway's public certificate for the hub
   ansible.builtin.slurp:
@@ -198,7 +238,7 @@
     - Restart journal gateway socket
   when: not ansible_check_mode or journal_gateway_socket_dropin_directory.stat.isdir | default(false)
 
-- name: Give gatewayd its key as a systemd credential and require the hub certificate
+- name: Give gatewayd its TLS credentials and optional hub certificate check
   ansible.builtin.template:
     src: systemd-journal-gatewayd.service.conf.j2
     dest: /etc/systemd/system/systemd-journal-gatewayd.service.d/10-mutual-tls.conf
@@ -208,6 +248,7 @@
   become: true
   notify:
     - Reload systemd for journal gateway
+    - Restart journal gateway socket
     - Restart journal gateway service
   when: not ansible_check_mode or journal_gateway_service_dropin_directory.stat.isdir | default(false)
 

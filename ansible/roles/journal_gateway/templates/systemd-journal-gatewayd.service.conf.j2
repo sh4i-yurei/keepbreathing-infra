@@ -2,6 +2,8 @@
 [Service]
 LoadCredential=journal-gateway.key:/etc/journal_gateway/server.key
 LoadCredential=journal-gateway.crt:/etc/journal_gateway/server.crt
+{% if journal_gateway_verify_client %}
 LoadCredential=journal-hub-client.crt:/etc/journal_gateway/hub-client.crt
+{% endif %}
 ExecStart=
-ExecStart=/usr/lib/systemd/systemd-journal-gatewayd --cert=%d/journal-gateway.crt --key=%d/journal-gateway.key --trust=%d/journal-hub-client.crt
+ExecStart=/usr/lib/systemd/systemd-journal-gatewayd --cert=%d/journal-gateway.crt --key=%d/journal-gateway.key{% if journal_gateway_verify_client %} --trust=%d/journal-hub-client.crt{% endif %}

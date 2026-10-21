@@ -1,3 +1,4 @@
 ---
 journal_gateway_listen_address: ""
 journal_gateway_allowed_sources: []
+journal_gateway_verify_client: true

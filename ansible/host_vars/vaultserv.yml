@@ -10,6 +10,8 @@ node_exporter_allowed_sources:
   - 100.95.89.6
 journal_gateway_listen_address: "100.65.221.62:19531"
 journal_gateway_allowed_sources: "{{ node_exporter_allowed_sources }}"
+# Monitoring and alerting decision 58: AlmaLinux 10 gatewayd cannot check client certificates.
+journal_gateway_verify_client: false
 node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
   ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
 node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~

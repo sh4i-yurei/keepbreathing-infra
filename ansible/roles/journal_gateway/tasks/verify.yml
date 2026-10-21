@@ -44,13 +44,19 @@
       register: journal_gateway_help
       changed_when: false
 
-    - name: verify | Require certificate, key and trust support
+    - name: verify | Require certificate and key support
       ansible.builtin.assert:
         that:
           - "'--cert' in journal_gateway_help.stdout"
           - "'--key' in journal_gateway_help.stdout"
+        quiet: true
+
+    - name: verify | Require trust support when checking client certificates
+      ansible.builtin.assert:
+        that:
           - "'--trust' in journal_gateway_help.stdout"
         quiet: true
+      when: journal_gateway_verify_client
 
     - name: verify | Read journal-remote's installed options
       ansible.builtin.command:
@@ -137,7 +143,7 @@
           - journal_gateway_authenticated_request.stdout == '200'
         quiet: true
 
-    - name: verify | A request without the hub's client certificate is refused
+    - name: verify | Request /machine without the hub's client certificate
       ansible.builtin.command:
         argv:
           - curl
@@ -163,9 +169,18 @@
       failed_when: false
       changed_when: false
 
-    - name: verify | Require the unauthenticated request to fail
+    - name: verify | Require HTTP 401 without a client certificate when checks are on
       ansible.builtin.assert:
         that:
           - journal_gateway_unauthenticated_request.rc != 0
           - journal_gateway_unauthenticated_request.stdout == '401'
         quiet: true
+      when: journal_gateway_verify_client
+
+    - name: verify | Require HTTP 200 without a client certificate when checks are off
+      ansible.builtin.assert:
+        that:
+          - journal_gateway_unauthenticated_request.rc == 0
+          - journal_gateway_unauthenticated_request.stdout == '200'
+        quiet: true
+      when: not journal_gateway_verify_client

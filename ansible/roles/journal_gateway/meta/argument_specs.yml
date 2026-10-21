@@ -1,7 +1,7 @@
 ---
 argument_specs:
   main:
-    short_description: Serve a machine's journal to the hub over mutual TLS
+    short_description: Serve a machine's journal to the hub over HTTPS
     options:
       journal_gateway_listen_address:
         type: str
@@ -12,3 +12,7 @@ argument_specs:
         elements: str
         required: true
         description: Sources allowed through firewalld to the gateway port.
+      journal_gateway_verify_client:
+        type: bool
+        default: true
+        description: Require the hub's client certificate and a gatewayd build with +GNUTLS.

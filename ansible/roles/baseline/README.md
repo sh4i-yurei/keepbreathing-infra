@@ -9,6 +9,13 @@ use, and blacklists filesystem modules nothing here uses. Two assertions stop th
 SELinux is not enforcing or if an enabled package repository's effective configuration has
 signature checking turned off.
 
+Fail2ban writes its own ban and unban messages to the systemd journal, where they can be
+searched in Loki under `fail2ban.service` (Monitoring and alerting decision #36). The
+`/etc/fail2ban/fail2ban.d/10-journal.local` override follows fail2ban 1.1.0's
+[configuration loading order](https://github.com/fail2ban/fail2ban/blob/1.1.0/man/jail.conf.5);
+its [main configuration](https://github.com/fail2ban/fail2ban/blob/1.1.0/config/fail2ban.conf)
+defines `logtarget` in `[DEFAULT]` and accepts `SYSTEMD-JOURNAL`.
+
 The by-hand version is `server-bootstrap.md` in the operational manual. This role is that
 procedure written down, so a machine can be rebuilt without anyone having to remember it.
 
@@ -116,12 +123,14 @@ A second run must report no changes. That is the test, and it is checked by hand
 ## What it checks before it finishes
 
 `tasks/verify.yml` runs last, after the handlers have been flushed, and fails the play if
-the machine is not in the state the role says it left. There are two checks, and each one
+the machine is not in the state the role says it left. There are three checks, and each one
 exists because the failure it catches is silent:
 
 - `fail2ban-client status sshd` proves the sshd jail is loaded and reading the journal.
   `systemctl reload fail2ban` returns success even when fail2ban rejects the jail, so the
   copy task reporting a change is not evidence that the jail works.
+- `fail2ban-client get logtarget` proves fail2ban sends its own log to the journal, so
+  ban and unban messages can reach Loki.
 - The live journal file, `system.journal`, must be on disk and not in `/run`. Both
   `journalctl --disk-usage` and a path match in `journalctl --header` report a machine as
   persistent when it has fallen back to keeping the journal in memory.
@@ -129,5 +138,5 @@ exists because the failure it catches is silent:
 The check that the sshd hardening is in effect is in the `access` role, beside the
 drop-in it checks.
 
-Both checks are skipped under `--check` and during an image build. A rehearsal therefore
+All three checks are skipped under `--check` and during an image build. A rehearsal therefore
 does not run them, even though a rehearsal is where they would be most useful.

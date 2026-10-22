@@ -1,0 +1,33 @@
+rule_files:
+  - prometheus-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'journal_pull_gaps_total{job="node",instance="hub",host="mail"}'
+        values: '0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+      - series: 'journal_pull_gaps_total{job="node",instance="hub",host="web"}'
+        values: '0+0x21'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: JournalPullGapRecovered
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: JournalPullGapRecovered
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: hub
+              host: mail
+              severity: warning
+            exp_annotations:
+              summary: The hub recovered from a gap in mail's logs.
+              description: >-
+                The hub missed some logs from mail and resumed on its own.
+                Nothing needs doing now. If this repeats, the hub may have been down
+                too long or mail may be flooding its journal.
+      - eval_time: 21m
+        alertname: JournalPullGapRecovered
+        exp_alerts: []

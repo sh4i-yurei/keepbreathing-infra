@@ -238,6 +238,26 @@
             | rejectattr('status.ActiveState', 'equalto', 'active') | list | length == 0
         quiet: true
 
+    - name: journals-verify | Read every persistent gap counter
+      ansible.builtin.slurp:
+        src: "{{ node_exporter_textfile_directory }}/journal-pull-gaps-{{ item.name }}.prom"
+      loop: "{{ hub_journal_sources }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: hub_journal_gap_metrics
+      become: true
+
+    - name: journals-verify | Require every host's gap counter
+      ansible.builtin.assert:
+        that:
+          - >-
+            (item.content | b64decode) is regex(
+              '(?m)^journal_pull_gaps_total\\{host="' ~ item.item.name ~ '"\\} [0-9]+$')
+        quiet: true
+      loop: "{{ hub_journal_gap_metrics.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+
     - name: journals-verify | Read the hourly Loki size metric
       ansible.builtin.slurp:
         src: "{{ node_exporter_textfile_directory }}/loki-data-size.prom"

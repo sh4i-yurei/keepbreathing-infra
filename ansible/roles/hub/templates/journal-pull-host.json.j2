@@ -4,5 +4,7 @@
   "client_certificate": "/etc/journal_pull/client.crt",
   "client_key": "$CREDENTIALS_DIRECTORY/client.key",
   "output_directory": "/var/log/journal/remote/{{ item.name }}",
-  "output_file": "/var/log/journal/remote/{{ item.name }}/{{ item.name }}.journal"
+  "output_file": "/var/log/journal/remote/{{ item.name }}/{{ item.name }}.journal",
+  "host": "{{ item.name }}",
+  "gap_metric_file": "/var/lib/node_exporter/journal_pull/{{ item.name }}/gaps.prom"
 }

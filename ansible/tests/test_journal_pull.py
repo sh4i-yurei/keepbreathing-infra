@@ -103,13 +103,42 @@ def test_resume_reads_the_last_committed_remote_cursor(
         "client_key": "/client.key",
     }
     command = journal_pull.curl_command(config, cursor="s=source;i=7", discrete=False)
-    assert "Range: entries=s=source;i=7:1:" in command
-    assert "Range: entries=" in journal_pull.curl_command(
-        config, cursor=None, discrete=False, from_head=True
-    )
-    assert "Range: entries=s=source;i=7" in journal_pull.curl_command(
-        config, cursor="s=source;i=7", discrete=False, include_cursor=True
-    )
+    assert range_headers(command) == ["Range: entries=s=source;i=7"]
+    assert command[-1].endswith("/entries?follow")
+    from_head = journal_pull.curl_command(config, cursor=None, discrete=False)
+    assert range_headers(from_head) == []
+    discrete = journal_pull.curl_command(config, cursor="s=source;i=7", discrete=True)
+    assert range_headers(discrete) == ["Range: entries=s=source;i=7"]
+    assert discrete[-1].endswith("/entries?discrete")
+
+
+def range_headers(command: list[str]) -> list[str]:
+    """Every Range header the command sends, exactly as written."""
+    return [
+        value
+        for flag, value in zip(command, command[1:])
+        if flag == "--header" and value.startswith("Range:")
+    ]
+
+
+def test_no_range_header_ever_has_an_empty_cursor_or_count() -> None:
+    """gatewayd v257 rejects an empty entry count and v252 rejects an empty cursor."""
+    config = {
+        "url": "https://192.0.2.1:19531",
+        "server_certificate": "/server.crt",
+        "client_certificate": "/client.crt",
+        "client_key": "/client.key",
+    }
+    for cursor in ("s=source;i=7", None):
+        for discrete in (False, True):
+            if discrete and cursor is None:
+                continue
+            for header in range_headers(
+                journal_pull.curl_command(config, cursor=cursor, discrete=discrete)
+            ):
+                value = header.removeprefix("Range: entries=")
+                assert value, header
+                assert ":" not in value, header
 
 
 def test_lost_cursor_starts_at_head_with_gap_recovery(
@@ -147,7 +176,7 @@ def test_lost_cursor_starts_at_head_with_gap_recovery(
         journal_pull, "supervise", lambda *_args, **kwargs: captured.update(kwargs) or 0
     )
     assert journal_pull.run(config, threading.Event()) == 0
-    assert "Range: entries=" in commands[0]
+    assert range_headers(commands[0]) == []
     assert captured["recovery"] == journal_pull.GapRecovery(
         "mail", "s=lost;i=1", 1000000, tmp_path / "gaps.prom"
     )
@@ -186,7 +215,7 @@ def test_pending_gap_marker_replays_its_first_source_entry(
         lambda *_args, **kwargs: captured.update(kwargs) or 0,
     )
     assert journal_pull.run(config, threading.Event()) == 0
-    assert "Range: entries=first" in commands[0]
+    assert range_headers(commands[0]) == ["Range: entries=first"]
     assert captured["expected_first_cursor"] == "first"
     assert captured["pending_gap_id"] == "gap1"
 

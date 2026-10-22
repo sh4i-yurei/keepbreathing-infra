@@ -193,8 +193,6 @@ def curl_command(
     *,
     cursor: str | None,
     discrete: bool,
-    include_cursor: bool = False,
-    from_head: bool = False,
 ) -> list[str]:
     command = [
         "curl",
@@ -221,11 +219,11 @@ def curl_command(
         command.extend(["--max-time", "20", "--header", f"Range: entries={cursor}"])
         command.append(config["url"] + "/entries?discrete")
     else:
+        # gatewayd v257 rejects an empty entry count, as in entries=<cursor>:1:, and v252 rejects
+        # an empty cursor, as in entries=. A bare cursor starts at that entry on both, and no Range
+        # header starts at the head on both. pump_entries drops the resumed entry itself.
         if cursor is not None:
-            suffix = "" if include_cursor else ":1:"
-            command.extend(["--header", f"Range: entries={cursor}{suffix}"])
-        elif from_head:
-            command.extend(["--header", "Range: entries="])
+            command.extend(["--header", f"Range: entries={cursor}"])
         command.append(config["url"] + "/entries?follow")
     return command
 
@@ -507,13 +505,7 @@ def run(config: dict[str, str], stopped: threading.Event) -> int:
         return 0
 
     curl = subprocess.Popen(
-        curl_command(
-            config,
-            cursor=cursor,
-            discrete=False,
-            include_cursor=expected_first_cursor is not None,
-            from_head=recovery is not None,
-        ),
+        curl_command(config, cursor=cursor, discrete=False),
         stdout=subprocess.PIPE,
     )
     try:

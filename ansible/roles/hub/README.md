@@ -47,8 +47,16 @@ host's persistent `journal_pull_gaps_total` counter. The marker uses a timestamp
 halfway between the last imported and first resumed entry when there is room
 between their timestamps; otherwise it uses the first resumed timestamp and
 precedes that entry in import order. The journal cursor does not expose an
-exact count of missing entries, so the marker says the count is unknown. A
-failed child or unplanned stream end fails the unit. Systemd uses `Restart=on-failure`, `RestartSec=30s`,
+exact count of missing entries, so the marker says the count is unknown.
+The counter lives at `/var/lib/journal_pull/<host>/gaps.prom`. The parent is
+traversable, and each host folder belongs to `systemd-journal-remote` with
+group `node_exporter` and the setgid bit. The puller can replace its own
+counter; node_exporter reads it through a link in its textfile collector.
+On upgrade, the role copies any existing counter to the new location without
+resetting its value. It pauses that host's puller during the copy so an
+increment cannot be lost between the copy and the service restart.
+
+A failed child or unplanned stream end fails the unit. Systemd uses `Restart=on-failure`, `RestartSec=30s`,
 `StartLimitIntervalSec=600`, and `StartLimitBurst=5`; repeated failure makes
 the unit failed for the existing service-failed alert. Each host has a
 separate output journal. Journal remote uses `MaxUse=1G`, `KeepFree=10G`, and
@@ -62,7 +70,9 @@ Loki's data directory and each puller's persistent gap counter. The Loki size
 warning fires above 4 GiB. An increase in a gap counter sends a warning ticket
 that explains the recovery and what repeated gaps could mean. The hub verify
 checks Loki readiness, effective retention, running images, every puller,
-the metrics, and a Loki write and query round trip.
+the metrics, and a Loki write and query round trip. Verification writes a
+temporary file in each counter folder and reads each counter as
+`systemd-journal-remote`, then queries Prometheus for all five hosts' counters.
 
 ### Live resume test
 

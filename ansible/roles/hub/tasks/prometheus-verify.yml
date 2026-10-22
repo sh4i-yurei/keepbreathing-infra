@@ -43,6 +43,20 @@
           A droplet's node_exporter job is not scraped over HTTPS or is not labelled job="node".
         quiet: true
 
+    - name: prometheus-verify | Wait for all five journal gap counters in Prometheus
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/query?query={{
+          'journal_pull_gaps_total{job="node",instance="hub"}' | urlencode }}
+      register: hub_prometheus_journal_gap_metrics
+      until: >-
+        hub_prometheus_journal_gap_metrics.json.status == 'success'
+        and (hub_prometheus_journal_gap_metrics.json.data.result
+        | map(attribute='metric.host') | sort | list)
+        == (hub_journal_sources | map(attribute='name') | sort | list)
+      retries: 15
+      delay: 5
+
     - name: prometheus-verify | Every remote Podman exporter has the common job and its host name
       ansible.builtin.assert:
         that:

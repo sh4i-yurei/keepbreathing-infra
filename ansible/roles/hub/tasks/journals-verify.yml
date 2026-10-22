@@ -238,23 +238,38 @@
             | rejectattr('status.ActiveState', 'equalto', 'active') | list | length == 0
         quiet: true
 
-    - name: journals-verify | Read every persistent gap counter
-      ansible.builtin.slurp:
-        src: "{{ node_exporter_textfile_directory }}/journal-pull-gaps-{{ item.name }}.prom"
+    - name: journals-verify | Check each puller can write its counter folder and read its counter
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            from pathlib import Path
+            from tempfile import NamedTemporaryFile
+            import sys
+
+            folder = Path(sys.argv[1])
+            with NamedTemporaryFile(dir=folder, prefix=".gap-verify-") as probe:
+                probe.write(b"write probe\n")
+                probe.flush()
+            print((folder / "gaps.prom").read_text(encoding="utf-8"), end="")
+          - "/var/lib/journal_pull/{{ item.name }}"
       loop: "{{ hub_journal_sources }}"
       loop_control:
         label: "{{ item.name }}"
-      register: hub_journal_gap_metrics
+      register: hub_journal_puller_gap_metrics
+      changed_when: false
       become: true
+      become_user: systemd-journal-remote
 
     - name: journals-verify | Require every host's gap counter
       ansible.builtin.assert:
         that:
           - >-
-            (item.content | b64decode) is regex(
+            item.stdout is regex(
               '(?m)^journal_pull_gaps_total\\{host="' ~ item.item.name ~ '"\\} [0-9]+$')
         quiet: true
-      loop: "{{ hub_journal_gap_metrics.results }}"
+      loop: "{{ hub_journal_puller_gap_metrics.results }}"
       loop_control:
         label: "{{ item.item.name }}"
 

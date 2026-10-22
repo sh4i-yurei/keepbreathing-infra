@@ -141,7 +141,7 @@ def source_vacuum(confirmed: bool) -> None:
 
 
 def gap_counter(host: str) -> int:
-    path = Path(f"/var/lib/node_exporter/journal_pull/{host}/gaps.prom")
+    path = Path(f"/var/lib/journal_pull/{host}/gaps.prom")
     matches = re.findall(
         rf'^journal_pull_gaps_total\{{host="{re.escape(host)}"\}} ([0-9]+)$',
         path.read_text(encoding="utf-8"),

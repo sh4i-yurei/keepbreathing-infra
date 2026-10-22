@@ -32,14 +32,24 @@ def test_source_vacuum_reports_recovery(
 
 
 def test_gap_counter_reads_one_host_sample(monkeypatch: pytest.MonkeyPatch) -> None:
+    paths: list[Path] = []
+
+    def read_text(path: Path, *_args, **_kwargs) -> str:
+        paths.append(path)
+        return 'journal_pull_gaps_total{host="mail"} 3\n'
+
     monkeypatch.setattr(
         resume.Path,
         "read_text",
-        lambda *_args, **_kwargs: 'journal_pull_gaps_total{host="mail"} 3\n',
+        read_text,
     )
     assert resume.gap_counter("mail") == 3
     with pytest.raises(RuntimeError, match="cannot read"):
         resume.gap_counter("web")
+    assert paths == [
+        Path("/var/lib/journal_pull/mail/gaps.prom"),
+        Path("/var/lib/journal_pull/web/gaps.prom"),
+    ]
 
 
 def test_imported_gap_ids_filters_host(monkeypatch: pytest.MonkeyPatch) -> None:

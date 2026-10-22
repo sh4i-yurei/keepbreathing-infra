@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import signal
 import struct
 import subprocess
@@ -28,7 +29,14 @@ class InspectableBytesIO(BytesIO):
 
 
 def export_entry(cursor: bytes = b"s=source;i=7") -> bytes:
-    return b"__CURSOR=" + cursor + b"\n__REALTIME_TIMESTAMP=2000000\nMESSAGE=hello\n\n"
+    return (
+        b"__CURSOR="
+        + cursor
+        + b"\n__REALTIME_TIMESTAMP=2000000\n"
+        + b"__MONOTONIC_TIMESTAMP=123456\n"
+        + b"_BOOT_ID=0123456789abcdef0123456789abcdef\n"
+        + b"MESSAGE=hello\n\n"
+    )
 
 
 def test_text_fields_are_preserved_with_only_the_added_cursor() -> None:
@@ -253,6 +261,12 @@ def test_gap_marker_contains_recovery_fields_and_midpoint(tmp_path: Path) -> Non
     entry = journal_pull.read_entry(BytesIO(marker.data))
     assert entry is not None
     assert journal_pull.one_field(entry, b"__REALTIME_TIMESTAMP") == b"1500000"
+    assert journal_pull.one_field(entry, b"_BOOT_ID") == (
+        journal_pull.one_field(first, b"_BOOT_ID")
+    )
+    assert journal_pull.one_field(entry, b"__MONOTONIC_TIMESTAMP") == (
+        journal_pull.one_field(first, b"__MONOTONIC_TIMESTAMP")
+    )
     for name, value in {
         b"SYSLOG_IDENTIFIER": b"journal-pull",
         b"PRIORITY": b"4",
@@ -264,6 +278,50 @@ def test_gap_marker_contains_recovery_fields_and_midpoint(tmp_path: Path) -> Non
         assert journal_pull.one_field(entry, name) == value
     assert b"mail" in journal_pull.one_field(entry, b"MESSAGE")
     assert b"unknown" in journal_pull.one_field(entry, b"MESSAGE")
+
+
+def test_gap_marker_imports_before_source_entry_with_almalinux_10(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("podman") is None:
+        pytest.skip("Podman is unavailable; real journal importer test needs Podman")
+
+    first = journal_pull.read_entry(BytesIO(export_entry(b"first")))
+    assert first is not None
+    marker = journal_pull.gap_marker(
+        journal_pull.GapRecovery("mail", "lost", 1000000, tmp_path / "gaps.prom"), first
+    )
+    stream = marker.data + journal_pull.add_source_cursor(first)
+    result = subprocess.run(
+        [
+            "podman",
+            "run",
+            "--rm",
+            "--interactive",
+            "docker.io/library/almalinux:10",
+            "sh",
+            "-ec",
+            (
+                "dnf -qy install systemd-journal-remote >/dev/null; "
+                "/usr/lib/systemd/systemd-journal-remote --output=/tmp/x.journal -; "
+                "journalctl --file=/tmp/x.journal --output=export --no-pager --quiet"
+            ),
+        ],
+        input=stream,
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    imported = BytesIO(result.stdout)
+    entries = []
+    while (entry := journal_pull.read_entry(imported)) is not None:
+        entries.append(entry)
+    assert len(entries) == 2, result.stderr.decode(errors="replace")
+    assert journal_pull.one_field(entries[0], b"SYSLOG_IDENTIFIER") == b"journal-pull"
+    assert journal_pull.one_field(entries[0], b"GAP_FIRST_CURSOR") == b"first"
+    assert journal_pull.one_field(entries[1], b"REMOTE_SOURCE_CURSOR") == b"first"
+    print("AlmaLinux 10 journal-remote imported the marker before the source entry")
 
 
 def test_counter_atomic_write_persists_and_deduplicates(

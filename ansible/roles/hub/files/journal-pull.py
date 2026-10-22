@@ -282,6 +282,8 @@ def gap_marker(recovery: GapRecovery, first: Entry) -> GapMarker:
     )
     fields = (
         (b"__REALTIME_TIMESTAMP", str(marker_usec).encode("ascii")),
+        (b"_BOOT_ID", one_field(first, b"_BOOT_ID")),
+        (b"__MONOTONIC_TIMESTAMP", one_field(first, b"__MONOTONIC_TIMESTAMP")),
         (b"SYSLOG_IDENTIFIER", GAP_IDENTIFIER),
         (b"PRIORITY", b"4"),
         (b"MESSAGE", message.encode("utf-8")),

@@ -8,15 +8,15 @@ archived source journals and requires an explicit confirmation option.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import json
 import re
 import subprocess
 import sys
 import time
+from collections import Counter
+from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import urlopen
-
 
 HOSTS = {"web", "mail", "control", "vaultserv", "almaserv"}
 TAG = "journal-resume-test"
@@ -137,29 +137,81 @@ def source_vacuum(confirmed: bool) -> None:
     command("journalctl", "--rotate")
     time.sleep(2)
     command("journalctl", "--vacuum-time=1s")
-    print("Archived source journals were vacuumed. Verify the puller fails on the hub.")
+    print("Archived source journals were vacuumed. Verify recovery on the hub.")
+
+
+def gap_counter(host: str) -> int:
+    path = Path(f"/var/lib/node_exporter/journal_pull/{host}/gaps.prom")
+    matches = re.findall(
+        rf'^journal_pull_gaps_total\{{host="{re.escape(host)}"\}} ([0-9]+)$',
+        path.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if len(matches) != 1:
+        raise RuntimeError(f"cannot read {host}'s gap counter")
+    return int(matches[0])
+
+
+def imported_gap_ids(host: str) -> set[str]:
+    result = command(
+        "journalctl",
+        f"--directory=/var/log/journal/remote/{host}",
+        "--identifier=journal-pull",
+        "--output=json",
+        "--no-pager",
+        "--quiet",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"cannot read {host}'s imported gap markers")
+    return {
+        entry["GAP_ID"]
+        for line in result.stdout.splitlines()
+        if (entry := json.loads(line)).get("GAP_HOST") == host
+        and isinstance(entry.get("GAP_ID"), str)
+    }
+
+
+def loki_has_gap(host: str, gap_id: str) -> bool:
+    query = f'{{host="{host}",identifier="journal-pull"}} |= "gap_id={gap_id}"'
+    url = "http://127.0.0.1:3100/loki/api/v1/query_range?" + urlencode(
+        {"query": query, "since": "90d", "limit": "100", "direction": "forward"}
+    )
+    with urlopen(url, timeout=20) as response:
+        data = json.load(response)
+    if data.get("status") != "success":
+        raise RuntimeError("Loki did not complete the gap marker query")
+    return any(
+        f"gap_id={gap_id}" in line
+        for stream in data["data"]["result"]
+        for _timestamp, line in stream["values"]
+    )
 
 
 def verify_cursor_loss(host: str) -> None:
     unit = f"journal-pull@{host}.service"
+    previous_count = gap_counter(host)
+    previous_ids = imported_gap_ids(host)
     command("systemctl", "start", unit, check=False)
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
-        state = command("systemctl", "is-failed", unit, check=False).stdout.strip()
+        state = command("systemctl", "is-active", unit, check=False).stdout.strip()
         if state == "failed":
-            logs = command(
-                "journalctl", "--unit", unit, "--lines=100", "--no-pager"
-            ).stdout
-            if "saved source cursor has rotated away" not in logs:
-                raise RuntimeError(
-                    "the puller failed for a reason other than the lost cursor"
-                )
+            raise RuntimeError(f"{unit} failed instead of recovering")
+        new_ids = imported_gap_ids(host) - previous_ids
+        if (
+            state == "active"
+            and gap_counter(host) > previous_count
+            and new_ids
+            and any(loki_has_gap(host, gap_id) for gap_id in new_ids)
+        ):
             print(
-                f"{unit} is failed after its retry limit, with the lost-cursor error recorded."
+                f"{unit} is active; a new gap marker reached the imported journal "
+                "and Loki, and the gap counter increased."
             )
             return
         time.sleep(2)
-    raise RuntimeError(f"{unit} did not enter the failed state within five minutes")
+    raise RuntimeError(f"{unit} did not show complete gap recovery within five minutes")
 
 
 def main() -> int:

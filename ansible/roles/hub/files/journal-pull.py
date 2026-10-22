@@ -4,24 +4,28 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from io import BytesIO
+import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import signal
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from io import BytesIO
+from pathlib import Path
 from typing import BinaryIO
-
 
 FIELD_NAME = re.compile(rb"[A-Z_][A-Z0-9_]*\Z")
 MAX_FIELD_BYTES = 256 * 1024 * 1024
 REMOTE_CURSOR_FIELD = b"REMOTE_SOURCE_CURSOR"
 SOURCE_CURSOR_FIELD = b"__CURSOR"
+REALTIME_FIELD = b"__REALTIME_TIMESTAMP"
+GAP_IDENTIFIER = b"journal-pull"
 
 
 class JournalPullError(Exception):
@@ -42,6 +46,29 @@ class Field:
 class Entry:
     fields: tuple[Field, ...]
     raw: bytes
+
+
+@dataclass(frozen=True)
+class ResumePoint:
+    cursor: str
+    realtime_usec: int
+    pending_first_cursor: str | None = None
+    pending_gap_id: str | None = None
+
+
+@dataclass(frozen=True)
+class GapRecovery:
+    host: str
+    saved_cursor: str
+    last_realtime_usec: int
+    metric_file: Path
+
+
+@dataclass(frozen=True)
+class GapMarker:
+    data: bytes
+    first_cursor: str
+    gap_id: str
 
 
 def read_entry(stream: BinaryIO) -> Entry | None:
@@ -112,6 +139,16 @@ def cursor_text(value: bytes) -> str:
     return value.decode("ascii")
 
 
+def realtime_usec(entry: Entry, field: bytes = REALTIME_FIELD) -> int:
+    value = one_field(entry, field)
+    if not value.isdigit():
+        raise JournalPullError(f"invalid {field.decode('ascii')} field")
+    timestamp = int(value)
+    if timestamp <= 0:
+        raise JournalPullError(f"invalid {field.decode('ascii')} field")
+    return timestamp
+
+
 def add_source_cursor(entry: Entry) -> bytes:
     """Keep the original entry byte-for-byte and insert its source cursor field."""
     if any(field.name == REMOTE_CURSOR_FIELD for field in entry.fields):
@@ -121,8 +158,8 @@ def add_source_cursor(entry: Entry) -> bytes:
     return entry.raw[:-1] + REMOTE_CURSOR_FIELD + b"=" + cursor + b"\n\n"
 
 
-def last_committed_cursor(directory: Path) -> str | None:
-    """Read the last imported entry, across the active and archived journal files."""
+def last_committed_entry(directory: Path) -> ResumePoint | None:
+    """Read the last imported source cursor, including a pending gap marker."""
     command = [
         "journalctl",
         f"--directory={directory}",
@@ -140,11 +177,24 @@ def last_committed_cursor(directory: Path) -> str | None:
     entry = read_entry(BytesIO(result.stdout))
     if entry is None:
         return None
-    return cursor_text(one_field(entry, REMOTE_CURSOR_FIELD))
+    cursor = cursor_text(one_field(entry, REMOTE_CURSOR_FIELD))
+    if any(field.name == b"GAP_FIRST_CURSOR" for field in entry.fields):
+        return ResumePoint(
+            cursor,
+            realtime_usec(entry, b"GAP_LAST_REALTIME_USEC"),
+            cursor_text(one_field(entry, b"GAP_FIRST_CURSOR")),
+            cursor_text(one_field(entry, b"GAP_ID")),
+        )
+    return ResumePoint(cursor, realtime_usec(entry))
 
 
 def curl_command(
-    config: dict[str, str], *, cursor: str | None, discrete: bool
+    config: dict[str, str],
+    *,
+    cursor: str | None,
+    discrete: bool,
+    include_cursor: bool = False,
+    from_head: bool = False,
 ) -> list[str]:
     command = [
         "curl",
@@ -172,7 +222,10 @@ def curl_command(
         command.append(config["url"] + "/entries?discrete")
     else:
         if cursor is not None:
-            command.extend(["--header", f"Range: entries={cursor}:1:"])
+            suffix = "" if include_cursor else ":1:"
+            command.extend(["--header", f"Range: entries={cursor}{suffix}"])
+        elif from_head:
+            command.extend(["--header", "Range: entries="])
         command.append(config["url"] + "/entries?follow")
     return command
 
@@ -200,9 +253,137 @@ class PumpState:
     error: Exception | None = None
 
 
-def pump_entries(source: BinaryIO, sink: BinaryIO, state: PumpState) -> None:
+def gap_marker(recovery: GapRecovery, first: Entry) -> GapMarker:
+    """Build one dated journal entry before the oldest available source entry."""
+    first_cursor = cursor_text(one_field(first, SOURCE_CURSOR_FIELD))
+    first_usec = realtime_usec(first)
+    last_usec = recovery.last_realtime_usec
+    # journal-remote imports __REALTIME_TIMESTAMP. A gap of at least two
+    # microseconds permits a strict midpoint; adjacent timestamps use the
+    # first entry's time and keep the marker before it in import order.
+    marker_usec = (
+        last_usec + (first_usec - last_usec) // 2
+        if first_usec - last_usec >= 2
+        else first_usec
+    )
+
+    def utc_text(usec: int) -> str:
+        return (
+            datetime.fromtimestamp(usec // 1_000_000, timezone.utc)
+            .replace(microsecond=usec % 1_000_000)
+            .isoformat()
+        )
+
+    gap_id = hashlib.sha256(
+        f"{recovery.host}\0{recovery.saved_cursor}\0{first_cursor}".encode()
+    ).hexdigest()[:16]
+    message = (
+        f"Logs from {recovery.host} were lost between {utc_text(last_usec)} "
+        f"and {utc_text(first_usec)}; the number of missing entries is unknown. "
+        f"The hub resumed from the oldest available entry. gap_id={gap_id}"
+    )
+    fields = (
+        (b"__REALTIME_TIMESTAMP", str(marker_usec).encode("ascii")),
+        (b"SYSLOG_IDENTIFIER", GAP_IDENTIFIER),
+        (b"PRIORITY", b"4"),
+        (b"MESSAGE", message.encode("utf-8")),
+        (b"GAP_HOST", recovery.host.encode("ascii")),
+        (b"GAP_ID", gap_id.encode("ascii")),
+        (b"GAP_SAVED_CURSOR", recovery.saved_cursor.encode("ascii")),
+        (b"GAP_FIRST_CURSOR", first_cursor.encode("ascii")),
+        (b"GAP_LAST_REALTIME_USEC", str(last_usec).encode("ascii")),
+        (b"GAP_FIRST_REALTIME_USEC", str(first_usec).encode("ascii")),
+        # This is the last source cursor committed before the marker. If the
+        # importer stops here, the next run can find and replay first_cursor.
+        (REMOTE_CURSOR_FIELD, recovery.saved_cursor.encode("ascii")),
+    )
+    data = b"".join(name + b"=" + value + b"\n" for name, value in fields) + b"\n"
+    return GapMarker(data, first_cursor, gap_id)
+
+
+def increment_gap_counter(metric_file: Path, host: str, gap_id: str) -> int:
+    """Atomically replace one host's persistent textfile counter."""
+    sample = f'journal_pull_gaps_total{{host="{host}"}}'
+    lines = metric_file.read_text(encoding="utf-8").splitlines()
+    values = [
+        line.removeprefix(sample + " ")
+        for line in lines
+        if line.startswith(sample + " ")
+    ]
+    if len(values) != 1 or not values[0].isdigit():
+        raise JournalPullError(f"invalid gap counter for {host}")
+    if f"# last_gap_id {gap_id}" in lines:
+        return int(values[0])
+    count = int(values[0]) + 1
+    pending: Path | None = None
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=metric_file.parent,
+            prefix=".journal-pull-gaps-",
+            delete=False,
+        ) as temporary:
+            pending = Path(temporary.name)
+            temporary.write(
+                "# HELP journal_pull_gaps_total Number of source journal gaps recovered by the hub.\n"
+                "# TYPE journal_pull_gaps_total counter\n"
+                f"# last_gap_id {gap_id}\n"
+                f"{sample} {count}\n"
+            )
+            temporary.flush()
+            os.fchmod(temporary.fileno(), 0o640)
+            os.fsync(temporary.fileno())
+        os.replace(pending, metric_file)
+        pending = None
+        directory_fd = os.open(metric_file.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        if pending is not None:
+            pending.unlink(missing_ok=True)
+    return count
+
+
+def pump_entries(
+    source: BinaryIO,
+    sink: BinaryIO,
+    state: PumpState,
+    *,
+    resume_cursor: str | None = None,
+    recovery: GapRecovery | None = None,
+    expected_first_cursor: str | None = None,
+    pending_gap_id: str | None = None,
+    metric_file: Path | None = None,
+    host: str | None = None,
+) -> None:
+    try:
+        first = True
         while (entry := read_entry(source)) is not None:
+            if first:
+                first = False
+                source_cursor = cursor_text(one_field(entry, SOURCE_CURSOR_FIELD))
+                if recovery is not None:
+                    marker = gap_marker(recovery, entry)
+                    sink.write(marker.data)
+                    sink.flush()
+                    increment_gap_counter(
+                        recovery.metric_file, recovery.host, marker.gap_id
+                    )
+                elif (
+                    expected_first_cursor is not None
+                    and source_cursor != expected_first_cursor
+                ):
+                    raise JournalPullError(
+                        "the first entry after a gap changed before replay"
+                    )
+                elif pending_gap_id is not None:
+                    assert metric_file is not None and host is not None
+                    increment_gap_counter(metric_file, host, pending_gap_id)
+                elif resume_cursor is not None and source_cursor == resume_cursor:
+                    continue
             sink.write(add_source_cursor(entry))
             sink.flush()
     except Exception as error:
@@ -229,12 +410,29 @@ def supervise(
     curl: subprocess.Popen[bytes],
     importer: subprocess.Popen[bytes],
     stopped: threading.Event,
+    *,
+    resume_cursor: str | None = None,
+    recovery: GapRecovery | None = None,
+    expected_first_cursor: str | None = None,
+    pending_gap_id: str | None = None,
+    metric_file: Path | None = None,
+    host: str | None = None,
 ) -> int:
     if curl.stdout is None or importer.stdin is None:
         raise JournalPullError("children did not provide their journal stream pipes")
     state = PumpState(threading.Event())
     worker = threading.Thread(
-        target=pump_entries, args=(curl.stdout, importer.stdin, state), daemon=True
+        target=pump_entries,
+        args=(curl.stdout, importer.stdin, state),
+        kwargs={
+            "resume_cursor": resume_cursor,
+            "recovery": recovery,
+            "expected_first_cursor": expected_first_cursor,
+            "pending_gap_id": pending_gap_id,
+            "metric_file": metric_file,
+            "host": host,
+        },
+        daemon=True,
     )
     worker.start()
     try:
@@ -283,16 +481,40 @@ def with_client_credential(config: dict[str, str]) -> dict[str, str]:
 def run(config: dict[str, str], stopped: threading.Event) -> int:
     config = with_client_credential(config)
     directory = Path(config["output_directory"])
-    cursor = last_committed_cursor(directory)
+    point = last_committed_entry(directory)
     if stopped.is_set():
         return 0
-    if cursor is not None:
-        require_source_cursor(config, cursor)
+    cursor = point.cursor if point is not None else None
+    recovery: GapRecovery | None = None
+    expected_first_cursor: str | None = None
+    if point is not None:
+        wanted_cursor = point.pending_first_cursor or point.cursor
+        try:
+            require_source_cursor(config, wanted_cursor)
+        except CursorLost:
+            recovery = GapRecovery(
+                config["host"],
+                point.cursor,
+                point.realtime_usec,
+                Path(config["gap_metric_file"]),
+            )
+            cursor = None
+        else:
+            if point.pending_first_cursor is not None:
+                cursor = point.pending_first_cursor
+                expected_first_cursor = cursor
     if stopped.is_set():
         return 0
 
     curl = subprocess.Popen(
-        curl_command(config, cursor=cursor, discrete=False), stdout=subprocess.PIPE
+        curl_command(
+            config,
+            cursor=cursor,
+            discrete=False,
+            include_cursor=expected_first_cursor is not None,
+            from_head=recovery is not None,
+        ),
+        stdout=subprocess.PIPE,
     )
     try:
         importer = subprocess.Popen(
@@ -306,7 +528,19 @@ def run(config: dict[str, str], stopped: threading.Event) -> int:
     except Exception:
         stop_child(curl)
         raise
-    return supervise(curl, importer, stopped)
+    return supervise(
+        curl,
+        importer,
+        stopped,
+        resume_cursor=point.cursor if point is not None and recovery is None else None,
+        recovery=recovery,
+        expected_first_cursor=expected_first_cursor,
+        pending_gap_id=point.pending_gap_id
+        if point is not None and recovery is None
+        else None,
+        metric_file=Path(config["gap_metric_file"]),
+        host=config["host"],
+    )
 
 
 def main() -> int:

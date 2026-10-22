@@ -190,6 +190,66 @@
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
 
+- name: journals-setup | Make the gap counter parent directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/journal_pull
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: journals-setup | Make each puller's private gap counter directory
+  ansible.builtin.file:
+    path: "/var/lib/node_exporter/journal_pull/{{ item.name }}"
+    state: directory
+    owner: systemd-journal-remote
+    group: node_exporter
+    mode: "2750"
+  loop: "{{ hub_journal_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+
+- name: journals-setup | Initialize each persistent gap counter once
+  ansible.builtin.copy:
+    content: |
+      # HELP journal_pull_gaps_total Number of source journal gaps recovered by the hub.
+      # TYPE journal_pull_gaps_total counter
+      journal_pull_gaps_total{host="{{ item.name }}"} 0
+    dest: "/var/lib/node_exporter/journal_pull/{{ item.name }}/gaps.prom"
+    owner: systemd-journal-remote
+    group: node_exporter
+    mode: "0640"
+    force: false
+  loop: "{{ hub_journal_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+
+# A rehearsal on a hub without the counters yet has nothing to link, so it skips those links.
+- name: journals-setup | Read whether each gap counter exists
+  ansible.builtin.stat:
+    path: "/var/lib/node_exporter/journal_pull/{{ item.name }}/gaps.prom"
+  loop: "{{ hub_journal_sources }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: hub_journal_gap_counter_files
+  become: true
+
+- name: journals-setup | Link each gap counter into node exporter's collector
+  ansible.builtin.file:
+    src: "/var/lib/node_exporter/journal_pull/{{ item.item.name }}/gaps.prom"
+    dest: "{{ node_exporter_textfile_directory }}/journal-pull-gaps-{{ item.item.name }}.prom"
+    state: link
+    owner: root
+    group: node_exporter
+  loop: "{{ hub_journal_gap_counter_files.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  become: true
+  when: not ansible_check_mode or item.stat.exists
+
 - name: journals-setup | Install the cursor-preserving puller
   ansible.builtin.copy:
     src: journal-pull.py

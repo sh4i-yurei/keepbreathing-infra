@@ -39,9 +39,16 @@ installed by hand for `almaserv` as described in
 Each `journal-pull@<host>.service` runs the Python wrapper. It reads the last
 committed `REMOTE_SOURCE_CURSOR` from that host's imported journal, confirms
 that source cursor still exists, then streams new entries into its child
-`systemd-journal-remote`. On a first run, it imports all entries still at the
-source. A missing cursor, failed child, or unplanned stream end fails the
-unit. Systemd uses `Restart=on-failure`, `RestartSec=30s`,
+`systemd-journal-remote`. It drops a leading entry when the source sends that
+same cursor again. On a first run, it imports all entries still at the source.
+If the saved cursor has rotated away, it resumes at the source's oldest entry,
+imports a `journal-pull` gap marker before that entry, and increments that
+host's persistent `journal_pull_gaps_total` counter. The marker uses a timestamp
+halfway between the last imported and first resumed entry when there is room
+between their timestamps; otherwise it uses the first resumed timestamp and
+precedes that entry in import order. The journal cursor does not expose an
+exact count of missing entries, so the marker says the count is unknown. A
+failed child or unplanned stream end fails the unit. Systemd uses `Restart=on-failure`, `RestartSec=30s`,
 `StartLimitIntervalSec=600`, and `StartLimitBurst=5`; repeated failure makes
 the unit failed for the existing service-failed alert. Each host has a
 separate output journal. Journal remote uses `MaxUse=1G`, `KeepFree=10G`, and
@@ -51,9 +58,11 @@ The rootless Loki and Alloy Quadlets use pinned image digests. Loki listens
 only on hub loopback and retains logs for 2160 hours. Alloy reads the hub's
 own journal and the five imported directories, with one `host` label per
 reader. The node exporter textfile collector reads an hourly measurement of
-Loki's data directory, and the warning rule fires above 4 GiB. The hub
-verify checks Loki readiness, effective retention, running images, every
-puller, the size metric, and a Loki write and query round trip.
+Loki's data directory and each puller's persistent gap counter. The Loki size
+warning fires above 4 GiB. An increase in a gap counter sends a warning ticket
+that explains the recovery and what repeated gaps could mean. The hub verify
+checks Loki readiness, effective retention, running images, every puller,
+the metrics, and a Loki write and query round trip.
 
 ### Live resume test
 
@@ -87,7 +96,8 @@ host shell** run
 `/usr/local/libexec/journal-resume-test source-vacuum --confirm-delete-archived-journals`.
 On the **hub host shell**, run
 `journal-resume-test verify-loss --host web`. It starts the puller and
-requires a failed unit and the lost-cursor error. This procedure needs a
+requires an active unit, a new gap marker in the imported journal and Loki,
+and an increased gap counter. This procedure needs a
 source whose saved cursor is actually removed by the vacuum; the script
 fails if the cursor remains available. Do not run this on an irreplaceable
 source journal.

@@ -81,6 +81,7 @@
             | map(attribute='name') | list)
           - >-
             (['TargetDown', 'NodeRebootRequired', 'LokiDataDirectoryGrowing',
+            'JournalPullGapRecovered',
             'ContainerNotRunning', 'ContainerMissing', 'NodeFilesystemAlmostOutOfSpace',
             'PrometheusRuleFailures', 'AlertmanagerFailedToSendAlerts']
             | difference(hub_prometheus_status.results[0].json.data.groups

@@ -27,6 +27,23 @@
     mode: "0644"
   notify: Reload fail2ban
 
+- name: fail2ban | Make the main configuration drop-in directory
+  ansible.builtin.file:
+    path: /etc/fail2ban/fail2ban.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: fail2ban | Send its log to the journal
+  ansible.builtin.copy:
+    src: fail2ban-journal.local
+    dest: /etc/fail2ban/fail2ban.d/10-journal.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
 - name: fail2ban | Enable service
   ansible.builtin.systemd_service:
     name: fail2ban

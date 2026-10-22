@@ -56,6 +56,24 @@
           fail2ban-client said: {{ baseline_fail2ban_jail.stdout | default('') }}{{ baseline_fail2ban_jail.stderr | default('') }}
         quiet: true
 
+    - name: verify | Ask fail2ban where it writes its log
+      ansible.builtin.command: fail2ban-client get logtarget
+      register: baseline_fail2ban_logtarget
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: verify | Fail2ban writes its log to the journal
+      ansible.builtin.assert:
+        that:
+          - baseline_fail2ban_logtarget.rc == 0
+          - "baseline_fail2ban_logtarget.stdout_lines | last == '`- SYSTEMD-JOURNAL'"
+        fail_msg: >-
+          Fail2ban is not writing to the systemd journal, so its ban and unban messages
+          will not reach Loki. fail2ban-client said:
+          {{ baseline_fail2ban_logtarget.stdout | default('') }}{{ baseline_fail2ban_logtarget.stderr | default('') }}
+        quiet: true
+
     # The live system journal is the file named system.journal; anything with an @ in the
     # name is archived. Looking for a /var/log/journal path in `journalctl --header` is not
     # enough, because archived files from an earlier boot keep that path in the output

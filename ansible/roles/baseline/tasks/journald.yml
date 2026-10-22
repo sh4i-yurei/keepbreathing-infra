@@ -23,4 +23,4 @@
     - Restart systemd-journald
     - Flush the journal to disk
     - Restart rsyslog
-    - Restart fail2ban after the journal moved
+    - Restart fail2ban

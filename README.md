@@ -12,19 +12,26 @@ secrets in it, and its issues are a live feed of weak moments.
 ## Layout
 
 ```
-tailscale/policy.hujson   the tailnet policy file, as it is in the admin console
-ansible/ansible.cfg       runs from the laptop; inventory below
-ansible/inventory.ini     five machines: three on the tailnet, web and mail through the jump server
-ansible/group_vars/       what every machine shares, including the sudo password lookup
-ansible/host_vars/        one file per machine for what differs
-ansible/playbooks/        one playbook per job
-ansible/roles/baseline/   what every box gets before it gets a job
+tailscale/policy.hujson      the tailnet policy file, as it is in the admin console
+ansible/ansible.cfg          runs from the laptop; inventory below
+ansible/inventory.ini        five machines: three on the tailnet, web and mail through the jump server
+ansible/group_vars/          what every machine shares, including the sudo password lookup
+ansible/host_vars/           one file per machine for what differs
+ansible/playbooks/           one playbook per job
+ansible/roles/               one role per job: baseline, access, hub, journal_gateway,
+                             node_exporter, podman_exporter
+ansible/filter_plugins/      Python filters the roles call
+ansible/tests/               Python tests for the filters and the roles' scripts
+workstation/vm-autostart/    starts and stops the workstation's VMs with Windows
 ```
+
+`ARCHITECTURE.md` says what each piece owns and how they fit together.
 
 ## Rules
 
 - No secrets, ever. Not encrypted, not in an example file, not in a commit that was
-  later reverted. Secrets come from OpenBao at run time.
+  later reverted. Secrets are read at run time: today through `bw` from Vaultwarden, and
+  from OpenBao on the hub once it exists, which is where machine secrets belong.
 - No Terraform state. It lives in MinIO on the hub; `.gitignore` refuses it.
 - The policy file here is the record, the admin console is the live copy. Change it
   here first, then paste it there, until Terraform owns that step.

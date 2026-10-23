@@ -30,7 +30,8 @@ workstation/vm-autostart/    starts and stops the workstation's VMs with Windows
 ## Rules
 
 - No secrets, ever. Not encrypted, not in an example file, not in a commit that was
-  later reverted. Secrets come from Vaultwarden through `bw` at run time.
+  later reverted. Secrets are read at run time: today through `bw` from Vaultwarden, and
+  from OpenBao on the hub once it exists, which is where machine secrets belong.
 - No Terraform state. It lives in MinIO on the hub; `.gitignore` refuses it.
 - The policy file here is the record, the admin console is the live copy. Change it
   here first, then paste it there, until Terraform owns that step.

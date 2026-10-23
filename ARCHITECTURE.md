@@ -86,7 +86,8 @@ flowchart TB
 ## Rules every piece follows
 
 - **No secrets in the repository.** Not encrypted, not in an example, not in a reverted commit.
-  They come from `bw` at run time.
+  They are read at run time. Today that is a `bw` lookup; machine secrets move to OpenBao on the
+  hub once it exists, and the `bw` lookups in the inventory are what it replaces.
 - **Every role proves what it claims.** Its setup tasks are followed by verify tasks that read
   the live state, and a second run of the same playbook must report `changed=0`.
 - **Rehearse before a live run.** Run with `--check --diff` against one `--limit` host first.

@@ -13,6 +13,12 @@ from load_source import load_source
 
 resume = load_source("ansible/roles/hub/files/journal-resume-test.py")
 
+INVALID_HOST_ERROR = (
+    "argument --host: invalid choice: 'wrong' (choose from almaserv, control, mail, vaultserv, web)"
+    if sys.version_info < (3, 14)
+    else "argument --host: invalid choice: 'wrong' (choose from 'almaserv', 'control', 'mail', 'vaultserv', 'web')"
+)
+
 
 def test_source_vacuum_reports_recovery(
     monkeypatch: pytest.MonkeyPatch, capsys
@@ -559,11 +565,11 @@ def test_main_accepts_uppercase_run_id_and_maximum_count(monkeypatch, capsys) ->
         (["prepare-loss"], "the following arguments are required: --host"),
         (
             ["hub-cycle", "--host", "wrong", "--run-id", "trial"],
-            "argument --host: invalid choice: 'wrong' (choose from 'almaserv', 'control', 'mail', 'vaultserv', 'web')",
+            INVALID_HOST_ERROR,
         ),
         (
             ["verify-loss", "--host", "wrong"],
-            "argument --host: invalid choice: 'wrong' (choose from 'almaserv', 'control', 'mail', 'vaultserv', 'web')",
+            INVALID_HOST_ERROR,
         ),
     ],
 )

@@ -13,6 +13,6 @@ def test_python_job_and_all_branch_push_trigger() -> None:
     assert workflow["on"]["push"] == {}
     assert workflow["jobs"]["python"]["uses"] == (
         "sh4i-yurei/ci-workflows/.github/workflows/python.yml"
-        "@c8ff45953cad54fb860d41e4687b8542d5212109"
+        "@95383033d70f2b91d79792739806b44e1a9bf754"
     )
     assert workflow["jobs"]["python"]["with"]["coverage_floor"] == "100"

@@ -6,6 +6,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Use the shared labels so Dependabot never creates its own (Global development workflow decision 30).
+    labels: ["dependencies", "type:chore"]
     groups:
       actions:
         patterns: ["*"]

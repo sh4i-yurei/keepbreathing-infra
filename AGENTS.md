@@ -15,10 +15,13 @@ inside the `dev` container:
 
 - `ansible-lint`
 - `for playbook in playbooks/*.yml; do ansible-playbook --syntax-check "$playbook"; done`
-- `PYTHONPATH=. python3 -m pytest tests`
 
-CI in `.github/workflows/ci.yml` runs the first two on every pull request and every push to
-`main`, and the `main` ruleset requires them. The Python tests aren't in CI yet. Report the
+Run the Python tests from the repository root inside `dev`:
+
+- `python3 -m pytest ansible/tests`
+
+CI in `.github/workflows/ci.yml` runs these checks on every pull request and every branch push.
+The `main` ruleset requires the lint and syntax jobs by name. Report the
 checks you actually ran, with their output.
 
 ## Live runs

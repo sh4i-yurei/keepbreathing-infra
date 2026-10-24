@@ -1,0 +1,94 @@
+- mutant: ansible.filter_plugins.durations.x_prometheus_duration_seconds__mutmut_12
+  reason: "Unit positions are nonnegative, so either negative initial sentinel produces the same ordering."
+- mutant: ansible.filter_plugins.durations.x_prometheus_duration_seconds__mutmut_52
+  reason: "The nanosecond limit is 2^63-1, which cannot be reached by millisecond-based duration tokens; > and >= accept and reject the same inputs."
+- mutant: ansible.filter_plugins.node_exporter_firewall.x__attributes_after__mutmut_12
+  reason: "A valid managed rule never contains an equals sign inside its address, port, or protocol value. Splitting at the first or last equals sign has the same public plan."
+- mutant: ansible.filter_plugins.node_exporter_firewall.x__network__mutmut_3
+  reason: "ip_network treats strict=None and strict=False identically because both disable strict host-bit rejection."
+- mutant: ansible.filter_plugins.node_exporter_firewall.x__managed_source__mutmut_5
+  reason: "shlex.split defaults posix to True, matching the explicit argument."
+- mutant: ansible.filter_plugins.node_exporter_firewall.x__managed_source__mutmut_28
+  reason: "An extra equals sign in a family token cannot form family=ipv4 under either split direction; other extra-equals attributes cannot form a valid managed rule."
+- mutant: ansible.roles.hub.files.journal-pull.x_read_entry__mutmut_5
+  reason: "The changed readline bound alters how many bytes are requested at once, while the parser's length and newline checks produce the same entry or error for every finite input."
+- mutant: ansible.roles.hub.files.journal-pull.x_read_entry__mutmut_7
+  reason: "The changed readline bound alters how many bytes are requested at once, while the parser's length and newline checks produce the same entry or error for every finite input."
+- mutant: ansible.roles.hub.files.journal-pull.x_read_exactly__mutmut_2
+  reason: "A conforming binary stream returns empty bytes for read(0); the extra zero-length read cannot change the returned bytes or error."
+- mutant: ansible.roles.hub.files.journal-pull.x_one_field__mutmut_8
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_cursor_text__mutmut_14
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_realtime_usec__mutmut_10
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_realtime_usec__mutmut_18
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_41
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_67
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_72
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_77
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_82
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_87
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_93
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_99
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_gap_marker__mutmut_102
+  reason: "Python codec names are case insensitive; ASCII and UTF-8 aliases produce identical bytes and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_3
+  reason: "The metric file contains ASCII protocol text and the supported runtime uses UTF-8 as its default text encoding; omitting the explicit encoding changes no result."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_5
+  reason: "Python codec names are case insensitive; UTF-8 and UTF-8 in upper case produce identical text and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_30
+  reason: "The metric file contains ASCII protocol text and the supported runtime uses UTF-8 as its default text encoding; omitting the explicit encoding changes no result."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_32
+  reason: "Only the temporary file's private prefix changes; the atomic replacement, final metric path, content, permissions, and cleanup are identical."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_33
+  reason: "NamedTemporaryFile treats delete=None as false, the same as delete=False, so the pending file remains available for atomic replacement."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_35
+  reason: "The metric file contains ASCII protocol text and the supported runtime uses UTF-8 as its default text encoding; omitting the explicit encoding changes no result."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_37
+  reason: "Only the temporary file's private prefix changes; the atomic replacement, final metric path, content, permissions, and cleanup are identical."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_42
+  reason: "Python codec names are case insensitive; UTF-8 and UTF-8 in upper case produce identical text and errors."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_43
+  reason: "Only the temporary file's private prefix changes; the atomic replacement, final metric path, content, permissions, and cleanup are identical."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_44
+  reason: "Only the temporary file's private prefix changes; the atomic replacement, final metric path, content, permissions, and cleanup are identical."
+- mutant: ansible.roles.hub.files.journal-pull.x_increment_gap_counter__mutmut_71
+  reason: "On Linux O_RDONLY is zero; dropping O_DIRECTORY still opens the already validated metric parent directory read-only and fsyncs it. Distinguishing the flag would pin an internal system call."
+- mutant: ansible.roles.hub.files.journal-pull.x_pump_entries__mutmut_5
+  reason: "None and False are both false in the first-entry guard; subsequent entries and outputs are identical."
+- mutant: ansible.roles.hub.files.journal-pull.x_supervise__mutmut_13
+  reason: "The daemon flag only changes an internal worker-thread attribute; the function explicitly stops both children and joins the worker before returning."
+- mutant: ansible.roles.hub.files.journal-pull.x_supervise__mutmut_17
+  reason: "The daemon flag only changes an internal worker-thread attribute; the function explicitly stops both children and joins the worker before returning."
+- mutant: ansible.roles.hub.files.journal-pull.x_supervise__mutmut_30
+  reason: "The daemon flag only changes an internal worker-thread attribute; the function explicitly stops both children and joins the worker before returning."
+- mutant: ansible.roles.hub.files.journal-pull.x_supervise__mutmut_33
+  reason: "The changed wait interval only changes internal polling cadence; no response-time contract specifies this value."
+- mutant: ansible.roles.hub.files.journal-pull.x_run__mutmut_49
+  reason: "The discrete argument is false in both cases because None and False are false; the curl request is identical."
+- mutant: ansible.roles.hub.files.journal-pull.x_main__mutmut_26
+  reason: "The supported runtime's default text encoding is UTF-8, so omitting the explicit encoding reads the same configuration text."
+- mutant: ansible.roles.hub.files.journal-pull.x_main__mutmut_28
+  reason: "Python codec names are case insensitive; UTF-8 and its upper-case alias read identical text."
+- mutant: ansible.roles.hub.files.journal-resume-test.x_wait_for_count__mutmut_8
+  reason: "The changed sleep duration only changes polling or settling cadence; no public timing threshold specifies the exact delay."
+- mutant: ansible.roles.hub.files.journal-resume-test.x_verify__mutmut_38
+  reason: "The changed sleep duration only changes polling or settling cadence; no public timing threshold specifies the exact delay."
+- mutant: ansible.roles.hub.files.journal-resume-test.x_source_vacuum__mutmut_14
+  reason: "The changed sleep duration only changes polling or settling cadence; no public timing threshold specifies the exact delay."
+- mutant: ansible.roles.hub.files.journal-resume-test.x_gap_counter__mutmut_11
+  reason: "The supported runtime's default text encoding is UTF-8, so omitting the explicit encoding reads the same ASCII metric text."
+- mutant: ansible.roles.hub.files.journal-resume-test.x_gap_counter__mutmut_13
+  reason: "Python codec names are case insensitive; UTF-8 and its upper-case alias read identical text."
+- mutant: ansible.roles.hub.files.journal-resume-test.x_verify_cursor_loss__mutmut_62
+  reason: "The changed sleep duration only changes polling or settling cadence; no public timing threshold specifies the exact delay."

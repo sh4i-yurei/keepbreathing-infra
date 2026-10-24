@@ -252,7 +252,9 @@ def main() -> int:
             prepare_cursor_loss(args.host)
         elif args.mode == "source-vacuum":
             source_vacuum(args.confirm_delete_archived_journals)
-        elif args.mode == "verify-loss":
+        elif (
+            args.mode == "verify-loss"
+        ):  # pragma: no branch - argparse only accepts the listed modes
             verify_cursor_loss(args.host)
         return 0
     except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as error:

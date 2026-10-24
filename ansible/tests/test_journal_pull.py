@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
 import signal
 import struct
@@ -14,13 +13,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from load_source import load_source
 
-SCRIPT = Path(__file__).parents[1] / "roles/hub/files/journal-pull.py"
-SPEC = importlib.util.spec_from_file_location("journal_pull", SCRIPT)
-assert SPEC is not None and SPEC.loader is not None
-journal_pull = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = journal_pull
-SPEC.loader.exec_module(journal_pull)
+journal_pull = load_source("ansible/roles/hub/files/journal-pull.py")
 
 
 class InspectableBytesIO(BytesIO):
@@ -66,21 +61,32 @@ def test_binary_field_with_newlines_is_preserved() -> None:
 
 
 @pytest.mark.parametrize(
-    "data",
+    ("data", "message"),
     [
-        b"__CURSOR=s=source;i=7\nMESSAGE=unfinished\n",
-        b"__CURSOR=s=source;i=7\nMESSAGE\n" + struct.pack("<Q", 4) + b"abc",
-        b"__CURSOR=s=source;i=7\nMESSAGE\n" + struct.pack("<Q", 4) + b"abcdx\n",
+        (
+            b"__CURSOR=s=source;i=7\nMESSAGE=unfinished\n",
+            "truncated journal export entry",
+        ),
+        (
+            b"__CURSOR=s=source;i=7\nMESSAGE\n" + struct.pack("<Q", 4) + b"abc",
+            "truncated or malformed binary journal field",
+        ),
+        (
+            b"__CURSOR=s=source;i=7\nMESSAGE\n" + struct.pack("<Q", 4) + b"abcdx\n",
+            "truncated or malformed binary journal field",
+        ),
     ],
 )
-def test_truncated_or_malformed_entries_fail(data: bytes) -> None:
-    with pytest.raises(journal_pull.JournalPullError):
+def test_truncated_or_malformed_entries_fail(data: bytes, message: str) -> None:
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.read_entry(BytesIO(data))
+    assert str(raised.value) == message
 
 
 def test_invalid_field_name_fails() -> None:
-    with pytest.raises(journal_pull.JournalPullError):
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.read_entry(BytesIO(b"bad-name=value\n\n"))
+    assert str(raised.value) == "invalid text field name"
 
 
 def test_source_cannot_inject_the_remote_cursor() -> None:
@@ -88,8 +94,9 @@ def test_source_cannot_inject_the_remote_cursor() -> None:
         BytesIO(b"__CURSOR=s=source;i=7\nREMOTE_SOURCE_CURSOR=forged\n\n")
     )
     assert parsed is not None
-    with pytest.raises(journal_pull.JournalPullError, match="tried to supply"):
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.add_source_cursor(parsed)
+    assert str(raised.value) == "source tried to supply REMOTE_SOURCE_CURSOR"
 
 
 def test_resume_reads_the_last_committed_remote_cursor(
@@ -234,10 +241,11 @@ def test_realtime_timestamp_and_pending_marker(
     entry = journal_pull.read_entry(BytesIO(export_entry()))
     assert entry is not None
     assert journal_pull.realtime_usec(entry) == 2000000
-    with pytest.raises(journal_pull.JournalPullError, match="invalid"):
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.realtime_usec(
             journal_pull.read_entry(BytesIO(b"__REALTIME_TIMESTAMP=no\n\n"))
         )
+    assert str(raised.value) == "invalid __REALTIME_TIMESTAMP field"
     marker = (
         b"__REALTIME_TIMESTAMP=1500000\nREMOTE_SOURCE_CURSOR=lost\n"
         b"GAP_FIRST_CURSOR=first\nGAP_ID=gap1\nGAP_LAST_REALTIME_USEC=1000000\n\n"
@@ -416,12 +424,14 @@ def test_client_key_only_resolves_from_systemd_credential(
         tmp_path / "client.key"
     )
     monkeypatch.delenv("CREDENTIALS_DIRECTORY")
-    with pytest.raises(journal_pull.JournalPullError, match="did not provide"):
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.with_client_credential(config)
-    with pytest.raises(journal_pull.JournalPullError, match="must come"):
+    assert str(raised.value) == "systemd did not provide CREDENTIALS_DIRECTORY"
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.with_client_credential(
             {"client_key": "/etc/journal_pull/client.key"}
         )
+    assert str(raised.value) == "client key must come from a systemd credential"
 
 
 def python_child(code: str, *, stdin: bool = False) -> subprocess.Popen[bytes]:
@@ -435,8 +445,9 @@ def python_child(code: str, *, stdin: bool = False) -> subprocess.Popen[bytes]:
 def test_importer_failure_is_nonzero_and_closes_curl() -> None:
     curl = python_child("import time; time.sleep(20)")
     importer = python_child("raise SystemExit(7)", stdin=True)
-    with pytest.raises(journal_pull.JournalPullError, match="journal-remote exited"):
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.supervise(curl, importer, threading.Event())
+    assert str(raised.value) == "journal-remote exited with 7"
     assert curl.poll() is not None
     assert importer.returncode == 7
 
@@ -446,8 +457,9 @@ def test_stream_end_is_nonzero_and_closes_importer() -> None:
         "import sys; sys.stdout.buffer.write(b'__CURSOR=s=x;i=1\\nMESSAGE=end\\n\\n')"
     )
     importer = python_child("import sys; sys.stdin.buffer.read()", stdin=True)
-    with pytest.raises(journal_pull.JournalPullError, match="stream ended"):
+    with pytest.raises(journal_pull.JournalPullError) as raised:
         journal_pull.supervise(curl, importer, threading.Event())
+    assert str(raised.value) == "gateway journal stream ended without a stop request"
     assert curl.poll() is not None
     assert importer.poll() is not None
 

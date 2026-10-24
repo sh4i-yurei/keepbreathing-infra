@@ -1,17 +1,24 @@
-# Runs the same checks I run on the laptop, on every pull request and every push to main.
+# Runs the repository checks on every pull request and every branch push.
 # The job names are what the ruleset on main requires by name, so renaming a job means
 # updating the ruleset in the same change.
 name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
+  push: {}
 
 permissions:
   contents: read
 
 jobs:
+  python:
+    uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@95383033d70f2b91d79792739806b44e1a9bf754
+    with:
+      coverage_floor: 100
+      caller_workflow: .github/workflows/ci.yml
+      caller_job: python
+      install_command: sudo apt-get update && sudo apt-get install -y podman && python -m pip install -r requirements.txt pytest==9.1.1 pytest-cov==7.1.0
+
   ansible-lint:
     runs-on: ubuntu-latest
     defaults:

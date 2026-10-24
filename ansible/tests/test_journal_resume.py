@@ -51,8 +51,9 @@ def test_gap_counter_reads_one_host_sample(monkeypatch: pytest.MonkeyPatch) -> N
         read_text,
     )
     assert resume.gap_counter("mail") == 3
-    with pytest.raises(RuntimeError, match="cannot read"):
+    with pytest.raises(RuntimeError) as raised:
         resume.gap_counter("web")
+    assert str(raised.value) == "cannot read web's gap counter"
     assert paths == [
         Path("/var/lib/journal_pull/mail/gaps.prom"),
         Path("/var/lib/journal_pull/web/gaps.prom"),

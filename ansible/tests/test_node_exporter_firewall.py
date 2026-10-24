@@ -5,7 +5,10 @@ from __future__ import annotations
 import unittest
 
 from ansible.errors import AnsibleFilterError
-from filter_plugins.node_exporter_firewall import node_exporter_firewall_plan
+from load_source import load_source
+
+firewall = load_source("ansible/filter_plugins/node_exporter_firewall.py")
+node_exporter_firewall_plan = firewall.node_exporter_firewall_plan
 
 
 class NodeExporterFirewallPlanTests(unittest.TestCase):
@@ -40,8 +43,66 @@ class NodeExporterFirewallPlanTests(unittest.TestCase):
         self.assertEqual(plan["stale_rules"], [])
 
     def test_invalid_allowed_source_fails_closed(self) -> None:
-        with self.assertRaises(AnsibleFilterError):
+        with self.assertRaises(AnsibleFilterError) as raised:
             node_exporter_firewall_plan([], 9100, ["not-an-address"])
+        self.assertEqual(
+            str(raised.exception),
+            "invalid node_exporter firewall source 'not-an-address': 'not-an-address' does not appear to be an IPv4 or IPv6 network",
+        )
+
+    def test_malformed_rule_fails_closed(self) -> None:
+        with self.assertRaises(AnsibleFilterError) as raised:
+            node_exporter_firewall_plan(['rule "'], 9100, [])
+        self.assertEqual(
+            str(raised.exception),
+            "cannot parse firewalld rich rule 'rule \"': No closing quotation",
+        )
+
+    def test_missing_source_and_unvalued_attribute_are_ignored(self) -> None:
+        rules = [
+            "rule family=ipv4 port port=9100 protocol=tcp accept",
+            "rule family=ipv4 source nonsense address=192.0.2.1 port port=9100 protocol=tcp accept",
+        ]
+        self.assertEqual(
+            node_exporter_firewall_plan(rules, 9100, []),
+            {
+                "allowed_sources": [],
+                "managed_sources": ["192.0.2.1/32"],
+                "stale_rules": [rules[1]],
+            },
+        )
+
+    def test_filter_is_exposed(self) -> None:
+        self.assertEqual(
+            firewall.FilterModule().filters()["node_exporter_firewall_plan"](
+                [], 9100, []
+            ),
+            {"allowed_sources": [], "managed_sources": [], "stale_rules": []},
+        )
+
+    def test_network_prefix_is_normalized_and_empty_rule_is_ignored(self) -> None:
+        self.assertEqual(
+            node_exporter_firewall_plan([""], 9100, ["192.0.2.1/24"]),
+            {
+                "allowed_sources": ["192.0.2.0/24"],
+                "managed_sources": [],
+                "stale_rules": [],
+            },
+        )
+
+    def test_malformed_top_level_attribute_is_ignored(self) -> None:
+        rule = "rule family=ipv4=extra source address=192.0.2.1 port port=9100 protocol=tcp accept"
+        self.assertEqual(
+            node_exporter_firewall_plan([rule], 9100, []),
+            {"allowed_sources": [], "managed_sources": [], "stale_rules": []},
+        )
+
+    def test_rule_ending_with_source_element_is_ignored(self) -> None:
+        rule = "rule family=ipv4 port port=9100 protocol=tcp accept source"
+        self.assertEqual(
+            node_exporter_firewall_plan([rule], 9100, []),
+            {"allowed_sources": [], "managed_sources": [], "stale_rules": []},
+        )
 
 
 if __name__ == "__main__":

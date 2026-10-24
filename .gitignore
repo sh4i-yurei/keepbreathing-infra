@@ -27,6 +27,9 @@ secrets*
 # Python bytecode and test caches, rebuilt whenever code or tests run
 __pycache__/
 .pytest_cache/
+.coverage*
+coverage.xml
+mutants/
 
 # Editor and OS cruft
 .vscode/

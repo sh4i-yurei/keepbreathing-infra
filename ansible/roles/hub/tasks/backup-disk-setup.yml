@@ -1,4 +1,16 @@
 ---
-- name: backup-disk-setup | Interface for the loop-device test
-  ansible.builtin.debug:
-    msg: Backup disk setup is pending.
+- name: backup-disk-setup | Create XFS only on a disk with no filesystem
+  community.general.filesystem:
+    dev: "{{ hub_backup_disk_device }}"
+    fstype: xfs
+    force: false
+  become: true
+
+- name: backup-disk-setup | Mount the backup disk without blocking boot if it is absent
+  ansible.posix.mount:
+    path: "{{ hub_backup_mount_point }}"
+    src: "{{ hub_backup_disk_device }}"
+    fstype: xfs
+    opts: defaults,nofail
+    state: mounted
+  become: true

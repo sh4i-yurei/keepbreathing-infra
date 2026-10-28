@@ -111,3 +111,21 @@ grep -Eq 'missing required arguments?:.*hub_backup_disk_device|hub_backup_disk_d
 [[ -z $(blkid -o value -s TYPE "$missing") ]] || fail 'missing device must remain unformatted'
 [[ $(fstab_count "$work/missing-device") == 0 ]] || fail 'missing device must not create fstab entry'
 echo 'PASS missing device rejected without changes'
+
+disk check-mode
+check_device=$disk_result
+check_point=$work/check-mode
+fstab_before=$(sha256sum /etc/fstab | awk '{ print $1 }')
+for file in setup verify; do
+  if ! ansible-playbook --check -i localhost, "tests/hub_backup_disk/$file.yml" \
+      -e "hub_backup_disk_device=$check_device" -e "hub_backup_mount_point=$check_point" \
+      >"$work/check-$file.log" 2>&1; then
+    tail -30 "$work/check-$file.log"
+    fail "check-mode $file play must pass"
+  fi
+  grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/check-$file.log" || fail "check-mode $file recap must report failed=0"
+done
+[[ -z $(blkid -o value -s TYPE "$check_device") ]] || fail 'check-mode disk must remain unformatted'
+if mountpoint -q "$check_point"; then fail 'check-mode mount point must remain unmounted'; fi
+[[ $(sha256sum /etc/fstab | awk '{ print $1 }') == "$fstab_before" ]] || fail 'check-mode must leave fstab unchanged'
+echo 'PASS check-mode setup and verify leave disk, mount and fstab unchanged'

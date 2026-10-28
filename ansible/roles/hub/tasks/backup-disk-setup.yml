@@ -1,0 +1,4 @@
+---
+- name: backup-disk-setup | Interface for the loop-device test
+  ansible.builtin.debug:
+    msg: Backup disk setup is pending.

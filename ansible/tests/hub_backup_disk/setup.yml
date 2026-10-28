@@ -1,0 +1,16 @@
+---
+- name: Exercise only the hub backup disk setup and verify tasks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Set up the backup disk
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: backup-disk-setup
+
+    - name: Verify the backup disk
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: backup-disk-verify

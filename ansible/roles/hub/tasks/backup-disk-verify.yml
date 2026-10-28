@@ -1,0 +1,4 @@
+---
+- name: backup-disk-verify | Interface for the loop-device test
+  ansible.builtin.debug:
+    msg: Backup disk verification is pending.

@@ -6,16 +6,10 @@ node_exporter_tls: true
 # The scrape password and its bcrypt hash, read from the vault at run time.
 # Convention: one Login item per droplet, named "node_exporter prometheus (<inventory name>)",
 # with the hash in a hidden field named "bcrypt".
-node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
-  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
-node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
-  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
-  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"
+node_exporter_basic_auth_password: "{{ lookup('vault_secret', 'node_exporter prometheus (' ~ inventory_hostname ~ ')') }}"
+node_exporter_basic_auth_hash: "{{ lookup('vault_secret', 'node_exporter prometheus (' ~ inventory_hostname ~ ')', field='bcrypt') }}"
 
 # The Podman exporter uses the same droplet protection with a separate per-host credential.
 podman_exporter_tls: true
-podman_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
-  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
-podman_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
-  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
-  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"
+podman_exporter_basic_auth_password: "{{ lookup('vault_secret', 'podman_exporter prometheus (' ~ inventory_hostname ~ ')') }}"
+podman_exporter_basic_auth_hash: "{{ lookup('vault_secret', 'podman_exporter prometheus (' ~ inventory_hostname ~ ')', field='bcrypt') }}"

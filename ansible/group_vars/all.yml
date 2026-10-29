@@ -3,13 +3,10 @@
 # Convention: one Login item per host, named "keepbreath0 sudo (<inventory name>)".
 # Lookup is skipped on a host with ansible_become=false (a robot build that is already root)
 
-ansible_become_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
-  ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | quote) if ansible_become | default(true) | bool else ''}}"
+ansible_become_password: "{{ lookup('vault_secret', 'keepbreath0 sudo (' ~ inventory_hostname ~ ')') if ansible_become | default(true) | bool else ''}}"
 
 # The admin account's password hash, from a hidden field named "hash" on the same vault
 # item. Read only by the access role's admin account task.
-access_admin_password_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
-  ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
-  | selectattr('name', 'equalto', 'hash') | map(attribute='value') | first }}"
+access_admin_password_hash: "{{ lookup('vault_secret', 'keepbreath0 sudo (' ~ inventory_hostname ~ ')', field='hash') }}"
 
 image_build: false

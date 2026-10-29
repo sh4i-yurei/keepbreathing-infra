@@ -390,6 +390,23 @@ def test_gap_counter_atomically_replaces_metric_on_repository_filesystem() -> No
         assert "# last_gap_id gap\n" in metric.read_text()
 
 
+def test_gap_counter_replaces_metric_when_temp_root_is_another_filesystem(
+    monkeypatch, tmp_path: Path
+) -> None:
+    metric = tmp_path / "gaps.prom"
+    metric.write_text('journal_pull_gaps_total{host="mail"} 0\n')
+    replace = pull.os.replace
+
+    def replace_on_same_filesystem_only(source, target):
+        if Path(source).parent != Path(target).parent:
+            raise OSError("cross-device rename refused")
+        replace(source, target)
+
+    monkeypatch.setattr(pull.os, "replace", replace_on_same_filesystem_only)
+    assert pull.increment_gap_counter(metric, "mail", "gap") == 1
+    assert "# last_gap_id gap\n" in metric.read_text()
+
+
 def test_pump_rejects_changed_first_cursor_and_bad_source() -> None:
     for source, kwargs, message in [
         (

@@ -130,7 +130,7 @@
 
 - name: prometheus-setup | Write Prometheus's password for each tailnet machine's node_exporter
   ansible.builtin.copy:
-    content: "{{ (lookup('ansible.builtin.pipe', 'bw get password ' ~ ('node_exporter prometheus (' ~ item.name ~ ')') | quote)) }}"
+    content: "{{ lookup('vault_secret', 'node_exporter prometheus (' ~ item.name ~ ')') }}"
     dest: "/home/{{ hub_container_user }}/.config/prometheus/node-{{ item.name }}-password"
     owner: "{{ hub_container_user }}"
     group: "{{ hub_container_user }}"

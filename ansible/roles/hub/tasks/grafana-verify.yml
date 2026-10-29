@@ -6,8 +6,8 @@
   when: not ansible_check_mode
   vars:
     hub_grafana_url: "http://127.0.0.1:{{ hub_grafana_port }}"
-    hub_grafana_admin_password: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'grafana admin (hub)' | quote) | from_json).login.password }}"
-    hub_grafana_metrics_password: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'grafana prometheus (hub)' | quote) | from_json).login.password }}"
+    hub_grafana_admin_password: "{{ lookup('vault_secret', 'grafana admin (hub)') }}"
+    hub_grafana_metrics_password: "{{ lookup('vault_secret', 'grafana prometheus (hub)') }}"
 
   block:
     - name: grafana-verify | Wait for Grafana to report itself healthy

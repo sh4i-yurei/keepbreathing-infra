@@ -43,9 +43,8 @@
           Authorization: "Bearer {{ hub_ntfy_fields.token }}"
         status_code: [200, 401, 403]
       vars:
-        hub_ntfy_fields: >-
-          {{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ ('ntfy ' ~ item.name ~ ' (hub)') | quote)
-          | from_json).fields | items2dict(key_name='name', value_name='value') }}
+        hub_ntfy_fields:
+          token: "{{ lookup('vault_secret', 'ntfy ' ~ item.name ~ ' (hub)', field='token') }}"
       register: hub_ntfy_token_check
       failed_when: (hub_ntfy_token_check.json.username | default('')) != item.name
       loop: "{{ hub_ntfy_users | selectattr('token', 'defined') | selectattr('token') | list }}"

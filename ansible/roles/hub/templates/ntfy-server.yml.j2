@@ -10,8 +10,11 @@ metrics-listen-http: ":9095"
 
 {% set ntfy_vault = {} %}
 {% for user in hub_ntfy_users %}
-{%   set item = lookup('ansible.builtin.pipe', 'bw get item ' ~ ('ntfy ' ~ user.name ~ ' (hub)') | quote) | from_json %}
-{%   set _ = ntfy_vault.update({user.name: dict(item.fields | items2dict(key_name='name', value_name='value'))}) %}
+{%   set fields = {'bcrypt': lookup('vault_secret', 'ntfy ' ~ user.name ~ ' (hub)', field='bcrypt')} %}
+{%   if user.token | default(false) %}
+{%     set _ = fields.update({'token': lookup('vault_secret', 'ntfy ' ~ user.name ~ ' (hub)', field='token')}) %}
+{%   endif %}
+{%   set _ = ntfy_vault.update({user.name: fields}) %}
 {% endfor %}
 auth-users:
 {% for user in hub_ntfy_users %}

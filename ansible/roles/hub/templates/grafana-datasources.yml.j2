@@ -31,7 +31,7 @@ datasources:
       implementation: prometheus
       handleGrafanaManagedAlerts: false
     secureJsonData:
-      basicAuthPassword: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'alertmanager prometheus (hub)' | quote) | from_json).login.password }}"
+      basicAuthPassword: "{{ lookup('vault_secret', 'alertmanager prometheus (hub)') }}"
     editable: false
 
   - name: Infinity
@@ -39,8 +39,11 @@ datasources:
     uid: infinity
     editable: false
 
-{% set github_app = lookup('ansible.builtin.pipe', 'bw get item ' ~ 'github app grafana (hub)' | quote) | from_json %}
-{% set github_fields = github_app.fields | items2dict(key_name='name', value_name='value') %}
+{% set github_fields = {
+  'app_id': lookup('vault_secret', 'github app grafana (hub)', field='app_id'),
+  'installation_id': lookup('vault_secret', 'github app grafana (hub)', field='installation_id'),
+  'private_key': lookup('vault_secret', 'github app grafana (hub)', field='private_key')
+} %}
   - name: GitHub
     type: grafana-github-datasource
     uid: github

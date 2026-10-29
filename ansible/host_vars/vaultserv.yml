@@ -12,11 +12,8 @@ journal_gateway_listen_address: "100.65.221.62:19531"
 journal_gateway_allowed_sources: "{{ node_exporter_allowed_sources }}"
 # Monitoring and alerting decision 58: AlmaLinux 10 gatewayd cannot check client certificates.
 journal_gateway_verify_client: false
-node_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
-  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
-node_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
-  ('node_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
-  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"
+node_exporter_basic_auth_password: "{{ lookup('vault_secret', 'node_exporter prometheus (' ~ inventory_hostname ~ ')') }}"
+node_exporter_basic_auth_hash: "{{ lookup('vault_secret', 'node_exporter prometheus (' ~ inventory_hostname ~ ')', field='bcrypt') }}"
 
 podman_exporter_enabled: true
 podman_exporter_container_user: "{{ baseline_container_user }}"
@@ -25,8 +22,5 @@ podman_exporter_allowed_sources: "{{ node_exporter_allowed_sources }}"
 podman_exporter_expected_containers:
   - podman-exporter
   - vaultwarden
-podman_exporter_basic_auth_password: "{{ lookup('ansible.builtin.pipe', 'bw get password ' ~
-  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) }}"
-podman_exporter_basic_auth_hash: "{{ (lookup('ansible.builtin.pipe', 'bw get item ' ~
-  ('podman_exporter prometheus (' ~ inventory_hostname ~ ')') | quote) | from_json).fields
-  | selectattr('name', 'equalto', 'bcrypt') | map(attribute='value') | first }}"
+podman_exporter_basic_auth_password: "{{ lookup('vault_secret', 'podman_exporter prometheus (' ~ inventory_hostname ~ ')') }}"
+podman_exporter_basic_auth_hash: "{{ lookup('vault_secret', 'podman_exporter prometheus (' ~ inventory_hostname ~ ')', field='bcrypt') }}"

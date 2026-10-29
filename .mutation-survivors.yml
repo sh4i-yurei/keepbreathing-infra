@@ -92,3 +92,21 @@
   reason: "Python codec names are case insensitive; UTF-8 and its upper-case alias read identical text."
 - mutant: ansible.roles.hub.files.journal-resume-test.x_verify_cursor_loss__mutmut_62
   reason: "The changed sleep duration only changes polling or settling cadence; no public timing threshold specifies the exact delay."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_42
+  reason: "After a session-file read error, both None and an empty string fail the same no-session check and raise the same public error."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_54
+  reason: "Without a field selector, field is None; passing that None to the message builder still omits the field, so every public message is identical."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_84
+  reason: "subprocess text=None returns bytes; json.loads accepts UTF-8 bytes and produces the same item and public error for this JSON CLI output."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_85
+  reason: "subprocess check=None and check=False both leave nonzero exits in CompletedProcess for the same public error."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_90
+  reason: "Omitting subprocess text returns bytes; json.loads accepts UTF-8 bytes and produces the same item and public error for this JSON CLI output."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_91
+  reason: "Omitting subprocess check uses its default false value, so nonzero exits produce the same public error."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_98
+  reason: "subprocess text=False returns bytes; json.loads accepts UTF-8 bytes and produces the same item and public error for this JSON CLI output."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_101
+  reason: "Both None and an empty string are rejected by the following dictionary type check, producing the same public error."
+- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_116
+  reason: "A non-list JSON fields value cannot contain matching dictionary entries under this iteration; both paths raise the same public error."

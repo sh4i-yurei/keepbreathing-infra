@@ -5,15 +5,14 @@ storage:
   type: sqlite
   path: /data/data.db
 
-{% set gatus_vault = lookup('ansible.builtin.pipe', 'bw get item ' ~ 'ntfy gatus (hub)' | quote) | from_json %}
-{% set gatus_fields = gatus_vault.fields | items2dict(key_name='name', value_name='value') %}
-{% set github_token = lookup('ansible.builtin.pipe', 'bw get password ' ~ 'github gatus (hub)' | quote) %}
+{% set gatus_token = lookup('vault_secret', 'ntfy gatus (hub)', field='token') %}
+{% set github_token = lookup('vault_secret', 'github gatus (hub)') %}
 
 alerting:
   ntfy:
     url: "https://ntfy.tail4cf2f3.ts.net"
     topic: pages
-    token: "{{ gatus_fields.token }}"
+    token: "{{ gatus_token }}"
     priority: 5
     default-alert:
       failure-threshold: 2

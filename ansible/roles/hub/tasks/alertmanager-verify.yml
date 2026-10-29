@@ -22,9 +22,9 @@
         url_password: "{{ hub_alertmanager_login.password }}"
         force_basic_auth: true
       vars:
-        hub_alertmanager_login: >-
-          {{ (lookup('ansible.builtin.pipe', 'bw get item ' ~ 'alertmanager prometheus (hub)' | quote)
-          | from_json).login }}
+        hub_alertmanager_login:
+          username: "{{ lookup('vault_secret', 'alertmanager prometheus (hub)', login='username') }}"
+          password: "{{ lookup('vault_secret', 'alertmanager prometheus (hub)') }}"
       register: hub_alertmanager_status
       failed_when: >-
         hub_alertmanager_status.status != 200

@@ -218,6 +218,20 @@ def test_missing_or_duplicate_field(vault, monkeypatch, fields):
     )
 
 
+def test_field_lookup_when_item_omits_fields(vault, monkeypatch):
+    session_file(vault)
+    item = {key: value for key, value in vault["item"].items() if key != "fields"}
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps({ITEM: item}))
+    with pytest.raises(AnsibleLookupError) as error:
+        call(field="hash")
+    assert str(error.value) == (
+        f"Vault lookup failed for item {ITEM!r} field 'hash' "
+        "using runtime session file; run vu."
+    )
+    assert "pw-hub-1" not in str(error.value)
+    assert len(calls(vault)) == 1
+
+
 def test_missing_password(vault, monkeypatch):
     session_file(vault)
     item = vault["item"] | {"login": {"username": "prom-user-1"}}

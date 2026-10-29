@@ -108,5 +108,3 @@
   reason: "subprocess text=False returns bytes; json.loads accepts UTF-8 bytes and produces the same item and public error for this JSON CLI output."
 - mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_101
   reason: "Both None and an empty string are rejected by the following dictionary type check, producing the same public error."
-- mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_116
-  reason: "A non-list JSON fields value cannot contain matching dictionary entries under this iteration; both paths raise the same public error."

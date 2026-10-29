@@ -25,6 +25,12 @@
 - name: Check the hub's routing is in the state the role claims
   ansible.builtin.import_tasks: tailnet-routes-verify.yml
 
+- name: Mount the hub's backup disk
+  ansible.builtin.import_tasks: backup-disk-setup.yml
+
+- name: Check the hub's backup disk mount
+  ansible.builtin.import_tasks: backup-disk-verify.yml
+
 - name: Run ntfy
   ansible.builtin.import_tasks: ntfy-setup.yml
 

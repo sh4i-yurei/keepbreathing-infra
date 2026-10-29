@@ -1,4 +1,7 @@
 ---
+# The backup disk's stable path, read on the hub on 2026-10-28 (Backups decision 27).
+hub_backup_disk_device: /dev/disk/by-id/ata-VBOX_HARDDISK_VBfb6f4c8a-8d73d857
+
 # The account the hub's containers run under (Notification service decision #12). The hub
 # role creates it; baseline sets it up for rootless Podman.
 hub_container_user: keepbreath5

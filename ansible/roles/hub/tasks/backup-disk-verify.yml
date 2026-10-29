@@ -1,0 +1,53 @@
+---
+- name: backup-disk-verify | Only on a real run
+  when: not ansible_check_mode
+
+  block:
+    - name: backup-disk-verify | Read the mounted filesystem at the backup path
+      ansible.builtin.command:
+        argv:
+          - findmnt
+          - -n
+          - -o
+          - FSTYPE
+          - --mountpoint
+          - "{{ hub_backup_mount_point }}"
+      register: hub_backup_live_mount
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: backup-disk-verify | Read the backup path's fstab entry
+      ansible.builtin.command:
+        argv:
+          - findmnt
+          - --fstab
+          - -n
+          - -o
+          - SOURCE,FSTYPE,OPTIONS
+          - --mountpoint
+          - "{{ hub_backup_mount_point }}"
+      register: hub_backup_fstab_entry
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: backup-disk-verify | Check the live mount and persistent entry
+      ansible.builtin.assert:
+        that:
+          - hub_backup_live_mount.rc == 0
+          - hub_backup_live_mount.stdout == 'xfs'
+          - hub_backup_fstab_entry.rc == 0
+          - hub_backup_fstab_entry.stdout_lines | length == 1
+          - (hub_backup_fstab_fields[0] | default('')) == hub_backup_disk_device
+          - (hub_backup_fstab_fields[1] | default('')) == 'xfs'
+          - "'nofail' in (hub_backup_fstab_fields[2] | default('')).split(',')"
+        fail_msg: >-
+          Backup disk at {{ hub_backup_mount_point }} must be mounted as XFS with one fstab entry
+          for {{ hub_backup_disk_device }} containing nofail. Live filesystem:
+          {{ hub_backup_live_mount.stdout | default('absent') }}. Fstab:
+          {{ hub_backup_fstab_entry.stdout | default('absent') }}.
+        quiet: true
+      vars:
+        hub_backup_fstab_fields: >-
+          {{ (hub_backup_fstab_entry.stdout_lines | first | default('')).split() }}

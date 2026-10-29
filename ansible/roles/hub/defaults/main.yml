@@ -1,4 +1,7 @@
 ---
+# The hub's backup disk is mounted here; a missing disk does not block boot (Backups decision 27).
+hub_backup_mount_point: /srv/backup
+
 # The tailnet's MagicDNS domain. A Tailscale Service named x is reached at x.<this domain>.
 hub_tailnet_domain: tail4cf2f3.ts.net
 

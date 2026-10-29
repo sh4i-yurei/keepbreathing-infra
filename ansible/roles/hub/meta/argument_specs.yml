@@ -3,6 +3,14 @@ argument_specs:
   main:
     short_description: The services that run on the hub
     options:
+      hub_backup_disk_device:
+        type: path
+        required: true
+        description: The stable path to the hub's backup disk.
+      hub_backup_mount_point:
+        type: path
+        default: /srv/backup
+        description: The mount point for the hub's backup disk.
       hub_container_user:
         type: str
         required: true
@@ -156,6 +164,30 @@ argument_specs:
           sha256:
             type: str
             required: true
+
+  backup-disk-setup:
+    short_description: Create and mount the hub's backup disk
+    options:
+      hub_backup_disk_device:
+        type: path
+        required: true
+        description: The path to the backup disk.
+      hub_backup_mount_point:
+        type: path
+        default: /srv/backup
+        description: The mount point for the backup disk.
+
+  backup-disk-verify:
+    short_description: Verify the hub's backup disk mount
+    options:
+      hub_backup_disk_device:
+        type: path
+        required: true
+        description: The path to the backup disk.
+      hub_backup_mount_point:
+        type: path
+        default: /srv/backup
+        description: The mount point for the backup disk.
 
   account:
     short_description: Create the account the hub's containers run under

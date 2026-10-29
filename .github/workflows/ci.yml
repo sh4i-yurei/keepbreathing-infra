@@ -11,6 +11,23 @@ permissions:
   contents: read
 
 jobs:
+  hub-backup-disk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y xfsprogs
+      - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_backup_disk/run.sh
+
   python:
     uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@95383033d70f2b91d79792739806b44e1a9bf754
     with:

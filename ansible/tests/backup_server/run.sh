@@ -7,9 +7,14 @@ work=$(mktemp -d)
 point=$work/backup
 user=bstest
 uid=
+as_user() {
+  runuser -u "$user" -- env -i "HOME=/home/$user" "USER=$user" \
+    "LOGNAME=$user" "XDG_RUNTIME_DIR=/run/user/$uid" \
+    "XDG_CONFIG_HOME=/home/$user/.config" "PATH=/usr/bin:/bin" "$@"
+}
 cleanup() {
   if [[ -n $uid ]]; then
-    runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user stop backup-server.service >/dev/null 2>&1 || true
+    as_user systemctl --user stop backup-server.service >/dev/null 2>&1 || true
   fi
   mountpoint -q "$point" && umount "$point"
   if [[ -n $uid ]]; then
@@ -50,15 +55,15 @@ Volume=$point/restic:/data
 Restart=no
 EOF
 chown "$user:$user" "/home/$user/.config/containers/systemd/backup-server.container"
-runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daemon-reload
-runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user cat backup-server.service >/dev/null || fail 'Quadlet generator must expose backup-server.service'
-runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user start backup-server.service
-runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user is-active --quiet backup-server.service || fail 'service must first start with the tmpfs mounted'
-runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user stop backup-server.service
+as_user systemctl --user daemon-reload
+as_user systemctl --user cat backup-server.service >/dev/null || fail 'Quadlet generator must expose backup-server.service'
+as_user systemctl --user start backup-server.service
+as_user systemctl --user is-active --quiet backup-server.service || fail 'service must first start with the tmpfs mounted'
+as_user systemctl --user stop backup-server.service
 umount "$point"
 install -d -o "$user" -g "$user" -m 0700 "$point/restic"
-runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user start backup-server.service >/dev/null 2>&1 || true
-if runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user is-active --quiet backup-server.service; then
+as_user systemctl --user start backup-server.service >/dev/null 2>&1 || true
+if as_user systemctl --user is-active --quiet backup-server.service; then
   fail 'RequiresMountsFor must keep the rootless Quadlet inactive when its system mount is absent'
 fi
 [[ -z $(find "$point/restic" -mindepth 1 -print -quit) ]] || fail 'unmounted restic folder must stay empty'

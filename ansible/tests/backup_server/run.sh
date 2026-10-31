@@ -43,6 +43,12 @@ runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daem
 if ! runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user cat backup-server.service; then
   printf 'HOME as bstest: '
   runuser -u "$user" -- printenv HOME
+  printf 'User manager environment:\n'
+  runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user show-environment
+  printf 'Registered user generators:\n'
+  ls -la /usr/lib/systemd/user-generators/ || true
+  printf 'Generated user units:\n'
+  ls -la "/run/user/$uid/systemd/generator/" || true
   printf 'Quadlet path ownership:\n'
   namei -l "/home/$user/.config/containers/systemd/backup-server.container"
   printf 'Quadlet generator output:\n'

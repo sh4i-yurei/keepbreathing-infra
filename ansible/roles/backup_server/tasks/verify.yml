@@ -46,6 +46,8 @@
       become_user: "{{ backup_server_user }}"
       environment: &restic_environment
         XDG_RUNTIME_DIR: "/run/user/{{ backup_server_verify_uid.stdout }}"
+        XDG_CONFIG_HOME: "/home/{{ backup_server_user }}/.config"
+        HOME: "/home/{{ backup_server_user }}"
         RESTIC_REPOSITORY: "rest:http://127.0.0.1:{{ backup_server_port }}/verify/"
         RESTIC_REST_USERNAME: verify
         RESTIC_REST_PASSWORD: "{{ backup_server_verify_password }}"

@@ -51,6 +51,10 @@ play() {
     if [[ -n $uid ]]; then
       as_user systemctl --user status backup-server.service --no-pager | tail -22 || true
       as_user journalctl --user -u backup-server.service -n 30 --no-pager || true
+      stat -c 'runtime owner=%u group=%g mode=%a path=%n' "/run/user/$uid" "/run/user/$uid/libpod" 2>&1 || true
+      as_user id
+      as_user test -w "/run/user/$uid" && echo 'runtime writable by account' || echo 'runtime not writable by account'
+      as_user systemctl --user show-environment | grep -E '^(XDG_RUNTIME_DIR|XDG_CONFIG_HOME|HOME|USER)=' || true
     fi
     fail "$name play must pass"
   fi

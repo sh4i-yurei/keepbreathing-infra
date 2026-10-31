@@ -19,12 +19,11 @@ as_user() {
   )
 }
 cleanup() {
+  if [[ -z $uid ]] && id -u "$user" >/dev/null 2>&1; then uid=$(id -u "$user"); fi
   if [[ -n $uid ]]; then
     as_user systemctl --user stop backup-server.service >/dev/null 2>&1 || true
     loginctl disable-linger "$user" >/dev/null 2>&1 || true
     systemctl stop "user@$uid.service" >/dev/null 2>&1 || true
-    rm -rf "/etc/systemd/system/user@$uid.service.d"
-    systemctl daemon-reload
     userdel -r "$user" >/dev/null 2>&1 || true
   fi
   mountpoint -q "$point" && umount "$point"
@@ -32,6 +31,13 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+# GitHub's image sets XDG_CONFIG_HOME for the runner in /etc/environment.
+# Remove that runner-wide setting before creating bstest or its user manager.
+sed -i '/^XDG_CONFIG_HOME=/d' /etc/environment
+printf 'runner XDG environment sources:\n'
+env | grep -E '^XDG_(RUNTIME_DIR|CONFIG_HOME)=' || true
+systemctl show-environment | grep -E '^XDG_(RUNTIME_DIR|CONFIG_HOME)=' || true
+grep -RslE '^XDG_(RUNTIME_DIR|CONFIG_HOME)=' /etc/environment /etc/profile /etc/profile.d /etc/systemd/system.conf.d /etc/systemd/user.conf.d /etc/pam.d 2>/dev/null || true
 export TEST_MOUNT="$point"
 export TEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"

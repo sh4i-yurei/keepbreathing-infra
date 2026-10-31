@@ -9,6 +9,7 @@
     owner: "{{ backup_server_user }}"
     group: "{{ backup_server_user }}"
     mode: "0700"
+  when: backup_server_account.uid is defined or not ansible_check_mode
 
 - name: Backup server | Create the account's configuration directories
   ansible.builtin.file:
@@ -22,6 +23,7 @@
     - .config/containers
     - .config/containers/systemd
     - .config/backup-server
+  when: backup_server_account.uid is defined or not ansible_check_mode
 
 - name: Backup server | Write the htpasswd file
   ansible.builtin.template:
@@ -33,6 +35,7 @@
   no_log: true
   diff: false
   notify: Restart backup server
+  when: backup_server_account.uid is defined or not ansible_check_mode
 
 - name: Backup server | Write the fixed verification file
   ansible.builtin.copy:
@@ -41,6 +44,7 @@
     owner: "{{ backup_server_user }}"
     group: "{{ backup_server_user }}"
     mode: "0600"
+  when: backup_server_account.uid is defined or not ansible_check_mode
 
 - name: Backup server | Write the Quadlet file
   ansible.builtin.template:
@@ -52,6 +56,7 @@
   notify:
     - Reload backup server user manager
     - Restart backup server
+  when: backup_server_account.uid is defined or not ansible_check_mode
 
 - name: Backup server | Pull rclone and restic into the account's storage
   containers.podman.podman_image:
@@ -63,8 +68,7 @@
   become_user: "{{ backup_server_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ backup_server_account.uid }}"
-    XDG_CONFIG_HOME: "/home/{{ backup_server_user }}/.config"
-    HOME: "/home/{{ backup_server_user }}"
+  when: not ansible_check_mode
 
 - name: Backup server | Apply service handlers before starting
   ansible.builtin.meta: flush_handlers
@@ -78,8 +82,7 @@
   become_user: "{{ backup_server_user }}"
   environment:
     XDG_RUNTIME_DIR: "/run/user/{{ backup_server_account.uid }}"
-    XDG_CONFIG_HOME: "/home/{{ backup_server_user }}/.config"
-    HOME: "/home/{{ backup_server_user }}"
+  when: not ansible_check_mode
 
 - name: Verify the running backup server
   ansible.builtin.import_tasks: verify.yml

@@ -6,6 +6,9 @@ argument_specs:
       backup_server_user:
         type: str
         required: true
+      backup_server_port:
+        type: int
+        required: true
       backup_server_mount_point:
         type: path
         required: true

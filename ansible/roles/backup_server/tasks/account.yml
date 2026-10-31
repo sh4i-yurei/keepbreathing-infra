@@ -19,14 +19,17 @@
   changed_when: false
   failed_when: false
   check_mode: false
+  when: backup_server_account.uid is defined or not ansible_check_mode
 
 - name: Backup server | Require subordinate UID and GID ranges
   ansible.builtin.assert:
     that: backup_server_subids.results | selectattr('rc', 'ne', 0) | list | length == 0
     fail_msg: "{{ backup_server_user }} needs entries in /etc/subuid and /etc/subgid for rootless Podman."
     quiet: true
+  when: backup_server_account.uid is defined or not ansible_check_mode
 
 - name: Backup server | Enable lingering
   ansible.builtin.command:
     cmd: "loginctl enable-linger {{ backup_server_user | quote }}"
     creates: "/var/lib/systemd/linger/{{ backup_server_user }}"
+  when: not ansible_check_mode

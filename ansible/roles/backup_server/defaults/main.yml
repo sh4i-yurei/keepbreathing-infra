@@ -1,5 +1,4 @@
 ---
-backup_server_port: 8082
 # rclone v1.75.2
 backup_server_image: docker.io/rclone/rclone@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
 # restic v0.19.1

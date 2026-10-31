@@ -1,82 +1,178 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Prove the mount dependency required by Backups decision 27 on the CI runner.
-# The full role tests will use this same account and mount after this check.
 work=$(mktemp -d)
-chmod 0755 "$work"
 point=$work/backup
-user=bstest
+image=$work/backup.img
+device=
 uid=
+user=bstest
+quadlet=/home/$user/.config/containers/systemd/backup-server.container
+restic_image=docker.io/restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 as_user() {
-  runuser -u "$user" -- env -i "HOME=/home/$user" "USER=$user" \
-    "LOGNAME=$user" "XDG_RUNTIME_DIR=/run/user/$uid" \
-    "XDG_CONFIG_HOME=/home/$user/.config" "PATH=/usr/bin:/bin" "$@"
+  HOME="/home/$user" USER="$user" LOGNAME="$user" \
+    XDG_RUNTIME_DIR="/run/user/$uid" XDG_CONFIG_HOME="/home/$user/.config" \
+    runuser -u "$user" -- "$@"
 }
 cleanup() {
   if [[ -n $uid ]]; then
     as_user systemctl --user stop backup-server.service >/dev/null 2>&1 || true
-  fi
-  mountpoint -q "$point" && umount "$point"
-  if [[ -n $uid ]]; then
+    loginctl disable-linger "$user" >/dev/null 2>&1 || true
+    systemctl stop "user@$uid.service" >/dev/null 2>&1 || true
     rm -rf "/etc/systemd/system/user@$uid.service.d"
     systemctl daemon-reload
+    userdel -r "$user" >/dev/null 2>&1 || true
   fi
+  mountpoint -q "$point" && umount "$point"
+  [[ -z $device ]] || losetup -d "$device"
   rm -rf "$work"
 }
 trap cleanup EXIT
-fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
+export TEST_MOUNT="$point"
+export TEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+export TEST_BCRYPT="$(htpasswd -nbB verify "$TEST_PASSWORD" | cut -d: -f2-)"
+export RESTIC_REPOSITORY="rest:http://verify:$TEST_PASSWORD@127.0.0.1:8082/verify/"
+export RESTIC_PASSWORD="$TEST_RESTIC_PASSWORD"
 
 mkdir -p "$point"
-mount -t tmpfs -o size=64m tmpfs "$point"
-useradd -m "$user"
-uid=$(id -u "$user")
-# The GitHub runner sets XDG_CONFIG_HOME for its own account. A user manager
-# inherits that at startup, before systemctl set-environment can affect it.
+chmod 0755 "$work"
+truncate -s 512M "$image"
+device=$(losetup --find --show "$image")
+mkfs.xfs -f -q "$device"
+mount "$device" "$point"
+play() {
+  local name=$1 log=$work/$1.log
+  if ! ansible-playbook -i localhost, "tests/backup_server/$name.yml" >"$log" 2>&1; then
+    tail -35 "$log"
+    fail "$name play must pass"
+  fi
+}
+expect_verify_failure() {
+  local label=$1 phrase=$2 log=$work/$1.log
+  if ansible-playbook -i localhost, tests/backup_server/verify.yml >"$log" 2>&1; then
+    fail "$label: verify unexpectedly passed"
+  fi
+  grep -q "$phrase" "$log" || { tail -25 "$log"; fail "$label: expected $phrase failure"; }
+  printf 'PASS %s refusal detected\n' "$label"
+}
+snapshots() {
+  as_user podman run --rm --network host --env RESTIC_REPOSITORY --env RESTIC_PASSWORD \
+    "$restic_image" snapshots --json
+}
+snapshot_count() { snapshots | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
+reload_service() {
+  as_user systemctl --user daemon-reload
+  as_user systemctl --user restart backup-server.service
+}
+
+if ansible-playbook -i localhost, tests/backup_server/missing-user.yml >"$work/missing.log" 2>&1; then
+  fail 'missing backup_server_user must fail argument validation'
+fi
+grep -q 'backup_server_user' "$work/missing.log" || fail 'missing user error must name backup_server_user'
+[[ ! -e /home/bstestmissing && ! -e "$point/restic" ]] || fail 'missing user must create no account or data folder'
+printf 'PASS required account rejected before changes\n'
+
+play account
+uid=$(id -u "$user") || fail 'backup_server must create its account'
 install -d -m 0755 "/etc/systemd/system/user@$uid.service.d"
 printf '[Service]\nEnvironment=QUADLET_UNIT_DIRS=/home/%s/.config/containers/systemd\n' "$user" \
   >"/etc/systemd/system/user@$uid.service.d/quadlet-test.conf"
 systemctl daemon-reload
 loginctl enable-linger "$user"
-systemctl start "user@$uid.service"
-install -d -o "$user" -g "$user" -m 0700 "$point/restic" \
-  "/home/$user/.config" "/home/$user/.config/containers" \
-  "/home/$user/.config/containers/systemd"
-cat >"/home/$user/.config/containers/systemd/backup-server.container" <<EOF
-[Unit]
-RequiresMountsFor=$point
+systemctl restart "user@$uid.service"
+play server
+as_user systemctl --user is-active --quiet backup-server.service || fail 'backup-server.service must be active'
+code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:8082/")
+[[ $code == 401 || $code == 403 ]] || fail 'loopback HTTP must answer with authentication required'
+[[ $(snapshot_count) == 1 ]] || fail 'first verified run must create one snapshot'
+printf 'PASS first role run and one snapshot\n'
 
-[Container]
-Image=docker.io/rclone/rclone@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
-Exec=serve restic --addr :8080 /data
-PublishPort=127.0.0.1:18082:8080
-Volume=$point/restic:/data
+play server
+grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/server.log" || fail 'second run must report changed=0'
+[[ $(snapshot_count) == 2 ]] || fail 'second verified run must create a second snapshot'
+printf 'PASS second role run changed=0 and two snapshots\n'
 
-[Service]
-Restart=no
-EOF
-chown "$user:$user" "/home/$user/.config/containers/systemd/backup-server.container"
-as_user systemctl --user daemon-reload
-if ! as_user systemctl --user cat backup-server.service >/dev/null; then
-  as_user systemctl --user show-environment | grep -E '^(XDG_CONFIG_HOME|XDG_RUNTIME_DIR)=' || true
-  ls -d "/run/user/$uid/systemd/generator"* 2>&1 || true
-  journalctl -u "user@$uid.service" --no-pager | grep -Ei 'quadlet|generator|error' | tail -15 || true
-  fail 'Quadlet generator must expose backup-server.service'
-fi
-as_user systemctl --user set-environment "XDG_RUNTIME_DIR=/run/user/$uid" \
-  "XDG_CONFIG_HOME=/home/$user/.config"
-if ! as_user systemctl --user start backup-server.service; then
-  as_user systemctl --user status backup-server.service --no-pager | tail -20 || true
-  as_user journalctl --user -u backup-server.service -n 20 --no-pager || true
-  fail 'service must first start with the tmpfs mounted'
-fi
-as_user systemctl --user is-active --quiet backup-server.service || fail 'service must first start with the tmpfs mounted'
+cp "$quadlet" "$work/original.container"
+before=$(snapshot_count)
+sed -i 's/ --append-only//' "$quadlet"
+reload_service
+expect_verify_failure append-only append-only
+after=$(snapshot_count)
+(( after < before + 1 )) || fail 'forget must delete its new snapshot with append-only disabled'
+cp "$work/original.container" "$quadlet"
+reload_service
+
+sed -i 's/ --private-repos//' "$quadlet"
+reload_service
+expect_verify_failure private-repositories 'private repositories'
+cp "$work/original.container" "$quadlet"
+reload_service
+
+sed -i 's/ --htpasswd[^ ]* --private-repos//' "$quadlet"
+reload_service
+expect_verify_failure login 'login check'
+cp "$work/original.container" "$quadlet"
+reload_service
+
+before=$(snapshot_count)
 as_user systemctl --user stop backup-server.service
 umount "$point"
 install -d -o "$user" -g "$user" -m 0700 "$point/restic"
 as_user systemctl --user start backup-server.service >/dev/null 2>&1 || true
-if as_user systemctl --user is-active --quiet backup-server.service; then
-  fail 'RequiresMountsFor must keep the rootless Quadlet inactive when its system mount is absent'
-fi
+for ((second=0; second<15; second++)); do
+  as_user systemctl --user is-active --quiet backup-server.service && fail 'service became active without the backup mount'
+  sleep 1
+done
+restarts=$(as_user systemctl --user show backup-server.service -p NRestarts --value)
+(( restarts >= 2 )) || fail 'service must retry at least twice while mount is absent'
 [[ -z $(find "$point/restic" -mindepth 1 -print -quit) ]] || fail 'unmounted restic folder must stay empty'
-printf 'PASS RequiresMountsFor kept the service inactive and the unmounted restic folder empty\n'
+mount "$device" "$point"
+active=false
+for ((second=0; second<15; second++)); do
+  if as_user systemctl --user is-active --quiet backup-server.service; then active=true; break; fi
+  sleep 1
+done
+[[ $active == true ]] || fail 'service must recover without a manual start after remount'
+play verify
+[[ $(snapshot_count) -gt "$before" ]] || fail 'remounted repository must retain earlier snapshots and add one'
+printf 'PASS mount loss, retries, automatic recovery and preserved snapshots\n'
+
+mkdir -p "$work/bin"
+cat >"$work/status.json" <<'JSON'
+{
+  "Services": {
+    "svc:grafana": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"grafana.tail4cf2f3.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}
+    },
+    "svc:ntfy": {
+      "TCP": {"443": {"HTTPS": true}},
+      "Web": {"ntfy.tail4cf2f3.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8080"}}}}
+    }
+  }
+}
+JSON
+cat >"$work/bin/tailscale" <<'SH'
+#!/usr/bin/env bash
+if [[ $* == 'serve status --json' ]]; then cat "$TEST_STATUS"; exit; fi
+printf '%s\n' "$*" >>"$TEST_CALLS"
+SH
+chmod +x "$work/bin/tailscale"
+export TEST_STUB_DIR="$work/bin" TEST_STATUS="$work/status.json" TEST_CALLS="$work/calls"
+for pair in grafana:3000 backup:8082 ntfy:8090; do
+  export TEST_SERVICE_NAME=${pair%%:*} TEST_SERVICE_PORT=${pair##*:}
+  : >"$TEST_CALLS"
+  play tailscale
+  case $TEST_SERVICE_NAME in
+    grafana)
+      [[ ! -s $TEST_CALLS ]] || fail 'unchanged Grafana Service must make no calls'
+      grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/tailscale.log" || fail 'unchanged Grafana Service must report changed=0';;
+    *)
+      expected=$(printf 'serve clear svc:%s\nserve --yes --service=svc:%s --https=443 127.0.0.1:%s' \
+        "$TEST_SERVICE_NAME" "$TEST_SERVICE_NAME" "$TEST_SERVICE_PORT")
+      [[ $(cat "$TEST_CALLS") == "$expected" ]] || fail "$TEST_SERVICE_NAME must clear then serve only itself";;
+  esac
+  printf 'PASS tailscale_service %s\n' "$TEST_SERVICE_NAME"
+done

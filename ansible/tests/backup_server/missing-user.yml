@@ -1,0 +1,15 @@
+---
+- name: Reject a missing backup server user before making changes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    backup_server_mount_point: "{{ lookup('ansible.builtin.env', 'TEST_MOUNT') }}"
+    backup_server_logins:
+      - name: verify
+        bcrypt: "{{ lookup('ansible.builtin.env', 'TEST_BCRYPT') }}"
+    backup_server_verify_password: "{{ lookup('ansible.builtin.env', 'TEST_PASSWORD') }}"
+    backup_server_verify_restic_password: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"
+  roles:
+    - backup_server

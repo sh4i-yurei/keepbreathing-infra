@@ -1,0 +1,24 @@
+---
+argument_specs:
+  main:
+    short_description: Run an append-only restic server on the mounted backup disk
+    options:
+      backup_server_user:
+        type: str
+        required: true
+      backup_server_mount_point:
+        type: path
+        required: true
+      backup_server_logins:
+        type: list
+        elements: dict
+        required: true
+        no_log: true
+      backup_server_verify_password:
+        type: str
+        required: true
+        no_log: true
+      backup_server_verify_restic_password:
+        type: str
+        required: true
+        no_log: true

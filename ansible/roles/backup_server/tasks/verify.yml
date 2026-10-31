@@ -171,7 +171,7 @@
         url: "http://127.0.0.1:{{ backup_server_port }}/verify/data/"
         method: GET
         headers:
-          Accept: application/vnd.x.restic.rest.v1
+          Accept: application/vnd.x.restic.rest.v2
         url_username: verify
         url_password: "{{ backup_server_verify_password }}"
         force_basic_auth: true
@@ -190,7 +190,7 @@
 
     - name: Backup server verify | Select one data file
       ansible.builtin.set_fact:
-        backup_server_data_file: "{{ (backup_server_data_before.content | from_json)[0] }}"
+        backup_server_data_file: "{{ (backup_server_data_before.content | from_json)[0].name }}"
 
     - name: Backup server verify | Try deleting the data file through the server
       ansible.builtin.uri:
@@ -215,7 +215,7 @@
       ansible.builtin.assert:
         that:
           - backup_server_delete.status == 403
-          - backup_server_data_file in (backup_server_data_after.content | from_json)
+          - backup_server_data_file in (backup_server_data_after.content | from_json | map(attribute='name') | list)
         fail_msg: The append-only protection failed; a repository data file could be deleted.
         quiet: true
 

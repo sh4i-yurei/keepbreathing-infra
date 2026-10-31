@@ -11,9 +11,12 @@ quadlet=/home/$user/.config/containers/systemd/backup-server.container
 restic_image=docker.io/restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
 fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 as_user() {
-  HOME="/home/$user" USER="$user" LOGNAME="$user" \
-    XDG_RUNTIME_DIR="/run/user/$uid" XDG_CONFIG_HOME="/home/$user/.config" \
-    runuser -u "$user" -- "$@"
+  (
+    cd "$work"
+    HOME="/home/$user" USER="$user" LOGNAME="$user" \
+      XDG_RUNTIME_DIR="/run/user/$uid" XDG_CONFIG_HOME="/home/$user/.config" \
+      runuser -u "$user" -- "$@"
+  )
 }
 cleanup() {
   if [[ -n $uid ]]; then

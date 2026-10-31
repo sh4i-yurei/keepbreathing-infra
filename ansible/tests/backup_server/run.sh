@@ -48,6 +48,10 @@ play() {
   local name=$1 log=$work/$1.log
   if ! ansible-playbook -i localhost, "tests/backup_server/$name.yml" >"$log" 2>&1; then
     tail -35 "$log"
+    if [[ -n $uid ]]; then
+      as_user systemctl --user status backup-server.service --no-pager | tail -22 || true
+      as_user journalctl --user -u backup-server.service -n 30 --no-pager || true
+    fi
     fail "$name play must pass"
   fi
 }

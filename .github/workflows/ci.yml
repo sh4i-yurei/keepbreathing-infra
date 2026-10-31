@@ -11,6 +11,16 @@ permissions:
   contents: read
 
 jobs:
+  backup-server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils
+      - run: sudo bash tests/backup_server/run.sh
+
   hub-backup-disk:
     runs-on: ubuntu-latest
     defaults:

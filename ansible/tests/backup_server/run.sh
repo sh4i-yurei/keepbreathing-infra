@@ -33,7 +33,7 @@ uid=$(id -u "$user")
 # The GitHub runner sets XDG_CONFIG_HOME for its own account. A user manager
 # inherits that at startup, before systemctl set-environment can affect it.
 install -d -m 0755 "/etc/systemd/system/user@$uid.service.d"
-printf '[Service]\nEnvironment=XDG_CONFIG_HOME=/home/%s/.config\n' "$user" \
+printf '[Service]\nEnvironment=XDG_CONFIG_HOME=/home/%s/.config\nEnvironment=XDG_RUNTIME_DIR=/run/user/%s\n' "$user" "$uid" \
   >"/etc/systemd/system/user@$uid.service.d/quadlet-test.conf"
 systemctl daemon-reload
 loginctl enable-linger "$user"
@@ -56,7 +56,12 @@ Restart=no
 EOF
 chown "$user:$user" "/home/$user/.config/containers/systemd/backup-server.container"
 as_user systemctl --user daemon-reload
-as_user systemctl --user cat backup-server.service >/dev/null || fail 'Quadlet generator must expose backup-server.service'
+if ! as_user systemctl --user cat backup-server.service >/dev/null; then
+  as_user systemctl --user show-environment | grep -E '^(XDG_CONFIG_HOME|XDG_RUNTIME_DIR)=' || true
+  ls -d "/run/user/$uid/systemd/generator"* 2>&1 || true
+  journalctl -u "user@$uid.service" --no-pager | grep -Ei 'quadlet|generator|error' | tail -15 || true
+  fail 'Quadlet generator must expose backup-server.service'
+fi
 as_user systemctl --user start backup-server.service
 as_user systemctl --user is-active --quiet backup-server.service || fail 'service must first start with the tmpfs mounted'
 as_user systemctl --user stop backup-server.service

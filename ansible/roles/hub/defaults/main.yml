@@ -3,7 +3,7 @@
 hub_backup_mount_point: /srv/backup
 
 # The tailnet's MagicDNS domain. A Tailscale Service named x is reached at x.<this domain>.
-hub_tailnet_domain: tail4cf2f3.ts.net
+hub_tailnet_domain: "{{ tailnet_domain }}"
 
 # ntfy's image, pinned to the digest of the v2.29.0 tag (Notification service decisions #11
 # and #15). The digest fixes the exact image; hub_ntfy_version is changed with it.

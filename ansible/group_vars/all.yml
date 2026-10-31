@@ -10,3 +10,6 @@ ansible_become_password: "{{ lookup('vault_secret', 'keepbreath0 sudo (' ~ inven
 access_admin_password_hash: "{{ lookup('vault_secret', 'keepbreath0 sudo (' ~ inventory_hostname ~ ')', field='hash') }}"
 
 image_build: false
+
+# The MagicDNS domain shared by the hub's existing Services and new Service roles.
+tailnet_domain: tail4cf2f3.ts.net

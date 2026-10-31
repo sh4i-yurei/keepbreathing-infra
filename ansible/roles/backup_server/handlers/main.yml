@@ -1,0 +1,19 @@
+---
+- name: Reload backup server user manager
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: user
+  become: true
+  become_user: "{{ backup_server_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ backup_server_account.uid }}"
+
+- name: Restart backup server
+  ansible.builtin.systemd_service:
+    name: backup-server.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ backup_server_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ backup_server_account.uid }}"

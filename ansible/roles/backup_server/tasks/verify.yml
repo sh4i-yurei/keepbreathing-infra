@@ -1,2 +1,253 @@
 ---
-[]
+- name: Backup server verify | Run only on a real play
+  when: not ansible_check_mode
+  block:
+    - name: Backup server verify | Read the account UID
+      ansible.builtin.command:
+        argv:
+          - id
+          - -u
+          - "{{ backup_server_user }}"
+      register: backup_server_verify_uid
+      changed_when: false
+
+    - name: Backup server verify | Check whether the verify repository exists
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ backup_server_port }}/verify/config"
+        method: GET
+        url_username: verify
+        url_password: "{{ backup_server_verify_password }}"
+        force_basic_auth: true
+        use_netrc: false
+        status_code: [200, 404]
+      register: backup_server_repository_config
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Initialize the verify repository once
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --env
+          - RESTIC_REPOSITORY
+          - --env
+          - RESTIC_REST_USERNAME
+          - --env
+          - RESTIC_REST_PASSWORD
+          - --env
+          - RESTIC_PASSWORD
+          - "{{ backup_server_restic_image }}"
+          - init
+      become: true
+      become_user: "{{ backup_server_user }}"
+      environment: &restic_environment
+        XDG_RUNTIME_DIR: "/run/user/{{ backup_server_verify_uid.stdout }}"
+        RESTIC_REPOSITORY: "rest:http://127.0.0.1:{{ backup_server_port }}/verify/"
+        RESTIC_REST_USERNAME: verify
+        RESTIC_REST_PASSWORD: "{{ backup_server_verify_password }}"
+        RESTIC_PASSWORD: "{{ backup_server_verify_restic_password }}"
+      when: backup_server_repository_config.status == 404
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Back up the fixed verification file
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --env
+          - RESTIC_REPOSITORY
+          - --env
+          - RESTIC_REST_USERNAME
+          - --env
+          - RESTIC_REST_PASSWORD
+          - --env
+          - RESTIC_PASSWORD
+          - --volume
+          - "/home/{{ backup_server_user }}/.config/backup-server/verify.txt:/verify.txt:ro,Z"
+          - "{{ backup_server_restic_image }}"
+          - backup
+          - --json
+          - /verify.txt
+      become: true
+      become_user: "{{ backup_server_user }}"
+      environment: *restic_environment
+      register: backup_server_new_backup
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Read the new snapshot ID
+      ansible.builtin.set_fact:
+        backup_server_new_snapshot_id: "{{ (backup_server_new_backup.stdout_lines[-1] | from_json).snapshot_id }}"
+
+    - name: Backup server verify | List snapshots after the backup
+      ansible.builtin.command: &snapshots_command
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --env
+          - RESTIC_REPOSITORY
+          - --env
+          - RESTIC_REST_USERNAME
+          - --env
+          - RESTIC_REST_PASSWORD
+          - --env
+          - RESTIC_PASSWORD
+          - "{{ backup_server_restic_image }}"
+          - snapshots
+          - --json
+      become: true
+      become_user: "{{ backup_server_user }}"
+      environment: *restic_environment
+      register: backup_server_snapshots_after_backup
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Require the new snapshot to be listed
+      ansible.builtin.assert:
+        that:
+          - backup_server_new_snapshot_id in (backup_server_snapshots_after_backup.stdout | from_json | map(attribute='id') | list)
+        fail_msg: The verification backup did not produce a listed snapshot.
+        quiet: true
+
+    - name: Backup server verify | Try forgetting the new snapshot
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --env
+          - RESTIC_REPOSITORY
+          - --env
+          - RESTIC_REST_USERNAME
+          - --env
+          - RESTIC_REST_PASSWORD
+          - --env
+          - RESTIC_PASSWORD
+          - "{{ backup_server_restic_image }}"
+          - forget
+          - "{{ backup_server_new_snapshot_id }}"
+      become: true
+      become_user: "{{ backup_server_user }}"
+      environment: *restic_environment
+      register: backup_server_forget
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Backup server verify | List snapshots after the forget attempt
+      ansible.builtin.command: *snapshots_command
+      become: true
+      become_user: "{{ backup_server_user }}"
+      environment: *restic_environment
+      register: backup_server_snapshots_after_forget
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Require append-only to refuse forget
+      ansible.builtin.assert:
+        that:
+          - backup_server_forget.rc != 0
+          - backup_server_new_snapshot_id in (backup_server_snapshots_after_forget.stdout | from_json | map(attribute='id') | list)
+        fail_msg: The append-only protection failed; restic forget removed a snapshot.
+        quiet: true
+
+    - name: Backup server verify | List repository data files
+      ansible.builtin.uri: &data_list_request
+        url: "http://127.0.0.1:{{ backup_server_port }}/verify/data/"
+        method: GET
+        headers:
+          Accept: application/vnd.x.restic.rest.v1
+        url_username: verify
+        url_password: "{{ backup_server_verify_password }}"
+        force_basic_auth: true
+        use_netrc: false
+        return_content: true
+        status_code: [200]
+      register: backup_server_data_before
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Require a data file for the deletion check
+      ansible.builtin.assert:
+        that: backup_server_data_before.content | from_json | length > 0
+        fail_msg: The verification backup has no data file to test append-only deletion.
+        quiet: true
+
+    - name: Backup server verify | Select one data file
+      ansible.builtin.set_fact:
+        backup_server_data_file: "{{ (backup_server_data_before.content | from_json)[0] }}"
+
+    - name: Backup server verify | Try deleting the data file through the server
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ backup_server_port }}/verify/data/{{ backup_server_data_file }}"
+        method: DELETE
+        url_username: verify
+        url_password: "{{ backup_server_verify_password }}"
+        force_basic_auth: true
+        use_netrc: false
+        status_code: [200, 403, 404]
+      register: backup_server_delete
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | List data files after the delete attempt
+      ansible.builtin.uri: *data_list_request
+      register: backup_server_data_after
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Require append-only to preserve data
+      ansible.builtin.assert:
+        that:
+          - backup_server_delete.status == 403
+          - backup_server_data_file in (backup_server_data_after.content | from_json)
+        fail_msg: The append-only protection failed; a repository data file could be deleted.
+        quiet: true
+
+    - name: Backup server verify | Request the verify repository without a login
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ backup_server_port }}/verify/config"
+        method: GET
+        use_netrc: false
+        status_code: [200, 401, 403]
+      register: backup_server_anonymous
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Require a login
+      ansible.builtin.assert:
+        that: backup_server_anonymous.status == 401
+        fail_msg: The login check failed; an unauthenticated request reached the repository.
+        quiet: true
+
+    - name: Backup server verify | Request another login's repository
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ backup_server_port }}/someone-else/config"
+        method: GET
+        url_username: verify
+        url_password: "{{ backup_server_verify_password }}"
+        force_basic_auth: true
+        use_netrc: false
+        status_code: [200, 403, 404]
+      register: backup_server_other_repository
+      changed_when: false
+      no_log: true
+
+    - name: Backup server verify | Require private repositories
+      ansible.builtin.assert:
+        that: backup_server_other_repository.status == 403
+        fail_msg: The private repositories protection failed; the verify login reached another path.
+        quiet: true

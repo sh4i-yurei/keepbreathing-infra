@@ -1,2 +1,19 @@
 ---
-[]
+- name: Tailscale service | Read the serve state for {{ tailscale_service_name }}
+  ansible.builtin.command: tailscale serve status --json
+  register: tailscale_service_status
+  changed_when: false
+  check_mode: false
+
+# Clear only this Service before replacing its HTTPS to loopback mapping.
+- name: Tailscale service | Serve when its mapping differs for {{ tailscale_service_name }}
+  ansible.builtin.shell: >-
+    tailscale serve clear svc:{{ tailscale_service_name }} &&
+    tailscale serve --yes --service=svc:{{ tailscale_service_name }} --https=443 127.0.0.1:{{ tailscale_service_port }}
+  vars:
+    tailscale_service_current: "{{ (tailscale_service_status.stdout | from_json).Services['svc:' ~ tailscale_service_name] | default({}) }}"
+  when: >-
+    not (tailscale_service_current.TCP['443'].HTTPS | default(false))
+    or (tailscale_service_current.Web[tailscale_service_name ~ '.' ~ tailnet_domain ~ ':443'].Handlers['/'].Proxy | default(''))
+    != 'http://127.0.0.1:' ~ tailscale_service_port
+  changed_when: true

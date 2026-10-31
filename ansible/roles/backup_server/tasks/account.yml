@@ -1,2 +1,32 @@
 ---
-[]
+# The role owns its unprivileged account. uid is deliberately assigned by useradd.
+- name: Backup server | Create the account
+  ansible.builtin.user:
+    name: "{{ backup_server_user }}"
+  register: backup_server_account
+
+- name: Backup server | Read subordinate ID ranges
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -q
+      - "^{{ backup_server_user }}:"
+      - "{{ item }}"
+  loop:
+    - /etc/subuid
+    - /etc/subgid
+  register: backup_server_subids
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Backup server | Require subordinate UID and GID ranges
+  ansible.builtin.assert:
+    that: backup_server_subids.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: "{{ backup_server_user }} needs entries in /etc/subuid and /etc/subgid for rootless Podman."
+    quiet: true
+
+- name: Backup server | Enable lingering
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ backup_server_user | quote }}"
+    creates: "/var/lib/systemd/linger/{{ backup_server_user }}"

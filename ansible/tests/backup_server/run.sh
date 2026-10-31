@@ -33,7 +33,9 @@ export TEST_MOUNT="$point"
 export TEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_BCRYPT="$(htpasswd -nbB verify "$TEST_PASSWORD" | cut -d: -f2-)"
-export RESTIC_REPOSITORY="rest:http://verify:$TEST_PASSWORD@127.0.0.1:8082/verify/"
+export RESTIC_REPOSITORY="rest:http://127.0.0.1:8082/verify/"
+export RESTIC_REST_USERNAME=verify
+export RESTIC_REST_PASSWORD="$TEST_PASSWORD"
 export RESTIC_PASSWORD="$TEST_RESTIC_PASSWORD"
 
 mkdir -p "$point"
@@ -59,6 +61,7 @@ expect_verify_failure() {
 }
 snapshots() {
   as_user podman run --rm --network host --env RESTIC_REPOSITORY --env RESTIC_PASSWORD \
+    --env RESTIC_REST_USERNAME --env RESTIC_REST_PASSWORD \
     "$restic_image" snapshots --json
 }
 snapshot_count() { snapshots | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
@@ -100,7 +103,7 @@ sed -i 's/ --append-only//' "$quadlet"
 reload_service
 expect_verify_failure append-only append-only
 after=$(snapshot_count)
-(( after < before + 1 )) || fail 'forget must delete its new snapshot with append-only disabled'
+(( after == before )) || fail 'forget must delete its new snapshot with append-only disabled'
 cp "$work/original.container" "$quadlet"
 reload_service
 
@@ -110,13 +113,13 @@ expect_verify_failure private-repositories 'private repositories'
 cp "$work/original.container" "$quadlet"
 reload_service
 
-sed -i 's/ --htpasswd[^ ]* --private-repos//' "$quadlet"
+sed -i 's@ --htpasswd /etc/rclone/htpasswd --private-repos@@' "$quadlet"
 reload_service
 expect_verify_failure login 'login check'
 cp "$work/original.container" "$quadlet"
 reload_service
 
-before=$(snapshot_count)
+before_snapshots=$(snapshots)
 as_user systemctl --user stop backup-server.service
 umount "$point"
 install -d -o "$user" -g "$user" -m 0700 "$point/restic"
@@ -136,7 +139,14 @@ for ((second=0; second<15; second++)); do
 done
 [[ $active == true ]] || fail 'service must recover without a manual start after remount'
 play verify
-[[ $(snapshot_count) -gt "$before" ]] || fail 'remounted repository must retain earlier snapshots and add one'
+after_snapshots=$(snapshots)
+python3 - "$before_snapshots" "$after_snapshots" <<'PY' || fail 'remounted repository must retain every old snapshot and add one'
+import json
+import sys
+before = {item['id'] for item in json.loads(sys.argv[1])}
+after = {item['id'] for item in json.loads(sys.argv[2])}
+assert before < after
+PY
 printf 'PASS mount loss, retries, automatic recovery and preserved snapshots\n'
 
 mkdir -p "$work/bin"
@@ -144,12 +154,36 @@ cat >"$work/status.json" <<'JSON'
 {
   "Services": {
     "svc:grafana": {
-      "TCP": {"443": {"HTTPS": true}},
-      "Web": {"grafana.tail4cf2f3.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "grafana.tail4cf2f3.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://127.0.0.1:3000"
+            }
+          }
+        }
+      }
     },
     "svc:ntfy": {
-      "TCP": {"443": {"HTTPS": true}},
-      "Web": {"ntfy.tail4cf2f3.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8080"}}}}
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "ntfy.tail4cf2f3.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://127.0.0.1:8080"
+            }
+          }
+        }
+      }
     }
   }
 }

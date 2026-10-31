@@ -5,6 +5,7 @@
   gather_facts: false
   become: true
   vars:
+    backup_server_port: 8082
     backup_server_mount_point: "{{ lookup('ansible.builtin.env', 'TEST_MOUNT') }}"
     backup_server_logins:
       - name: verify

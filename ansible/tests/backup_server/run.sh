@@ -67,7 +67,7 @@ expect_verify_failure() {
   if ansible-playbook -i localhost, tests/backup_server/verify.yml >"$log" 2>&1; then
     fail "$label: verify unexpectedly passed"
   fi
-  grep -q "$phrase" "$log" || { tail -25 "$log"; fail "$label: expected $phrase failure"; }
+  grep -Fq '"msg": "The '"$phrase" "$log" || { tail -25 "$log"; fail "$label: expected $phrase failure message"; }
   printf 'PASS %s refusal detected\n' "$label"
 }
 snapshots() {
@@ -84,23 +84,40 @@ reload_service() {
 if ansible-playbook -i localhost, tests/backup_server/missing-user.yml >"$work/missing.log" 2>&1; then
   fail 'missing backup_server_user must fail argument validation'
 fi
-grep -q 'backup_server_user' "$work/missing.log" || fail 'missing user error must name backup_server_user'
-[[ ! -e /home/bstestmissing && ! -e "$point/restic" ]] || fail 'missing user must create no account or data folder'
+grep -Fq 'missing required arguments: backup_server_user' "$work/missing.log" || fail 'missing user must fail at argument validation'
+[[ ! -e /home/bstest && ! -e "$point/restic" ]] || fail 'missing user must create no account or data folder'
+[[ -z $(find /home -path '*/.config/containers/systemd/backup-server.container' -print -quit) ]] || fail 'missing user must create no Quadlet file'
 printf 'PASS required account rejected before changes\n'
 
-play account
-uid=$(id -u "$user") || fail 'backup_server must create its account'
-install -d -m 0755 "/etc/systemd/system/user@$uid.service.d"
-printf '[Service]\nEnvironment=QUADLET_UNIT_DIRS=/home/%s/.config/containers/systemd\n' "$user" \
-  >"/etc/systemd/system/user@$uid.service.d/quadlet-test.conf"
-systemctl daemon-reload
-loginctl enable-linger "$user"
-systemctl restart "user@$uid.service"
-# The runner's inherited XDG paths belong to runner, not bstest. The user
-# manager must use bstest's paths before its Quadlet launches Podman.
-as_user systemctl --user set-environment "XDG_RUNTIME_DIR=/run/user/$uid" \
-  "XDG_CONFIG_HOME=/home/$user/.config" "HOME=/home/$user"
+if ! ansible-playbook -i localhost, tests/backup_server/server.yml --check --diff >"$work/server-check.log" 2>&1; then
+  tail -25 "$work/server-check.log"
+  fail 'fresh-account backup_server check mode must pass'
+fi
+grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/server-check.log" || fail 'backup_server check mode must report failed=0'
+[[ ! -e /home/bstest && ! -e "$point/restic" ]] || fail 'backup_server check mode must create no account or data folder'
+[[ -z $(find /home -path '*/.config/containers/systemd/backup-server.container' -print -quit) ]] || fail 'backup_server check mode must create no Quadlet file'
+printf 'PASS fresh-account backup_server check mode\n'
+
+export TEST_SERVICE_NAME=backup TEST_SERVICE_PORT=8082 TEST_STUB_DIR="$work/bin" TEST_STATUS="$work/status.json" TEST_CALLS="$work/calls"
+mkdir -p "$work/bin"
+cat >"$work/bin/tailscale" <<'SH'
+#!/usr/bin/env bash
+if [[ $* == 'serve status --json' ]]; then cat "$TEST_STATUS"; exit; fi
+printf '%s\n' "$*" >>"$TEST_CALLS"
+SH
+chmod +x "$work/bin/tailscale"
+printf '{"Services":{}}\n' >"$work/status.json"
+: >"$TEST_CALLS"
+if ! ansible-playbook -i localhost, tests/backup_server/tailscale.yml --check >"$work/tailscale-check.log" 2>&1; then
+  tail -25 "$work/tailscale-check.log"
+  fail 'tailscale_service check mode must pass'
+fi
+grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/tailscale-check.log" || fail 'tailscale_service check mode must report failed=0'
+[[ ! -s $TEST_CALLS ]] || fail 'tailscale_service check mode must not serve or clear'
+printf 'PASS tailscale_service check mode\n'
+
 play server
+uid=$(id -u "$user") || fail 'backup_server must create its account'
 as_user systemctl --user is-active --quiet backup-server.service || fail 'backup-server.service must be active'
 code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:8082/")
 [[ $code == 401 || $code == 403 ]] || fail 'loopback HTTP must answer with authentication required'
@@ -116,7 +133,7 @@ cp "$quadlet" "$work/original.container"
 before=$(snapshot_count)
 sed -i 's/ --append-only//' "$quadlet"
 reload_service
-expect_verify_failure append-only append-only
+expect_verify_failure append-only 'append-only protection failed'
 after=$(snapshot_count)
 (( after == before )) || fail 'forget must delete its new snapshot with append-only disabled'
 cp "$work/original.container" "$quadlet"
@@ -124,13 +141,13 @@ reload_service
 
 sed -i 's/ --private-repos//' "$quadlet"
 reload_service
-expect_verify_failure private-repositories 'private repositories'
+expect_verify_failure private-repositories 'private repositories protection failed'
 cp "$work/original.container" "$quadlet"
 reload_service
 
 sed -i 's@ --htpasswd /etc/rclone/htpasswd --private-repos@@' "$quadlet"
 reload_service
-expect_verify_failure login 'login check'
+expect_verify_failure login 'login check failed'
 cp "$work/original.container" "$quadlet"
 reload_service
 
@@ -164,7 +181,6 @@ assert before < after
 PY
 printf 'PASS mount loss, retries, automatic recovery and preserved snapshots\n'
 
-mkdir -p "$work/bin"
 cat >"$work/status.json" <<'JSON'
 {
   "Services": {
@@ -203,12 +219,6 @@ cat >"$work/status.json" <<'JSON'
   }
 }
 JSON
-cat >"$work/bin/tailscale" <<'SH'
-#!/usr/bin/env bash
-if [[ $* == 'serve status --json' ]]; then cat "$TEST_STATUS"; exit; fi
-printf '%s\n' "$*" >>"$TEST_CALLS"
-SH
-chmod +x "$work/bin/tailscale"
 export TEST_STUB_DIR="$work/bin" TEST_STATUS="$work/status.json" TEST_CALLS="$work/calls"
 for pair in grafana:3000 backup:8082 ntfy:8090; do
   export TEST_SERVICE_NAME=${pair%%:*} TEST_SERVICE_PORT=${pair##*:}

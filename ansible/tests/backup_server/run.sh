@@ -39,24 +39,10 @@ Volume=$point/restic:/data
 Restart=no
 EOF
 chown "$user:$user" "/home/$user/.config/containers/systemd/backup-server.container"
+runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user \
+  set-environment "XDG_CONFIG_HOME=/home/$user/.config"
 runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daemon-reload
-if ! runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user cat backup-server.service; then
-  printf 'HOME as bstest: '
-  runuser -u "$user" -- printenv HOME
-  printf 'User manager environment:\n'
-  runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user show-environment
-  printf 'Registered user generators:\n'
-  ls -la /usr/lib/systemd/user-generators/ || true
-  printf 'Generated user units:\n'
-  ls -la "/run/user/$uid/systemd/generator/" || true
-  printf 'Quadlet path ownership:\n'
-  namei -l "/home/$user/.config/containers/systemd/backup-server.container"
-  printf 'Quadlet generator output:\n'
-  runuser -u "$user" -- env "HOME=/home/$user" \
-    "QUADLET_UNIT_DIRS=/home/$user/.config/containers/systemd" \
-    /usr/lib/systemd/system-generators/podman-system-generator --user --dryrun || true
-  fail 'Quadlet generator must expose backup-server.service'
-fi
+runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user cat backup-server.service >/dev/null || fail 'Quadlet generator must expose backup-server.service'
 runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user start backup-server.service
 runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user is-active --quiet backup-server.service || fail 'service must first start with the tmpfs mounted'
 runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user stop backup-server.service

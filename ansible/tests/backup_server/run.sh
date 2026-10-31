@@ -31,11 +31,10 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
-# GitHub's image puts the runner's config path in /etc/environment, and its
-# system manager exports the runner's runtime path. Clear both at their source
-# before bstest or its user manager exists.
-sed -i '/^XDG_CONFIG_HOME=/d' /etc/environment
-unset XDG_CONFIG_HOME
+# GitHub's image puts the runner's XDG paths in /etc/environment. PAM reads
+# them when the new user manager starts. Clear both before bstest exists.
+sed -i '/^XDG_CONFIG_HOME=/d; /^XDG_RUNTIME_DIR=/d' /etc/environment
+unset XDG_CONFIG_HOME XDG_RUNTIME_DIR
 systemctl unset-environment XDG_RUNTIME_DIR
 export TEST_MOUNT="$point"
 export TEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"

@@ -31,13 +31,12 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
-# GitHub's image sets XDG_CONFIG_HOME for the runner in /etc/environment.
-# Remove that runner-wide setting before creating bstest or its user manager.
+# GitHub's image puts the runner's config path in /etc/environment, and its
+# system manager exports the runner's runtime path. Clear both at their source
+# before bstest or its user manager exists.
 sed -i '/^XDG_CONFIG_HOME=/d' /etc/environment
-printf 'runner XDG environment sources:\n'
-env | grep -E '^XDG_(RUNTIME_DIR|CONFIG_HOME)=' || true
-systemctl show-environment | grep -E '^XDG_(RUNTIME_DIR|CONFIG_HOME)=' || true
-grep -RslE '^XDG_(RUNTIME_DIR|CONFIG_HOME)=' /etc/environment /etc/profile /etc/profile.d /etc/systemd/system.conf.d /etc/systemd/user.conf.d /etc/pam.d 2>/dev/null || true
+unset XDG_CONFIG_HOME
+systemctl unset-environment XDG_RUNTIME_DIR
 export TEST_MOUNT="$point"
 export TEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"

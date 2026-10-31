@@ -93,6 +93,10 @@ printf '[Service]\nEnvironment=QUADLET_UNIT_DIRS=/home/%s/.config/containers/sys
 systemctl daemon-reload
 loginctl enable-linger "$user"
 systemctl restart "user@$uid.service"
+# The runner's inherited XDG paths belong to runner, not bstest. The user
+# manager must use bstest's paths before its Quadlet launches Podman.
+as_user systemctl --user set-environment "XDG_RUNTIME_DIR=/run/user/$uid" \
+  "XDG_CONFIG_HOME=/home/$user/.config" "HOME=/home/$user"
 play server
 as_user systemctl --user is-active --quiet backup-server.service || fail 'backup-server.service must be active'
 code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:8082/")

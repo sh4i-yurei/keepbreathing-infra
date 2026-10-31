@@ -4,6 +4,7 @@ set -euo pipefail
 # Prove the mount dependency required by Backups decision 27 on the CI runner.
 # The full role tests will use this same account and mount after this check.
 work=$(mktemp -d)
+chmod 0755 "$work"
 point=$work/backup
 user=bstest
 uid=
@@ -64,7 +65,11 @@ if ! as_user systemctl --user cat backup-server.service >/dev/null; then
 fi
 as_user systemctl --user set-environment "XDG_RUNTIME_DIR=/run/user/$uid" \
   "XDG_CONFIG_HOME=/home/$user/.config"
-as_user systemctl --user start backup-server.service
+if ! as_user systemctl --user start backup-server.service; then
+  as_user systemctl --user status backup-server.service --no-pager | tail -20 || true
+  as_user journalctl --user -u backup-server.service -n 20 --no-pager || true
+  fail 'service must first start with the tmpfs mounted'
+fi
 as_user systemctl --user is-active --quiet backup-server.service || fail 'service must first start with the tmpfs mounted'
 as_user systemctl --user stop backup-server.service
 umount "$point"

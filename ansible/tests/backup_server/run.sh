@@ -12,6 +12,10 @@ cleanup() {
     runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user stop backup-server.service >/dev/null 2>&1 || true
   fi
   mountpoint -q "$point" && umount "$point"
+  if [[ -n $uid ]]; then
+    rm -rf "/etc/systemd/system/user@$uid.service.d"
+    systemctl daemon-reload
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -21,9 +25,16 @@ mkdir -p "$point"
 mount -t tmpfs -o size=64m tmpfs "$point"
 useradd -m "$user"
 uid=$(id -u "$user")
+# The GitHub runner sets XDG_CONFIG_HOME for its own account. A user manager
+# inherits that at startup, before systemctl set-environment can affect it.
+install -d -m 0755 "/etc/systemd/system/user@$uid.service.d"
+printf '[Service]\nEnvironment=XDG_CONFIG_HOME=/home/%s/.config\n' "$user" \
+  >"/etc/systemd/system/user@$uid.service.d/quadlet-test.conf"
+systemctl daemon-reload
 loginctl enable-linger "$user"
 systemctl start "user@$uid.service"
 install -d -o "$user" -g "$user" -m 0700 "$point/restic" \
+  "/home/$user/.config" "/home/$user/.config/containers" \
   "/home/$user/.config/containers/systemd"
 cat >"/home/$user/.config/containers/systemd/backup-server.container" <<EOF
 [Unit]
@@ -39,8 +50,6 @@ Volume=$point/restic:/data
 Restart=no
 EOF
 chown "$user:$user" "/home/$user/.config/containers/systemd/backup-server.container"
-runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user \
-  set-environment "XDG_CONFIG_HOME=/home/$user/.config"
 runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user daemon-reload
 runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user cat backup-server.service >/dev/null || fail 'Quadlet generator must expose backup-server.service'
 runuser -u "$user" -- env "XDG_RUNTIME_DIR=/run/user/$uid" systemctl --user start backup-server.service

@@ -162,7 +162,7 @@ PY
 printf 'PASS first snapshot contents and database copy cleanup\n'
 
 install -d -o vwtest -g vwtest "$work/old"
-restic restore latest --target "$work/old" >/dev/null
+restic restore latest --exclude-xattr '*' --target "$work/old" >/dev/null
 old_copy=$(find "$work/old/backup/data" -maxdepth 1 -name 'db_*.sqlite3' -print -quit)
 [[ -n $old_copy ]] || fail 'first snapshot must restore a database copy'
 play "$work/second.log"
@@ -174,7 +174,7 @@ python3 tests/vaultwarden_backup/api.py third || fail 'API must create third ite
 systemctl start vaultwarden-backup.service || fail 'system service must succeed after third item'
 [[ $(systemctl show vaultwarden-backup.service -p Result --value) == success ]] || fail 'system service must end with Result=success'
 install -d -o vwtest -g vwtest "$work/third"
-restic restore latest --target "$work/third" >/dev/null
+restic restore latest --exclude-xattr '*' --target "$work/third" >/dev/null
 new_copy=$(find "$work/third/backup/data" -maxdepth 1 -name 'db_*.sqlite3' -print -quit)
 python3 - "$new_copy" <<'PY' || fail 'newest restored copy must contain three ciphers'
 import sqlite3, sys

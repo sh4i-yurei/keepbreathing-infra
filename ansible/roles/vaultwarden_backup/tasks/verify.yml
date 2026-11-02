@@ -109,6 +109,8 @@
               - latest
               - --retry-lock
               - "{{ vaultwarden_backup_lock_wait }}"
+              - --exclude-xattr
+              - "*"
               - --target
               - /restore
           become: true

@@ -1,0 +1,9 @@
+---
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+- name: Back up Vaultwarden
+  hosts: vaultserv
+  force_handlers: true
+  roles:
+    - vaultwarden_backup

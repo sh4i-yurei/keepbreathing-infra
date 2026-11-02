@@ -1,0 +1,20 @@
+# Managed by Ansible (roles/vaultwarden_backup). Edits here are overwritten.
+[Unit]
+Description=Back up the local Vaultwarden data and Quadlet
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/find {{ vaultwarden_backup_data_dir }} -maxdepth 1 -type f -name db_*.sqlite3 -delete
+ExecStartPre=/usr/bin/podman exec {{ vaultwarden_backup_container }} /vaultwarden backup
+ExecStart=/usr/bin/podman run --rm --network host --security-opt label=disable \
+  --env-file /home/{{ vaultwarden_backup_user }}/.config/vaultwarden-backup/restic.env \
+  --volume {{ vaultwarden_backup_data_dir }}:/backup/data:ro \
+  --volume {{ vaultwarden_backup_quadlet }}:/backup/vaultwarden.container:ro \
+  {{ vaultwarden_backup_restic_image }} backup --retry-lock {{ vaultwarden_backup_lock_wait }} \
+  --exclude=/backup/data/db.sqlite3 \
+  --exclude=/backup/data/db.sqlite3-wal \
+  --exclude=/backup/data/db.sqlite3-shm \
+  --exclude=/backup/data/icon_cache \
+  --exclude=/backup/data/tmp \
+  /backup/data /backup/vaultwarden.container
+ExecStopPost=/usr/bin/find {{ vaultwarden_backup_data_dir }} -maxdepth 1 -type f -name db_*.sqlite3 -delete

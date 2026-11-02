@@ -2,6 +2,15 @@
 # Runs Vaultwarden as a rootless container.
 baseline_container_user: keepbreath4
 
+vaultwarden_backup_user: "{{ baseline_container_user }}"
+vaultwarden_backup_data_dir: /srv/vaultwarden/data
+vaultwarden_backup_quadlet: /home/keepbreath4/.config/containers/systemd/vaultwarden.container
+vaultwarden_backup_container: vaultwarden
+vaultwarden_backup_login: vaultserv
+vaultwarden_backup_repository: "rest:https://backup.{{ tailnet_domain }}/vaultserv/"
+vaultwarden_backup_password: "{{ lookup('vault_secret', 'rclone vaultserv (hub)') }}"
+vaultwarden_backup_restic_password: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='restic') }}"
+
 # node_exporter listens on the tailnet address, behind a password from this machine's own vault item,
 # and only the hub's tailnet address may reach it. The tailnet encrypts the traffic, so it serves
 # plain HTTP (Monitoring and alerting decision #30).

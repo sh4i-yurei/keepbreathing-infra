@@ -436,6 +436,8 @@ VAULT_VALUES = {
         "node_exporter_basic_auth_hash",
         "podman_exporter_basic_auth_password",
         "podman_exporter_basic_auth_hash",
+        "vaultwarden_backup_password",
+        "vaultwarden_backup_restic_password",
     ],
     "host_vars/hub.yml": [
         "backup_server_logins",
@@ -478,6 +480,7 @@ def fixture_items():
         "ntfy laptop (hub)",
         "ntfy alpha (hub)",
         "rclone verify (hub)",
+        "rclone vaultserv (hub)",
     ]
     return {
         name: {

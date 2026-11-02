@@ -1,2 +1,95 @@
 ---
-[]
+- name: Vaultwarden backup | Read the account UID
+  ansible.builtin.command:
+    argv:
+      - id
+      - -u
+      - "{{ vaultwarden_backup_user }}"
+  register: vaultwarden_backup_uid
+  changed_when: false
+  check_mode: false
+
+- name: Vaultwarden backup | Enable lingering for the account
+  ansible.builtin.command:
+    argv:
+      - loginctl
+      - enable-linger
+      - "{{ vaultwarden_backup_user }}"
+    creates: "/var/lib/systemd/linger/{{ vaultwarden_backup_user }}"
+  when: not ansible_check_mode
+
+- name: Vaultwarden backup | Create account folders
+  ansible.builtin.file:
+    path: "/home/{{ vaultwarden_backup_user }}/{{ item }}"
+    state: directory
+    owner: "{{ vaultwarden_backup_user }}"
+    group: "{{ vaultwarden_backup_user }}"
+    mode: "0700"
+  loop:
+    - .config
+    - .config/systemd
+    - .config/systemd/user
+    - .config/vaultwarden-backup
+    - .local
+    - .local/libexec
+
+- name: Vaultwarden backup | Write the private restic environment
+  ansible.builtin.template:
+    src: restic.env.j2
+    dest: "/home/{{ vaultwarden_backup_user }}/.config/vaultwarden-backup/restic.env"
+    owner: "{{ vaultwarden_backup_user }}"
+    group: "{{ vaultwarden_backup_user }}"
+    mode: "0600"
+  no_log: true
+  diff: false
+
+- name: Vaultwarden backup | Install the restore verifier
+  ansible.builtin.copy:
+    src: verify-restore.py
+    dest: "/home/{{ vaultwarden_backup_user }}/.local/libexec/vaultwarden-backup-verify"
+    owner: "{{ vaultwarden_backup_user }}"
+    group: "{{ vaultwarden_backup_user }}"
+    mode: "0755"
+
+- name: Vaultwarden backup | Write the account's run unit
+  ansible.builtin.template:
+    src: vaultwarden-backup-run.service.j2
+    dest: "/home/{{ vaultwarden_backup_user }}/.config/systemd/user/vaultwarden-backup-run.service"
+    owner: "{{ vaultwarden_backup_user }}"
+    group: "{{ vaultwarden_backup_user }}"
+    mode: "0644"
+  notify: Reload Vaultwarden backup user manager
+
+- name: Vaultwarden backup | Write system units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - vaultwarden-backup.service
+    - vaultwarden-backup.timer
+  notify: Reload Vaultwarden backup system manager
+
+- name: Vaultwarden backup | Pull the pinned restic image
+  containers.podman.podman_image:
+    name: "{{ vaultwarden_backup_restic_image }}"
+  become: true
+  become_user: "{{ vaultwarden_backup_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ vaultwarden_backup_uid.stdout }}"
+  when: not ansible_check_mode
+
+- name: Vaultwarden backup | Apply manager reloads before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Vaultwarden backup | Enable and start the system timer
+  ansible.builtin.systemd_service:
+    name: vaultwarden-backup.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Verify the Vaultwarden backup
+  ansible.builtin.import_tasks: verify.yml

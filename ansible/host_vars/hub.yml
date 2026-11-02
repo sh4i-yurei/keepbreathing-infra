@@ -8,6 +8,8 @@ backup_server_port: 8082
 backup_server_logins:
   - name: verify
     bcrypt: "{{ lookup('vault_secret', 'rclone verify (hub)', field='bcrypt') }}"
+  - name: vaultserv
+    bcrypt: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='bcrypt') }}"
 backup_server_verify_password: "{{ lookup('vault_secret', 'rclone verify (hub)') }}"
 backup_server_verify_restic_password: "{{ lookup('vault_secret', 'rclone verify (hub)', field='restic') }}"
 

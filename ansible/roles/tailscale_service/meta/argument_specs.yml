@@ -1,0 +1,11 @@
+---
+argument_specs:
+  main:
+    short_description: Serve one named Tailscale Service through HTTPS to a loopback HTTP port
+    options:
+      tailscale_service_name:
+        type: str
+        required: true
+      tailscale_service_port:
+        type: int
+        required: true

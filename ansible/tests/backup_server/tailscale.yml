@@ -1,0 +1,15 @@
+---
+- name: Exercise one Tailscale Service with a local stub
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    tailnet_domain: tail4cf2f3.ts.net
+    tailscale_service_name: "{{ lookup('ansible.builtin.env', 'TEST_SERVICE_NAME') }}"
+    tailscale_service_port: "{{ lookup('ansible.builtin.env', 'TEST_SERVICE_PORT') }}"
+  environment:
+    PATH: "{{ lookup('ansible.builtin.env', 'TEST_STUB_DIR') }}:{{ lookup('ansible.builtin.env', 'PATH') }}"
+    TEST_STATUS: "{{ lookup('ansible.builtin.env', 'TEST_STATUS') }}"
+    TEST_CALLS: "{{ lookup('ansible.builtin.env', 'TEST_CALLS') }}"
+  roles:
+    - tailscale_service

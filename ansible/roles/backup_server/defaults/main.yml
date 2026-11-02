@@ -1,0 +1,5 @@
+---
+# rclone v1.75.2
+backup_server_image: docker.io/rclone/rclone@sha256:2687085f718d3c628f7fdfb77c52a1d344332aed543110bb88088f2c70d43eb5
+# restic v0.19.1
+backup_server_restic_image: docker.io/restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510

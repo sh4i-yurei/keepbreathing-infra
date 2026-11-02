@@ -45,6 +45,13 @@
 			"ip":  ["443"],
 		},
 
+		// Backup server: vaultserv only. Backups decisions #29 and #31.
+		{
+			"src": ["tag:vault"],
+			"dst": ["svc:backup"],
+			"ip":  ["443"],
+		},
+
 		// node_exporter: the hub scrapes port 9100 on every machine with host metrics.
 		// Monitoring and alerting decisions #26 and #30.
 		{
@@ -146,6 +153,7 @@
 		"services": {
 			"svc:grafana": ["tag:hub"],
 			"svc:ntfy":    ["tag:hub"],
+			"svc:backup":  ["tag:hub"],
 		},
 	},
 

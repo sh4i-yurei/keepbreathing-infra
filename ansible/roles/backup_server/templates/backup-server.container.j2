@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/backup_server). Edits here are overwritten.
+[Unit]
+Description=Append-only restic server on the backup disk
+
+[Container]
+ContainerName=backup-server
+Image={{ backup_server_image }}
+Exec=serve restic --addr :8080 --append-only --htpasswd /etc/rclone/htpasswd --private-repos /data
+PublishPort=127.0.0.1:{{ backup_server_port }}:8080
+Volume={{ backup_server_mount_point }}/restic:/data:Z
+Volume=/home/{{ backup_server_user }}/.config/backup-server/htpasswd:/etc/rclone/htpasswd:ro,Z
+
+[Service]
+ExecStartPre=/usr/bin/mountpoint -q {{ backup_server_mount_point }}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

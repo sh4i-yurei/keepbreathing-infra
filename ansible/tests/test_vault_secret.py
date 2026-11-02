@@ -437,6 +437,11 @@ VAULT_VALUES = {
         "podman_exporter_basic_auth_password",
         "podman_exporter_basic_auth_hash",
     ],
+    "host_vars/hub.yml": [
+        "backup_server_logins",
+        "backup_server_verify_password",
+        "backup_server_verify_restic_password",
+    ],
     "roles/hub/tasks/alertmanager-verify.yml": ["hub_alertmanager_login"],
     "roles/hub/tasks/grafana-verify.yml": [
         "hub_grafana_admin_password",
@@ -472,6 +477,7 @@ def fixture_items():
         "ntfy mark (hub)",
         "ntfy laptop (hub)",
         "ntfy alpha (hub)",
+        "rclone verify (hub)",
     ]
     return {
         name: {
@@ -490,6 +496,7 @@ def fixture_items():
                     "app_id",
                     "installation_id",
                     "private_key",
+                    "restic",
                 ]
             ],
         }
@@ -567,6 +574,8 @@ def render_vault_file(path, source, variables):
             return env.from_string(value).render(variables)
         if isinstance(value, dict):
             return {key: render_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [render_value(item) for item in value]
         return value
 
     def has_lookup(value):
@@ -574,6 +583,8 @@ def render_vault_file(path, source, variables):
             return "bw get" in value or "vault_secret" in value
         if isinstance(value, dict):
             return any(has_lookup(item) for item in value.values())
+        if isinstance(value, list):
+            return any(has_lookup(item) for item in value)
         return False
 
     if path == "roles/hub/tasks/ntfy-verify.yml":

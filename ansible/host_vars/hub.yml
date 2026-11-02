@@ -1,6 +1,15 @@
 ---
 # The backup disk's stable path, read on the hub on 2026-10-28 (Backups decision 27).
 hub_backup_disk_device: /dev/disk/by-id/ata-VBOX_HARDDISK_VBfb6f4c8a-8d73d857
+hub_backup_mount_point: /srv/backup
+backup_server_mount_point: "{{ hub_backup_mount_point }}"
+backup_server_user: keepbreath6
+backup_server_port: 8082
+backup_server_logins:
+  - name: verify
+    bcrypt: "{{ lookup('vault_secret', 'rclone verify (hub)', field='bcrypt') }}"
+backup_server_verify_password: "{{ lookup('vault_secret', 'rclone verify (hub)') }}"
+backup_server_verify_restic_password: "{{ lookup('vault_secret', 'rclone verify (hub)', field='restic') }}"
 
 # The account the hub's containers run under (Notification service decision #12). The hub
 # role creates it; baseline sets it up for rootless Podman.

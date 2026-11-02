@@ -108,3 +108,7 @@
   reason: "subprocess text=False returns bytes; json.loads accepts UTF-8 bytes and produces the same item and public error for this JSON CLI output."
 - mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_101
   reason: "Both None and an empty string are rejected by the following dictionary type check, producing the same public error."
+- mutant: ansible.roles.vaultwarden_backup.files.verify-restore.x_compare__mutmut_49
+  reason: "filecmp.cmp with shallow=None performs the same byte comparison as shallow=False; both are false values."
+- mutant: ansible.roles.vaultwarden_backup.files.verify-restore.x_compare__mutmut_58
+  reason: "filecmp.cmp with shallow=None performs the same byte comparison as shallow=False; both are false values."

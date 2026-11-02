@@ -22,6 +22,7 @@ as_user() {
 as_bs() { as_user bstest "$bs_uid" "$@"; }
 as_vw() { as_user vwtest "$vw_uid" "$@"; }
 cleanup() {
+  if [[ -n ${listener:-} ]]; then kill "$listener" >/dev/null 2>&1 || true; fi
   if [[ -n $vw_uid ]]; then
     as_vw systemctl --user stop vaultwarden.service >/dev/null 2>&1 || true
     loginctl disable-linger vwtest >/dev/null 2>&1 || true
@@ -108,6 +109,16 @@ done
 python3 tests/vaultwarden_backup/api.py seed || fail 'API must create one user, two items and one attachment'
 printf 'PASS Vaultwarden API seed\n'
 
+loginctl disable-linger vwtest
+if ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml >"$work/linger.log" 2>&1; then fail 'role must require baseline lingering'; fi
+grep -Fq 'lingering' "$work/linger.log" || fail 'lingering failure must name lingering'
+grep -Fq 'baseline' "$work/linger.log" || fail 'lingering failure must name baseline role'
+[[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'missing lingering must create no role files'
+[[ ! -e /var/lib/systemd/linger/vwtest ]] || fail 'role must not enable lingering'
+loginctl enable-linger vwtest
+as_vw systemctl --user start vaultwarden.service
+printf 'PASS role requires baseline lingering before changes\n'
+
 if ! ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml --check --diff >"$work/check.log" 2>&1; then
   tail -30 "$work/check.log"
   fail 'fresh Vaultwarden backup check mode must pass'
@@ -119,7 +130,8 @@ printf 'PASS fresh check mode leaves no state\n'
 
 play() {
   local log=$1
-  if ! ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml >"$log" 2>&1; then
+  shift
+  if ! ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml "$@" >"$log" 2>&1; then
     tail -35 "$log"
     fail 'Vaultwarden backup role play must pass'
   fi
@@ -129,6 +141,8 @@ restic() {
   as_vw podman run --rm --network host --security-opt label=disable \
     --env-file "$env_file" --volume "$work:$work:rw" "$restic_image" "$@"
 }
+install -d -o vwtest -g vwtest -m 0755 /home/vwtest/.local
+chmod 0755 /home/vwtest/.config
 snapshot_count() { restic snapshots --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
 assert_no_restore_state() {
   [[ $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/alive) == 000 ]] || fail 'restore port 8090 must be closed'
@@ -137,6 +151,8 @@ assert_no_restore_state() {
 }
 
 play "$work/first.log"
+[[ $(stat -c '%a:%U' /home/vwtest/.config) == 755:vwtest ]] || fail 'role must preserve .config mode and owner'
+[[ $(stat -c '%a:%U' /home/vwtest/.local) == 755:vwtest ]] || fail 'role must preserve .local mode and owner'
 [[ $(systemctl show vaultwarden-backup.timer -p UnitFileState --value) == enabled ]] || fail 'backup timer must be enabled'
 [[ $(systemctl show vaultwarden-backup.timer -p ActiveState --value) == active ]] || fail 'backup timer must be active'
 [[ $(systemctl show vaultwarden-backup.timer -p Persistent --value) == yes ]] || fail 'backup timer must be persistent'
@@ -152,12 +168,14 @@ printf 'PASS first role run, private credentials, timer and cleanup\n'
 restic ls latest --json >"$work/ls.json"
 python3 - "$work/ls.json" <<'PY' || fail 'first snapshot must hold exactly the consistent copy, key, attachment and Quadlet'
 import json, re, sys
-paths = [json.loads(line)['path'] for line in open(sys.argv[1]) if json.loads(line).get('type') == 'file']
-assert len([p for p in paths if re.search(r'/db_\d{8}_\d{6}\.sqlite3$', p)]) == 1, paths
-assert any(p.endswith('/rsa_key.pem') for p in paths), paths
-assert any('/attachments/' in p for p in paths), paths
-assert any(p.endswith('/vaultwarden.container') for p in paths), paths
-assert not any(p.endswith(('/db.sqlite3', '/db.sqlite3-wal', '/db.sqlite3-shm')) or '/icon_cache/' in p or '/tmp/' in p for p in paths), paths
+entries = [json.loads(line) for line in open(sys.argv[1])]
+paths = [entry['path'] for entry in entries]
+files = [entry['path'] for entry in entries if entry.get('type') == 'file']
+assert len([p for p in files if re.search(r'/db_\d{8}_\d{6}\.sqlite3$', p)]) == 1, files
+assert any(p.endswith('/rsa_key.pem') for p in files), files
+assert any('/attachments/' in p for p in files), files
+assert any(p.endswith('/vaultwarden.container') for p in files), files
+assert not any(p.endswith(('/db.sqlite3', '/db.sqlite3-wal', '/db.sqlite3-shm')) or any(p == f'/backup/data/{name}' or p.startswith(f'/backup/data/{name}/') for name in ('icon_cache', 'tmp')) for p in paths), paths
 PY
 [[ -z $(find "$TEST_DATA" -maxdepth 1 -name 'db_*.sqlite3' -print -quit) ]] || fail 'successful backup must delete the database copy'
 printf 'PASS first snapshot contents and database copy cleanup\n'
@@ -228,5 +246,44 @@ grep -Fq 'counts check failed' "$work/counts.log" || { tail -25 "$work/counts.lo
 cp "$work/original-run.service" "$run_unit"
 as_vw systemctl --user daemon-reload
 printf 'PASS verify detects stale database counts\n'
+
+before_wrong_password=$(snapshot_count)
+correct_restic_password=$TEST_RESTIC_PASSWORD
+export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+if ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml >"$work/wrong-password.log" 2>&1; then fail 'wrong restic password must fail the play'; fi
+grep -Fq 'wrong password' "$work/wrong-password.log" || { tail -25 "$work/wrong-password.log"; fail 'wrong password error must be shown'; }
+! grep -Fq 'repository master key and config already initialized' "$work/wrong-password.log" || fail 'wrong password must not attempt init'
+export TEST_RESTIC_PASSWORD=$correct_restic_password
+play "$work/right-password.log"
+[[ $(snapshot_count) == $((before_wrong_password + 1)) ]] || fail 'correct password must preserve existing snapshots'
+printf 'PASS wrong restic password reports probe error without init\n'
+
+play "$work/timeout-setup.log" -e vaultwarden_backup_timeout=60
+as_bs systemctl --user stop backup-server.service
+python3 - "$work/listener-ready" <<'PY' &
+import pathlib, socket, sys, time
+server = socket.socket()
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('127.0.0.1', 8082))
+server.listen()
+pathlib.Path(sys.argv[1]).touch()
+while True:
+    connection, _ = server.accept()
+    time.sleep(120)
+    connection.close()
+PY
+listener=$!
+for ((attempt=0; attempt<40; attempt++)); do [[ -e $work/listener-ready ]] && break; sleep 0.25; done
+[[ -e $work/listener-ready ]] || fail 'hanging listener must start'
+if systemctl start vaultwarden-backup.service; then fail 'hanging restic run must time out'; fi
+[[ $(as_vw systemctl --user show vaultwarden-backup-run.service -p Result --value) == timeout ]] || fail 'run unit must report timeout'
+[[ $(systemctl show vaultwarden-backup.service -p Result --value) == exit-code ]] || fail 'system service must report run unit failure'
+[[ $(systemctl is-failed vaultwarden-backup.service) == failed ]] || fail 'system service must be failed after timeout'
+[[ -z $(find "$TEST_DATA" -maxdepth 1 -name 'db_*.sqlite3' -print -quit) ]] || fail 'timeout must delete database copy'
+kill "$listener"
+wait "$listener" || true
+listener=
+as_bs systemctl --user start backup-server.service
+printf 'PASS hanging restic run times out in user unit and cleans copy\n'
 
 printf 'PASS all Vaultwarden backup role cases\n'

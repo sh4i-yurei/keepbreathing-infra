@@ -9,14 +9,33 @@
   changed_when: false
   check_mode: false
 
-- name: Vaultwarden backup | Enable lingering for the account
-  ansible.builtin.command:
-    argv:
-      - loginctl
-      - enable-linger
-      - "{{ vaultwarden_backup_user }}"
-    creates: "/var/lib/systemd/linger/{{ vaultwarden_backup_user }}"
-  when: not ansible_check_mode
+- name: Vaultwarden backup | Check baseline account lingering
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ vaultwarden_backup_user }}"
+  register: vaultwarden_backup_linger
+
+- name: Vaultwarden backup | Require baseline account lingering
+  ansible.builtin.assert:
+    that: vaultwarden_backup_linger.stat.exists
+    fail_msg: "Account lingering is required; run the baseline role first."
+    quiet: true
+
+- name: Vaultwarden backup | Read parent account folder modes
+  ansible.builtin.stat:
+    path: "/home/{{ vaultwarden_backup_user }}/{{ item }}"
+  loop:
+    - .config
+    - .local
+  register: vaultwarden_backup_parent_folders
+
+- name: Vaultwarden backup | Create parent account folders
+  ansible.builtin.file:
+    path: "/home/{{ vaultwarden_backup_user }}/{{ item.item }}"
+    state: directory
+    owner: "{{ vaultwarden_backup_user }}"
+    group: "{{ vaultwarden_backup_user }}"
+    mode: "{{ item.stat.mode | default('0700') }}"
+  loop: "{{ vaultwarden_backup_parent_folders.results }}"
 
 - name: Vaultwarden backup | Create account folders
   ansible.builtin.file:
@@ -26,11 +45,9 @@
     group: "{{ vaultwarden_backup_user }}"
     mode: "0700"
   loop:
-    - .config
     - .config/systemd
     - .config/systemd/user
     - .config/vaultwarden-backup
-    - .local
     - .local/libexec
 
 - name: Vaultwarden backup | Write the private restic environment

@@ -34,6 +34,12 @@
       changed_when: false
       failed_when: false
 
+    - name: Vaultwarden backup verify | Require available or absent repository
+      ansible.builtin.assert:
+        that: vaultwarden_backup_repository_probe.rc in [0, 10]
+        fail_msg: "{{ vaultwarden_backup_repository_probe.stderr }}"
+        quiet: true
+
     - name: Vaultwarden backup verify | Initialize the repository once
       ansible.builtin.command:
         argv:
@@ -51,7 +57,7 @@
       become: true
       become_user: "{{ vaultwarden_backup_user }}"
       environment: *vaultwarden_backup_user_environment
-      when: vaultwarden_backup_repository_probe.rc != 0
+      when: vaultwarden_backup_repository_probe.rc == 10
       changed_when: false
 
     - name: Vaultwarden backup verify | Read live database counts

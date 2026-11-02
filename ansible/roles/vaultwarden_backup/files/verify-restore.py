@@ -60,8 +60,8 @@ def compare(live_data, restored_data, live_quadlet, restored_quadlet, expected):
         raise ValueError(
             f"attachments and files check failed: missing {missing}, extra {extra}"
         )
-    for relative in live:
-        if not filecmp.cmp(live[relative], restored[relative], shallow=False):
+    for relative, live_path in live.items():
+        if not filecmp.cmp(live_path, restored[relative], shallow=False):
             raise ValueError(f"attachments and files check failed: {relative} differs")
     if not filecmp.cmp(live_quadlet, restored_quadlet, shallow=False):
         raise ValueError("attachments and files check failed: Quadlet differs")
@@ -87,25 +87,30 @@ def prepare(restored_data):
     copies[0].rename(restored_data / "db.sqlite3")
 
 
-if __name__ == "__main__":
+def main(argv):
     try:
-        if sys.argv[1] == "counts":
-            print(json.dumps(counts(Path(sys.argv[2])), sort_keys=True))
-        elif sys.argv[1] == "compare":
+        if argv[0] == "counts":
+            print(json.dumps(counts(Path(argv[1])), sort_keys=True))
+        elif argv[0] == "compare":
             compare(
-                Path(sys.argv[2]),
-                Path(sys.argv[3]),
-                Path(sys.argv[4]),
-                Path(sys.argv[5]),
-                json.loads(sys.argv[6]),
+                Path(argv[1]),
+                Path(argv[2]),
+                Path(argv[3]),
+                Path(argv[4]),
+                json.loads(argv[5]),
             )
             print("restore files and counts match")
-        elif sys.argv[1] == "image":
-            print(image(Path(sys.argv[2])))
-        elif sys.argv[1] == "prepare":
-            prepare(Path(sys.argv[2]))
+        elif argv[0] == "image":
+            print(image(Path(argv[1])))
+        elif argv[0] == "prepare":
+            prepare(Path(argv[1]))
         else:
             raise ValueError("expected counts, compare, image or prepare")
     except (OSError, sqlite3.Error, ValueError) as error:
         print(error, file=sys.stderr)
-        sys.exit(1)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no branch - importing does not run the CLI
+    sys.exit(main(sys.argv[1:]))

@@ -81,6 +81,7 @@ bs_uid=$(id -u bstest)
 useradd -m vwtest
 vw_uid=$(id -u vwtest)
 loginctl enable-linger vwtest
+systemctl start "user@$vw_uid.service"
 install -d -o vwtest -g vwtest -m 0700 /home/vwtest/.config/containers/systemd
 chown vwtest:vwtest "$TEST_DATA"
 cat >"$quadlet" <<EOF

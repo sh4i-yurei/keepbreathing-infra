@@ -131,8 +131,9 @@ restic() {
 }
 snapshot_count() { restic snapshots --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
 assert_no_restore_state() {
-  [[ $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/alive) != 200 ]] || fail 'restore container must not remain on port 8090'
-  [[ -z $(find "$work" -maxdepth 1 -name 'vaultwarden-restore-*' -print -quit) ]] || fail 'restore folder must be removed'
+  [[ $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/alive) == 000 ]] || fail 'restore port 8090 must be closed'
+  [[ -z $(as_vw podman ps --filter name=vaultwarden-backup-restore --format '{{.Names}}') ]] || fail 'throwaway restore container must be removed'
+  [[ -z $(find /tmp -maxdepth 1 -name 'vaultwarden-restore-*' -print -quit) ]] || fail 'restore folder must be removed'
 }
 
 play "$work/first.log"

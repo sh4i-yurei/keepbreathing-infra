@@ -7,7 +7,7 @@ device=
 bs_uid=
 vw_uid=
 image=docker.io/vaultwarden/server@sha256:5d326778c22f063d093d6b0c9c766a28249561632266776f2c93132ab0ad3a80
-restic_image=docker.io/restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+restic_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["restic_image"])')
 run_unit=/home/vwtest/.config/systemd/user/vaultwarden-backup-run.service
 env_file=/home/vwtest/.config/vaultwarden-backup/restic.env
 quadlet=/home/vwtest/.config/containers/systemd/vaultwarden.container
@@ -47,6 +47,7 @@ unset XDG_CONFIG_HOME XDG_RUNTIME_DIR
 systemctl unset-environment XDG_RUNTIME_DIR
 
 export TEST_MOUNT="$point" TEST_DATA="$work/data"
+export TEST_RESTIC_IMAGE="$restic_image"
 export TEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_VERIFY_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"

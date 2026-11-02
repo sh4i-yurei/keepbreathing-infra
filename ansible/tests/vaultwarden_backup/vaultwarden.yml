@@ -5,6 +5,7 @@
   gather_facts: false
   become: true
   vars:
+    restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
     vaultwarden_backup_user: vwtest
     vaultwarden_backup_data_dir: "{{ lookup('ansible.builtin.env', 'TEST_DATA') }}"
     vaultwarden_backup_quadlet: /home/vwtest/.config/containers/systemd/vaultwarden.container

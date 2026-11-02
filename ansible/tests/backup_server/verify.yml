@@ -5,6 +5,7 @@
   gather_facts: false
   become: true
   vars:
+    restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
     backup_server_user: bstest
     backup_server_port: 8082
     backup_server_mount_point: "{{ lookup('ansible.builtin.env', 'TEST_MOUNT') }}"

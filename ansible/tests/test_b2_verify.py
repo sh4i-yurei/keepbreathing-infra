@@ -76,6 +76,128 @@ def test_hub_key_hides_refuses_version_delete_and_restores(b2):
     assert state.versions[0]["contentSha1"] == state.versions[2]["contentSha1"]
 
 
+def test_verifier_finds_its_file_after_150_earlier_names(b2):
+    state, api, credential = b2
+    for index in range(150):
+        state.versions.append(
+            {
+                "bucketId": "bucket-1",
+                "fileName": f"restic/{index:03d}",
+                "fileId": f"older-{index}",
+                "action": "upload",
+                "content": "",
+            }
+        )
+    verifier.verify(api, credential, "bucket-1", "vaultserv")
+    listing = next(
+        call for call in state.calls if call["name"] == "b2_list_file_versions"
+    )
+    verify_name = next(call for call in state.calls if call["name"] == "b2_hide_file")[
+        "request"
+    ]["fileName"]
+    assert listing["request"].get("startFileName") == verify_name
+
+
+def test_stand_in_lists_versions_in_name_order_with_default_page(b2):
+    state, api, credential = b2
+    for index in range(150):
+        state.versions.append(
+            {
+                "bucketId": "bucket-1",
+                "fileName": f"restic/{index:03d}",
+                "fileId": f"older-{index}",
+                "action": "upload",
+                "content": "",
+            }
+        )
+    values = verifier.credential(credential)
+    import base64
+
+    token = base64.b64encode(
+        (values["AWS_ACCESS_KEY_ID"] + ":" + values["AWS_SECRET_ACCESS_KEY"]).encode()
+    ).decode()
+    auth = verifier.json_request(api + "b2_authorize_account", "Basic " + token)
+    listing = verifier.json_request(
+        api + "b2_list_file_versions",
+        auth["authorizationToken"],
+        {"bucketId": "bucket-1"},
+    )
+    assert len(listing["files"]) == 100
+    assert [item["fileName"] for item in listing["files"]] == [
+        f"restic/{index:03d}" for index in range(100)
+    ]
+    assert listing["nextFileName"] == "restic/100"
+    assert listing["nextFileId"] == "older-100"
+
+
+def test_stand_in_lists_one_name_newest_first_and_honors_cursor(b2):
+    import base64
+
+    state, api, credential = b2
+    state.versions.extend(
+        [
+            {
+                "bucketId": "bucket-1",
+                "fileName": "restic/a",
+                "fileId": "a-old",
+                "action": "upload",
+                "content": "",
+            },
+            {
+                "bucketId": "bucket-1",
+                "fileName": "verify/target",
+                "fileId": "target-new",
+                "action": "upload",
+                "content": "",
+            },
+            {
+                "bucketId": "bucket-1",
+                "fileName": "verify/target",
+                "fileId": "target-old",
+                "action": "hide",
+                "content": "",
+            },
+            {
+                "bucketId": "bucket-1",
+                "fileName": "verify/z",
+                "fileId": "z-old",
+                "action": "upload",
+                "content": "",
+            },
+        ]
+    )
+    values = verifier.credential(credential)
+    basic = base64.b64encode(
+        (values["AWS_ACCESS_KEY_ID"] + ":" + values["AWS_SECRET_ACCESS_KEY"]).encode()
+    ).decode()
+    auth = verifier.json_request(api + "b2_authorize_account", "Basic " + basic)
+    token = auth["authorizationToken"]
+    page = verifier.json_request(
+        api + "b2_list_file_versions",
+        token,
+        {
+            "bucketId": "bucket-1",
+            "startFileName": "verify/target",
+            "prefix": "verify/",
+            "maxFileCount": 1,
+        },
+    )
+    assert [item["fileId"] for item in page["files"]] == ["target-new"]
+    assert (page["nextFileName"], page["nextFileId"]) == ("verify/target", "target-old")
+    next_page = verifier.json_request(
+        api + "b2_list_file_versions",
+        token,
+        {
+            "bucketId": "bucket-1",
+            "startFileName": page["nextFileName"],
+            "startFileId": page["nextFileId"],
+            "prefix": "verify/",
+            "maxFileCount": 0,
+        },
+    )
+    assert [item["fileId"] for item in next_page["files"]] == ["target-old", "z-old"]
+
+
 def test_verifier_function_restores_using_hub_key(b2):
     state, api, credential = b2
     verifier.verify(api, credential, "bucket-1", "vaultserv")

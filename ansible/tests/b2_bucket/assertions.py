@@ -145,6 +145,58 @@ elif case == "config":
     assert config.st_uid == user.pw_uid and config.st_gid == 0
     assert stat.S_IMODE(directory.st_mode) == 0o700
     assert directory.st_uid == user.pw_uid and directory.st_gid == user.pw_gid
+elif case == "rebuilt":
+    key = assert_key()
+    assert len(named("b2_create_key")) == 1
+    assert [call["request"]["applicationKeyId"] for call in named("b2_delete_key")] == [
+        "test-key-0001"
+    ]
+    assert (
+        len(
+            [
+                item
+                for item in state["keys"]
+                if item["keyName"] == "vaultserv-hub-backup"
+            ]
+        )
+        == 1
+    )
+    assert key["applicationKeyId"] != "test-key-0001"
+elif case == "orphan":
+    key = assert_key()
+    assert not named("b2_create_key")
+    assert [call["request"]["applicationKeyId"] for call in named("b2_delete_key")] == [
+        "test-orphan-id"
+    ]
+    assert key["applicationKeyId"] in [
+        item["applicationKeyId"] for item in state["keys"]
+    ]
+elif case == "sheet":
+    assert_key(extra_keys=True)
+    assert not named("b2_delete_key")
+    assert any(item["applicationKeyId"] == "test-sheet-id" for item in state["keys"])
+elif case == "permissions":
+    assert_key(extra_keys=True)
+    assert not named("b2_create_key")
+    info = file.stat()
+    user = __import__("pwd").getpwnam("b2test")
+    assert info.st_gid == user.pw_gid
+elif case == "many_versions":
+    assert_key(extra_keys=True)
+    listing = named("b2_list_file_versions")
+    assert len(listing) == 1
+    verify_name = named("b2_hide_file")[0]["request"]["fileName"]
+    assert listing[0]["request"].get("startFileName") == verify_name
+    assert (
+        len(
+            [
+                item
+                for item in state["versions"]
+                if item["fileName"].startswith("restic/")
+            ]
+        )
+        == 150
+    )
 elif case == "missing":
     assert calls == []
 else:

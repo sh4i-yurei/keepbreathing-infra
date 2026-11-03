@@ -183,6 +183,17 @@ class Handler(BaseHTTPRequestHandler):
                 state.duplicate_bucket = True
             elif action == "allow_delete":
                 state.allow_delete_without_capability = True
+            elif action == "seed_restic_versions":
+                for index in range(command["count"]):
+                    state.versions.append(
+                        {
+                            "bucketId": "bucket-1",
+                            "fileName": f"restic/{index:03d}",
+                            "fileId": f"older-{index}",
+                            "action": "upload",
+                            "content": "",
+                        }
+                    )
             self.send(200, {"ok": True})
             return
 
@@ -423,14 +434,58 @@ class Handler(BaseHTTPRequestHandler):
             self.send(200, b"wrong" if state.bad_download else content, binary=True)
             return
         elif name == "b2_list_file_versions":
+            versions = sorted(
+                (
+                    version
+                    for version in state.versions
+                    if version["bucketId"] == payload["bucketId"]
+                ),
+                key=lambda version: version["fileName"],
+            )
+            if payload.get("prefix"):
+                versions = [
+                    version
+                    for version in versions
+                    if version["fileName"].startswith(payload["prefix"])
+                ]
+            if payload.get("startFileName"):
+                start_name = payload["startFileName"]
+                start_id = payload.get("startFileId")
+                if start_id is None:
+                    versions = [
+                        version
+                        for version in versions
+                        if version["fileName"] >= start_name
+                    ]
+                else:
+                    start = next(
+                        (
+                            index
+                            for index, version in enumerate(versions)
+                            if version["fileName"] == start_name
+                            and version["fileId"] == start_id
+                        ),
+                        None,
+                    )
+                    versions = (
+                        versions[start:]
+                        if start is not None
+                        else [
+                            version
+                            for version in versions
+                            if version["fileName"] > start_name
+                        ]
+                    )
+            limit = int(payload.get("maxFileCount") or 100)
+            page = versions[:limit]
+            following = versions[limit] if len(versions) > limit else None
             result = {
                 "files": [
                     {k: v for k, v in version.items() if k != "content"}
-                    for version in state.versions
-                    if version["bucketId"] == payload["bucketId"]
+                    for version in page
                 ],
-                "nextFileName": None,
-                "nextFileId": None,
+                "nextFileName": following["fileName"] if following else None,
+                "nextFileId": following["fileId"] if following else None,
             }
             if state.no_visible_versions:
                 result["files"] = []

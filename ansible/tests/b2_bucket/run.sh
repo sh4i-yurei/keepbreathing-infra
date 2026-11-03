@@ -110,7 +110,7 @@ old=$(key_id)
 before=$(sha256sum "$credential" | cut -d' ' -f1)
 control "$(jq -nc --arg id "$old" '{action:"change_key",id:$id,values:{bucketId:"bucket-1"},remove:["bucketIds"]}')"
 clear_calls
-expect_failure bucket bucketIds
+expect_failure bucket "has no bucketIds field"
 grep -Fq "$old" "$work/bucket.log" || fail 'legacy field failure must name key ID'
 [[ $(sha256sum "$credential" | cut -d' ' -f1) == "$before" ]] || fail 'legacy field failure changed credential'
 assert_state legacy
@@ -149,5 +149,39 @@ chmod 0755 /home/b2test/.config
 run bucket
 assert_state config
 printf 'PASS existing .config metadata preserved\n'
+
+old=$(key_id)
+rm "$credential"
+clear_calls
+run bucket
+assert_state rebuilt
+printf 'PASS rebuilt hub retires its old named key\n'
+
+control "$(jq -nc '{action:"add_key",key:{applicationKeyId:"test-orphan-id",applicationKey:"test-orphan-secret",bucketIds:["bucket-1"],capabilities:["listBuckets","listFiles","readFiles","writeFiles"],keyName:"vaultserv-hub-backup"}}')"
+clear_calls
+run bucket
+assert_state orphan
+printf 'PASS interrupted rotation retires orphan key\n'
+
+control "$(jq -nc '{action:"add_key",key:{applicationKeyId:"test-sheet-id",applicationKey:"test-sheet-secret",bucketIds:["bucket-1"],capabilities:["listBuckets","listFiles","readFiles"],keyName:"break-glass-sheet"}}')"
+clear_calls
+run bucket
+assert_state sheet
+printf 'PASS unrelated sheet key remains\n'
+
+before=$(sha256sum "$credential" | cut -d' ' -f1)
+chmod 0644 "$credential"
+chown root:root "$credential"
+clear_calls
+run bucket
+[[ $(sha256sum "$credential" | cut -d' ' -f1) == "$before" ]] || fail 'permission repair rewrote credential contents'
+assert_state permissions
+printf 'PASS credential metadata drift repaired without rewrite\n'
+
+control '{"action":"seed_restic_versions","count":150}'
+clear_calls
+run verify
+assert_state many_versions
+printf 'PASS verify locates its name beyond 150 earlier versions\n'
 
 printf 'PASS all B2 bucket role cases\n'

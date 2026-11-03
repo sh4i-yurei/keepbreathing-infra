@@ -24,10 +24,13 @@
     b2_bucket_found_key: >-
       {{ (b2_bucket_key_page.json['keys']
           | selectattr('applicationKeyId', 'equalto', b2_bucket_old_key_id)
-          | list | first) | default(none) }}
+          | list | first) | default(b2_bucket_found_key) }}
+    b2_bucket_named_keys: >-
+      {{ b2_bucket_named_keys + (b2_bucket_key_page.json['keys']
+          | selectattr('keyName', 'equalto', b2_target.machine ~ '-hub-backup') | list) }}
     b2_bucket_next_key_id: "{{ b2_bucket_key_page.json.nextApplicationKeyId | default('', true) }}"
   no_log: true
 
 - name: B2 bucket | Continue to next key page
   ansible.builtin.include_tasks: list-key-page.yml
-  when: b2_bucket_found_key is none and b2_bucket_next_key_id | length > 0
+  when: b2_bucket_next_key_id | length > 0

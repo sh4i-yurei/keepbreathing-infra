@@ -103,7 +103,9 @@ def verify(api_url, key_file, bucket_id, machine):
         raise VerificationError("B2 hidden version restore download failed")
     second = upload(target["uploadUrl"], target["authorizationToken"], name, restored)
     versions = json_request(
-        base + "b2_list_file_versions", token, {"bucketId": bucket_id}
+        base + "b2_list_file_versions",
+        token,
+        {"bucketId": bucket_id, "startFileName": name},
     )
     visible = next(
         (item for item in versions["files"] if item["fileName"] == name), None

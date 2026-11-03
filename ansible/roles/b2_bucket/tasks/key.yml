@@ -25,11 +25,11 @@
     b2_bucket_old_key_id: "{{ b2_bucket_stored_key_id.stdout | default('') }}"
     b2_bucket_next_key_id: ""
     b2_bucket_found_key: null
+    b2_bucket_named_keys: []
   no_log: true
 
-- name: B2 bucket | Find stored ID through all key pages
+- name: B2 bucket | Find named keys through all key pages
   ansible.builtin.include_tasks: list-key-page.yml
-  when: b2_bucket_old_key_id | length > 0
 
 - name: B2 bucket | Reject legacy key entry without bucketIds
   ansible.builtin.fail:
@@ -103,7 +103,24 @@
   diff: false
   when: b2_bucket_new_key is not skipped
 
-- name: B2 bucket | Retire old key on controller
+- name: B2 bucket | Enforce credential file ownership and mode
+  ansible.builtin.file:
+    path: "/home/{{ b2_credentials_user }}/.config/b2/{{ b2_target.machine }}.env"
+    state: file
+    owner: "{{ b2_credentials_user }}"
+    group: "{{ b2_credentials_user }}"
+    mode: "0600"
+  no_log: true
+  when: not ansible_check_mode
+
+- name: B2 bucket | Select the key kept on the hub
+  ansible.builtin.set_fact:
+    b2_bucket_current_key_id: >-
+      {{ b2_bucket_new_key.json.applicationKeyId if b2_bucket_new_key is not skipped
+         else b2_bucket_old_key_id }}
+  no_log: true
+
+- name: B2 bucket | Retire other keys with this machine's hub name
   ansible.builtin.uri:
     url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_delete_key"
     method: POST
@@ -111,11 +128,12 @@
       Authorization: "{{ b2_bucket_master_auth.json.authorizationToken }}"
     body_format: json
     body:
-      applicationKeyId: "{{ b2_bucket_old_key_id }}"
+      applicationKeyId: "{{ item.applicationKeyId }}"
     return_content: true
   changed_when: true
   delegate_to: localhost
   become: false
   run_once: true
   no_log: true
-  when: b2_bucket_new_key is not skipped and b2_bucket_found_key is not none
+  loop: "{{ b2_bucket_named_keys | rejectattr('applicationKeyId', 'equalto', b2_bucket_current_key_id) | list }}"
+  when: not ansible_check_mode

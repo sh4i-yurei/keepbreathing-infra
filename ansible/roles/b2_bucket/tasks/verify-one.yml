@@ -36,6 +36,7 @@
     b2_bucket_old_key_id: "{{ b2_bucket_verify_key_id.stdout }}"
     b2_bucket_next_key_id: ""
     b2_bucket_found_key: null
+    b2_bucket_named_keys: []
   no_log: true
 
 - name: B2 bucket | Read listed key back through all pages

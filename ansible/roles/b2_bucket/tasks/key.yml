@@ -1,0 +1,165 @@
+---
+- name: B2 bucket | Check credential file
+  ansible.builtin.stat:
+    path: "/home/{{ b2_credentials_user }}/.config/b2/{{ b2_target.machine }}.env"
+  register: b2_bucket_credential_stat
+
+- name: B2 bucket | Read only the stored key ID on hub
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import pathlib,sys;
+        print(next((line.partition('=')[2] for line in
+        pathlib.Path(sys.argv[1]).read_text().splitlines()
+        if line.partition('=')[0] == 'AWS_ACCESS_KEY_ID'), ''))
+      - "/home/{{ b2_credentials_user }}/.config/b2/{{ b2_target.machine }}.env"
+  register: b2_bucket_stored_key_id
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: b2_bucket_credential_stat.stat.exists
+
+- name: B2 bucket | Start key lookup
+  ansible.builtin.set_fact:
+    b2_bucket_old_key_id: "{{ b2_bucket_stored_key_id.stdout | default('') }}"
+    b2_bucket_next_key_id: ""
+    b2_bucket_found_key: null
+    b2_bucket_named_keys: []
+  no_log: true
+
+- name: B2 bucket | Find named keys through all key pages
+  ansible.builtin.include_tasks: list-key-page.yml
+
+- name: B2 bucket | Reject legacy key entry without bucketIds
+  ansible.builtin.fail:
+    msg: "b2_list_keys entry {{ b2_bucket_old_key_id }} has no bucketIds field"
+  when: b2_bucket_found_key is not none and b2_bucket_found_key.bucketIds is not defined
+
+- name: B2 bucket | Compare exact key scope
+  ansible.builtin.set_fact:
+    b2_bucket_key_matches: >-
+      {{ b2_bucket_found_key is not none
+         and (b2_bucket_found_key.capabilities | sort) == (b2_hub_key_capabilities | sort)
+         and b2_bucket_found_key.bucketIds == [b2_bucket_current_bucket.bucketId] }}
+
+- name: B2 bucket | Report hub key creation or replacement in check mode
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'B2 would replace hub key ' ~ b2_bucket_old_key_id
+         if b2_bucket_old_key_id else
+         'B2 would create hub key ' ~ b2_target.machine ~ '-hub-backup' }}
+  changed_when: true
+  when: ansible_check_mode and not b2_bucket_key_matches
+
+- name: B2 bucket | Create scoped hub key on controller
+  ansible.builtin.uri:
+    url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_create_key"
+    method: POST
+    headers:
+      Authorization: "{{ b2_bucket_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      accountId: "{{ b2_bucket_master_auth.json.accountId }}"
+      keyName: "{{ b2_target.machine }}-hub-backup"
+      capabilities: "{{ b2_hub_key_capabilities }}"
+      bucketIds:
+        - "{{ b2_bucket_current_bucket.bucketId }}"
+    return_content: true
+  register: b2_bucket_new_key
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  when: not b2_bucket_key_matches and not ansible_check_mode
+
+- name: B2 bucket | Check existing .config directory
+  ansible.builtin.stat:
+    path: "/home/{{ b2_credentials_user }}/.config"
+  register: b2_bucket_config_stat
+  when: b2_bucket_new_key is not skipped
+
+- name: B2 bucket | Create absent .config directory
+  ansible.builtin.file:
+    path: "/home/{{ b2_credentials_user }}/.config"
+    state: directory
+    owner: "{{ b2_credentials_user }}"
+    group: "{{ b2_credentials_user }}"
+    mode: "0700"
+  when: b2_bucket_new_key is not skipped and not b2_bucket_config_stat.stat.exists
+
+- name: B2 bucket | Create private B2 configuration directory
+  ansible.builtin.file:
+    path: "/home/{{ b2_credentials_user }}/.config/b2"
+    state: directory
+    owner: "{{ b2_credentials_user }}"
+    group: "{{ b2_credentials_user }}"
+    mode: "0700"
+  when: b2_bucket_new_key is not skipped
+
+- name: B2 bucket | Write scoped key before retiring old key
+  ansible.builtin.copy:
+    dest: "/home/{{ b2_credentials_user }}/.config/b2/{{ b2_target.machine }}.env"
+    content: |
+      AWS_ACCESS_KEY_ID={{ b2_bucket_new_key.json.applicationKeyId }}
+      AWS_SECRET_ACCESS_KEY={{ b2_bucket_new_key.json.applicationKey }}
+      RESTIC_REPOSITORY=s3:{{ b2_bucket_master_auth.json.apiInfo.storageApi.s3ApiUrl }}/{{ b2_target.name }}/restic
+    owner: "{{ b2_credentials_user }}"
+    group: "{{ b2_credentials_user }}"
+    mode: "0600"
+  no_log: true
+  diff: false
+  when: b2_bucket_new_key is not skipped
+
+- name: B2 bucket | Enforce credential file ownership and mode
+  ansible.builtin.file:
+    path: "/home/{{ b2_credentials_user }}/.config/b2/{{ b2_target.machine }}.env"
+    state: file
+    owner: "{{ b2_credentials_user }}"
+    group: "{{ b2_credentials_user }}"
+    mode: "0600"
+  no_log: true
+  when: not ansible_check_mode or b2_bucket_credential_stat.stat.exists
+
+- name: B2 bucket | Select the key kept on the hub
+  ansible.builtin.set_fact:
+    b2_bucket_current_key_id: >-
+      {{ b2_bucket_new_key.json.applicationKeyId if b2_bucket_new_key is not skipped
+         else b2_bucket_old_key_id }}
+  no_log: true
+
+- name: B2 bucket | Select named keys to retire
+  ansible.builtin.set_fact:
+    b2_bucket_keys_to_retire: >-
+      {{ b2_bucket_named_keys | rejectattr('applicationKeyId', 'equalto', b2_bucket_current_key_id) | list
+         if not ansible_check_mode or b2_bucket_key_matches else b2_bucket_named_keys }}
+  no_log: true
+
+- name: B2 bucket | Report key deletion in check mode
+  ansible.builtin.debug:
+    msg: "B2 would delete key {{ item.applicationKeyId }} named {{ b2_target.machine }}-hub-backup"
+  changed_when: true
+  loop: "{{ b2_bucket_keys_to_retire }}"
+  loop_control:
+    label: "{{ item.applicationKeyId }}"
+  when: ansible_check_mode
+
+- name: B2 bucket | Retire other keys with this machine's hub name
+  ansible.builtin.uri:
+    url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_delete_key"
+    method: POST
+    headers:
+      Authorization: "{{ b2_bucket_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      applicationKeyId: "{{ item.applicationKeyId }}"
+    return_content: true
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  loop: "{{ b2_bucket_keys_to_retire }}"
+  when: not ansible_check_mode

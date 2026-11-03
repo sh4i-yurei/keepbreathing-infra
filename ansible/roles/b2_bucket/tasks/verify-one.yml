@@ -1,0 +1,73 @@
+---
+- name: B2 bucket | Select listed bucket for verification
+  ansible.builtin.set_fact:
+    b2_bucket_current_bucket: >-
+      {{ (b2_bucket_verified_buckets.json.buckets
+          | selectattr('bucketName', 'equalto', b2_target.name)
+          | list | first) | default(none) }}
+
+- name: B2 bucket | Require exact bucket settings
+  ansible.builtin.assert:
+    that:
+      - b2_bucket_current_bucket is not none
+      - b2_bucket_current_bucket.bucketType == 'allPrivate'
+      - b2_bucket_current_bucket.fileLockConfiguration.value.isFileLockEnabled == true
+      - "b2_bucket_current_bucket.fileLockConfiguration.value.defaultRetention == {'mode':'compliance','period':{'duration': b2_retention_days,'unit':'days'}}"
+      - b2_bucket_current_bucket.lifecycleRules | b2_lifecycle_rules_match(b2_hidden_days)
+    fail_msg: "B2 bucket settings differ for {{ b2_target.name }}"
+
+- name: B2 bucket | Read stored hub key ID for verification
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import pathlib,sys;
+        print(next((line.partition('=')[2] for line in
+        pathlib.Path(sys.argv[1]).read_text().splitlines()
+        if line.partition('=')[0] == 'AWS_ACCESS_KEY_ID'), ''))
+      - "/home/{{ b2_credentials_user }}/.config/b2/{{ b2_target.machine }}.env"
+  register: b2_bucket_verify_key_id
+  changed_when: false
+  no_log: true
+
+- name: B2 bucket | Start verification key lookup
+  ansible.builtin.set_fact:
+    b2_bucket_old_key_id: "{{ b2_bucket_verify_key_id.stdout }}"
+    b2_bucket_next_key_id: ""
+    b2_bucket_found_key: null
+    b2_bucket_named_keys: []
+  no_log: true
+
+- name: B2 bucket | Read listed key back through all pages
+  ansible.builtin.include_tasks: list-key-page.yml
+
+- name: B2 bucket | Require exact listed key scope
+  ansible.builtin.assert:
+    that:
+      - b2_bucket_found_key is not none
+      - b2_bucket_found_key.bucketIds is defined
+      - b2_bucket_found_key.bucketIds == [b2_bucket_current_bucket.bucketId]
+      - (b2_bucket_found_key.capabilities | sort) == (b2_hub_key_capabilities | sort)
+    fail_msg: "B2 hub key permissions differ for {{ b2_target.name }}"
+
+- name: B2 bucket | Run refusal and restore checks on hub with its own key
+  ansible.builtin.command:
+    argv:
+      - python3
+      - /usr/local/bin/b2-verify.py
+      - "{{ b2_api_url }}"
+      - "/home/{{ b2_credentials_user }}/.config/b2/{{ b2_target.machine }}.env"
+      - "{{ b2_bucket_current_bucket.bucketId }}"
+      - "{{ b2_target.machine }}"
+  become: true
+  become_user: "{{ b2_credentials_user }}"
+  register: b2_bucket_verify_result
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: B2 bucket | Report hub-key verification failure
+  ansible.builtin.fail:
+    msg: "{{ b2_bucket_verify_result.stderr | default('B2 hub verification failed') }}"
+  when: b2_bucket_verify_result.rc != 0

@@ -40,7 +40,9 @@
       [{"name": "verify", "bcrypt": "fixture-bcrypt-13"}]
     ],
     "backup_server_verify_password": ["fixture-password-13"],
-    "backup_server_verify_restic_password": ["fixture-restic-13"]
+    "backup_server_verify_restic_password": ["fixture-restic-13"],
+    "b2_master_key_id": ["fixture-user-14"],
+    "b2_master_key": ["fixture-password-14"]
   },
   "roles/hub/tasks/alertmanager-verify.yml": {
     "url_password": [

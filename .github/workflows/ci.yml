@@ -11,6 +11,34 @@ permissions:
   contents: read
 
 jobs:
+  b2-bucket:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
+      - name: Existing B2 test account survives driver refusal
+        run: |
+          sudo useradd -m b2test
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_bucket/run.sh > /tmp/b2-existing-account.log 2>&1; then
+            echo 'B2 driver accepted an existing account'
+            exit 1
+          fi
+          grep -F 'b2test already exists' /tmp/b2-existing-account.log
+          id b2test
+          test -d /home/b2test
+          sudo userdel -r b2test
+      - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_bucket/run.sh
+
   backup-server:
     runs-on: ubuntu-latest
     defaults:

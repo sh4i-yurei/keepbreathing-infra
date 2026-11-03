@@ -45,7 +45,6 @@
     owner: root
     group: root
     mode: "0755"
-  when: not ansible_check_mode
 
 - name: B2 bucket | Verify remote settings and refusal behavior
   ansible.builtin.import_tasks: verify.yml

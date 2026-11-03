@@ -114,6 +114,34 @@ elif case == "idempotent":
         "b2_delete_key",
     ):
         assert not named(name), name
+elif case in ("check_drift", "check_key_drift", "check_orphan"):
+    assert file.is_file()
+    for name in (
+        "b2_create_bucket",
+        "b2_update_bucket",
+        "b2_create_key",
+        "b2_delete_key",
+    ):
+        assert not named(name), name
+    if case == "check_drift":
+        assert (
+            state["buckets"][0]["fileLockConfiguration"]["value"]["defaultRetention"][
+                "mode"
+            ]
+            == "governance"
+        )
+    elif case == "check_key_drift":
+        stored_id = next(
+            line.partition("=")[2]
+            for line in file.read_text().splitlines()
+            if line.startswith("AWS_ACCESS_KEY_ID=")
+        )
+        key = next(key for key in state["keys"] if key["applicationKeyId"] == stored_id)
+        assert "deleteFiles" in key["capabilities"]
+    else:
+        assert any(
+            key["applicationKeyId"] == "test-check-orphan-id" for key in state["keys"]
+        )
 elif case == "new_key":
     assert_key()
     assert len(named("b2_create_key")) == 1

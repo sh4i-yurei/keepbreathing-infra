@@ -5,15 +5,19 @@ work=$(mktemp -d)
 base=http://127.0.0.1:18742
 credential=/home/b2test/.config/b2/vaultserv.env
 server=
+created_account=false
 fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 cleanup() {
   [[ -z $server ]] || { kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true; }
-  id b2test >/dev/null 2>&1 && userdel -r b2test >/dev/null 2>&1 || true
+  if [[ $created_account == true ]]; then
+    userdel -r b2test >/dev/null 2>&1 || true
+  fi
   rm -rf "$work"
 }
 trap cleanup EXIT
 id b2test >/dev/null 2>&1 && fail 'b2test already exists'
 useradd -m b2test
+created_account=true
 export TEST_B2_API_URL="$base/b2api/v4/"
 python3 tests/b2_bucket/fake_b2.py >"$work/server.log" 2>&1 &
 server=$!
@@ -33,6 +37,14 @@ run() {
   }
   grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/$name.log" || fail "$name recap failed=0"
 }
+assert_check_recap() {
+  grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/bucket.log" || fail 'check recap failed=0'
+  if [[ $1 == changed ]]; then
+    ! grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/bucket.log" || fail 'check recap must report change'
+  else
+    grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/bucket.log" || fail 'unchanged check recap changed=0'
+  fi
+}
 expect_failure() {
   local name=$1 phrase=$2
   if ansible-playbook -i localhost, "tests/b2_bucket/$name.yml" >"$work/$name.log" 2>&1; then
@@ -49,6 +61,10 @@ printf 'PASS missing b2_buckets fails before API calls\n'
 
 run bucket --check --diff
 assert_state check
+assert_check_recap changed
+grep -Fq 'B2 would create bucket keepbreathing-vaultserv-backup' "$work/bucket.log" || fail 'check missing bucket creation message'
+grep -Fq 'B2 would update bucket keepbreathing-vaultserv-backup settings' "$work/bucket.log" || fail 'check missing newly created bucket settings message'
+grep -Fq 'B2 would create hub key vaultserv-hub-backup' "$work/bucket.log" || fail 'check missing hub key creation message'
 printf 'PASS check mode leaves B2 and runner unchanged\n'
 
 clear_calls
@@ -75,6 +91,43 @@ grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/bucket.log" || {
 }
 assert_state idempotent
 printf 'PASS second run changed=0\n'
+
+clear_calls
+run bucket --check --diff
+assert_check_recap unchanged
+! grep -Fq 'B2 would' "$work/bucket.log" || fail 'unchanged rehearsal reported an API write'
+assert_state idempotent
+printf 'PASS unchanged check mode reports changed=0\n'
+
+control '{"action":"change_bucket","values":{"fileLockConfiguration":{"isClientAuthorizedToRead":true,"value":{"isFileLockEnabled":true,"defaultRetention":{"mode":"governance","period":{"duration":1,"unit":"days"}}}},"lifecycleRules":[]}}'
+clear_calls
+run bucket --check --diff
+assert_check_recap changed
+grep -Fq 'B2 would update bucket keepbreathing-vaultserv-backup settings' "$work/bucket.log" || fail 'check missing bucket update message'
+assert_state check_drift
+printf 'PASS bucket drift rehearsal reports update without writing\n'
+run bucket
+
+old=$(key_id)
+before=$(sha256sum "$credential" | cut -d' ' -f1)
+control "$(jq -nc --arg id "$old" '{action:"change_key",id:$id,values:{capabilities:["listBuckets","listFiles","readFiles","writeFiles","deleteFiles"]}}')"
+clear_calls
+run bucket --check --diff
+assert_check_recap changed
+grep -Fq "B2 would replace hub key $old" "$work/bucket.log" || fail 'check missing key replacement message'
+[[ $(sha256sum "$credential" | cut -d' ' -f1) == "$before" ]] || fail 'check rewrote credential'
+assert_state check_key_drift
+printf 'PASS overpowered key rehearsal reports replacement without writing\n'
+run bucket
+
+control "$(jq -nc '{action:"add_key",key:{applicationKeyId:"test-check-orphan-id",applicationKey:"test-check-orphan-secret",bucketIds:["bucket-1"],capabilities:["listBuckets","listFiles","readFiles","writeFiles"],keyName:"vaultserv-hub-backup"}}')"
+clear_calls
+run bucket --check --diff
+assert_check_recap changed
+grep -Fq 'B2 would delete key test-check-orphan-id named vaultserv-hub-backup' "$work/bucket.log" || fail 'check missing orphan deletion message'
+assert_state check_orphan
+printf 'PASS orphan key rehearsal reports deletion without writing\n'
+run bucket
 
 control '{"action":"change_bucket","values":{"lifecycleRules":[{"daysFromHidingToDeleting":30,"daysFromStartingToCancelingUnfinishedLargeFiles":null,"daysFromUploadingToHiding":null,"fileNamePrefix":""}]}}'
 clear_calls

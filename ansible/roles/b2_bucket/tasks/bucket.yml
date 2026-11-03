@@ -7,6 +7,18 @@
   ansible.builtin.set_fact:
     b2_bucket_changes: "{{ b2_bucket_current_bucket | b2_bucket_plan(b2_retention_days, b2_hidden_days) }}"
 
+- name: B2 bucket | Report bucket creation in check mode
+  ansible.builtin.debug:
+    msg: "B2 would create bucket {{ b2_target.name }}"
+  changed_when: true
+  when: ansible_check_mode and b2_bucket_changes.create
+
+- name: B2 bucket | Report hub key creation for absent bucket in check mode
+  ansible.builtin.debug:
+    msg: "B2 would create hub key {{ b2_target.machine }}-hub-backup"
+  changed_when: true
+  when: ansible_check_mode and b2_bucket_changes.create
+
 - name: B2 bucket | Create private locked bucket on controller
   ansible.builtin.uri:
     url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_create_bucket"
@@ -48,6 +60,12 @@
   ansible.builtin.set_fact:
     b2_bucket_changes: "{{ b2_bucket_current_bucket | b2_bucket_plan(b2_retention_days, b2_hidden_days) }}"
   when: b2_bucket_current_bucket is not none
+
+- name: B2 bucket | Report bucket settings update in check mode
+  ansible.builtin.debug:
+    msg: "B2 would update bucket {{ b2_target.name }} settings"
+  changed_when: true
+  when: ansible_check_mode and (b2_bucket_changes.create or b2_bucket_changes['update'])
 
 - name: B2 bucket | Set exact lock and lifecycle settings on controller
   ansible.builtin.uri:

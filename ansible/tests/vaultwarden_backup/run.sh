@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+for account in bstest vwtest; do
+  if id -u "$account" >/dev/null 2>&1; then
+    printf 'ASSERTION FAILED: %s already exists\n' "$account" >&2
+    exit 1
+  fi
+done
+
 work=$(mktemp -d)
 point=$work/backup
 device=
 bs_uid=
 vw_uid=
+manager_xdg=
 image=docker.io/vaultwarden/server@sha256:5d326778c22f063d093d6b0c9c766a28249561632266776f2c93132ab0ad3a80
 restic_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["restic_image"])')
 run_unit=/home/vwtest/.config/systemd/user/vaultwarden-backup-run.service
@@ -29,7 +37,6 @@ cleanup() {
     systemctl stop "user@$vw_uid.service" >/dev/null 2>&1 || true
     userdel -r vwtest >/dev/null 2>&1 || true
   fi
-  if [[ -z $bs_uid ]] && id -u bstest >/dev/null 2>&1; then bs_uid=$(id -u bstest); fi
   if [[ -n $bs_uid ]]; then
     as_bs systemctl --user stop backup-server.service >/dev/null 2>&1 || true
     loginctl disable-linger bstest >/dev/null 2>&1 || true
@@ -38,11 +45,15 @@ cleanup() {
   fi
   mountpoint -q "$point" && umount "$point"
   [[ -z $device ]] || losetup -d "$device"
+  if [[ -f $work/environment ]]; then cp -p -- "$work/environment" /etc/environment; fi
+  if [[ -n $manager_xdg ]]; then systemctl set-environment "$manager_xdg"; fi
   rm -rf "$work"
 }
 trap cleanup EXIT
 
 # GitHub's image leaks the runner's XDG paths through PAM into fresh user managers.
+cp -p -- /etc/environment "$work/environment"
+manager_xdg=$(systemctl show-environment | sed -n '/^XDG_RUNTIME_DIR=/p')
 sed -i '/^XDG_CONFIG_HOME=/d; /^XDG_RUNTIME_DIR=/d' /etc/environment
 unset XDG_CONFIG_HOME XDG_RUNTIME_DIR
 systemctl unset-environment XDG_RUNTIME_DIR

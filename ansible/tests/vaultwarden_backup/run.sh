@@ -142,6 +142,7 @@ restic() {
     --env-file "$env_file" --volume "$work:$work:rw" "$restic_image" "$@"
 }
 install -d -o vwtest -g vwtest -m 0755 /home/vwtest/.local
+install -d -o vwtest -g root -m 0755 /home/vwtest/.config/systemd/user
 for folder in /home/vwtest/.config /home/vwtest/.local /home/vwtest/.config/systemd /home/vwtest/.config/systemd/user; do
   chgrp root "$folder"
   chmod 0755 "$folder"

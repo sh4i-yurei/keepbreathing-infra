@@ -159,7 +159,7 @@ assert_no_restore_state() {
 
 play "$work/first.log"
 for folder in /home/vwtest/.config /home/vwtest/.local /home/vwtest/.config/systemd /home/vwtest/.config/systemd/user; do
-  [[ $(stat -c '%a:%U:%G' "$folder") == 755:vwtest:root ]] || fail "role must preserve shared folder mode, owner and group: $folder"
+  [[ $(stat -c '%a:%U:%G' "$folder") == 755:vwtest:root ]] || { stat -c 'ACTUAL %n %a:%U:%G' "$folder"; grep -nE -A 12 'Check shared account folders|Create missing shared account folders|Create private account folder' "$work/first.log" | tail -45; fail "role must preserve shared folder mode, owner and group: $folder"; }
 done
 [[ $(stat -c '%a:%U:%G' /home/vwtest/.local/libexec) == 700:vwtest:vwtest ]] || fail 'role must create private libexec folder'
 [[ $(stat -c '%a:%U' /home/vwtest/.config/vaultwarden-backup) == 700:vwtest ]] || fail 'role must own its private folder'

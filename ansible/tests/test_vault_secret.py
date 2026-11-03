@@ -441,6 +441,8 @@ VAULT_VALUES = {
         "backup_server_logins",
         "backup_server_verify_password",
         "backup_server_verify_restic_password",
+        "b2_master_key_id",
+        "b2_master_key",
     ],
     "roles/hub/tasks/alertmanager-verify.yml": ["hub_alertmanager_login"],
     "roles/hub/tasks/grafana-verify.yml": [
@@ -478,6 +480,7 @@ def fixture_items():
         "ntfy laptop (hub)",
         "ntfy alpha (hub)",
         "rclone verify (hub)",
+        "Backblaze master key",
     ]
     return {
         name: {

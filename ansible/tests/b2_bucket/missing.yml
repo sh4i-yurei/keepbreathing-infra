@@ -1,0 +1,12 @@
+---
+- name: Reject missing B2 bucket list
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    b2_api_url: "{{ lookup('ansible.builtin.env', 'TEST_B2_API_URL') }}"
+    b2_master_key_id: test-master-id
+    b2_master_key: test-master-secret
+    b2_credentials_user: b2test
+  roles:
+    - b2_bucket

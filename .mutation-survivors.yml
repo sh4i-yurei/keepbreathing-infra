@@ -108,3 +108,73 @@
   reason: "subprocess text=False returns bytes; json.loads accepts UTF-8 bytes and produces the same item and public error for this JSON CLI output."
 - mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_101
   reason: "Both None and an empty string are rejected by the following dictionary type check, producing the same public error."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_6
+  reason: "HTTP header names are case insensitive; changing Authorization capitalization sends the same credential and receives the same response."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_7
+  reason: "HTTP header names are case insensitive; changing Authorization capitalization sends the same credential and receives the same response."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_16
+  reason: "HTTP header names are case insensitive; changing Content-Type capitalization sends the same media type."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_17
+  reason: "HTTP header names are case insensitive; changing Content-Type capitalization sends the same media type."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_19
+  reason: "JSON media type spelling is case insensitive; APPLICATION/JSON and application/json identify the same body."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_24
+  reason: "All calls with a body use POST automatically and calls without a body use GET, so omitting the explicit method changes no request."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_28
+  reason: "All calls with a body use POST automatically and calls without a body use GET, so omitting the explicit method changes no request."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_30
+  reason: "The changed timeout only alters the internal wait bound; no response-time threshold is part of the role's public contract."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_32
+  reason: "The changed timeout only alters the internal wait bound; no response-time threshold is part of the role's public contract."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_33
+  reason: "The changed timeout only alters the internal wait bound; no response-time threshold is part of the role's public contract."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_json_request__mutmut_16
+  reason: "Every valid API URL has a final endpoint segment; the altered split or equivalent index selects that same segment in the public error."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_json_request__mutmut_19
+  reason: "Every valid API URL has a final endpoint segment; the altered split or equivalent index selects that same segment in the public error."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_json_request__mutmut_20
+  reason: "Every valid API URL has a final endpoint segment; the altered split or equivalent index selects that same segment in the public error."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_3
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_4
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_6
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_7
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_11
+  reason: "Both URL encodings of the slash decode to the same verify/ file name; asserting raw header spelling would pin an internal detail."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_12
+  reason: "Both URL encodings of the slash decode to the same verify/ file name; asserting raw header spelling would pin an internal detail."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_14
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_15
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_17
+  reason: "The text/plain media type is case insensitive; TEXT/PLAIN identifies the same uploaded content type."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_18
+  reason: "urllib supplies the required Content-Length from the body even when the explicit header name is changed."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_19
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_20
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_23
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_24
+  reason: "HTTP header names are case insensitive, so the changed capitalization sends the same upload fields."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_30
+  reason: "A Request with a body uses POST automatically, so omitting the explicit method sends the same upload."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_34
+  reason: "A Request with a body uses POST automatically, so omitting the explicit method sends the same upload."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_38
+  reason: "The changed timeout only alters the internal wait bound; no response-time threshold is part of the role's public contract."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_40
+  reason: "The changed timeout only alters the internal wait bound; no response-time threshold is part of the role's public contract."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_upload__mutmut_41
+  reason: "The changed timeout only alters the internal wait bound; no response-time threshold is part of the role's public contract."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_verify__mutmut_44
+  reason: "The verify file's exact text is unspecified; each variant uploads small content under verify/ and checks the restored SHA-1 matches its first upload."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_verify__mutmut_45
+  reason: "The verify file's exact text is unspecified; each variant uploads small content under verify/ and checks the restored SHA-1 matches its first upload."
+- mutant: ansible.roles.b2_bucket.files.b2_verify.x_verify__mutmut_46
+  reason: "The verify file's exact text is unspecified; each variant uploads small content under verify/ and checks the restored SHA-1 matches its first upload."

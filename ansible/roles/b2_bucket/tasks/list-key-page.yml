@@ -1,0 +1,33 @@
+---
+- name: B2 bucket | Read a key page on controller
+  ansible.builtin.uri:
+    url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_list_keys"
+    method: POST
+    headers:
+      Authorization: "{{ b2_bucket_master_auth.json.authorizationToken }}"
+    body_format: json
+    body: >-
+      {{ {'accountId': b2_bucket_master_auth.json.accountId,
+          'maxKeyCount': b2_key_page_size}
+         | combine({'startApplicationKeyId': b2_bucket_next_key_id}
+                   if b2_bucket_next_key_id else {}) }}
+    return_content: true
+  register: b2_bucket_key_page
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  no_log: true
+
+- name: B2 bucket | Select key by credential ID
+  ansible.builtin.set_fact:
+    b2_bucket_found_key: >-
+      {{ (b2_bucket_key_page.json['keys']
+          | selectattr('applicationKeyId', 'equalto', b2_bucket_old_key_id)
+          | list | first) | default(none) }}
+    b2_bucket_next_key_id: "{{ b2_bucket_key_page.json.nextApplicationKeyId | default('', true) }}"
+  no_log: true
+
+- name: B2 bucket | Continue to next key page
+  ansible.builtin.include_tasks: list-key-page.yml
+  when: b2_bucket_found_key is none and b2_bucket_next_key_id | length > 0

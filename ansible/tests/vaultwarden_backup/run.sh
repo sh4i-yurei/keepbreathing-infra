@@ -169,7 +169,8 @@ printf 'PASS first role run, private credentials, timer and cleanup\n'
 restic ls latest --json >"$work/ls.json"
 python3 - "$work/ls.json" <<'PY' || fail 'first snapshot must hold exactly the consistent copy, key, attachment and Quadlet'
 import json, re, sys
-entries = [json.loads(line) for line in open(sys.argv[1])]
+records = [json.loads(line) for line in open(sys.argv[1])]
+entries = [record for record in records if 'path' in record]
 paths = [entry['path'] for entry in entries]
 files = [entry['path'] for entry in entries if entry.get('type') == 'file']
 assert len([p for p in files if re.search(r'/db_\d{8}_\d{6}\.sqlite3$', p)]) == 1, files

@@ -4,6 +4,8 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -11,6 +13,10 @@ import pytest
 from load_source import load_source
 
 verifier = load_source("ansible/roles/vaultwarden_backup/files/verify-restore.py")
+SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "roles/vaultwarden_backup/files/verify-restore.py"
+)
 
 
 def run(*args: object) -> tuple[int, str, str]:
@@ -67,6 +73,20 @@ def compare(
 def test_counts_returns_exact_database_counts(restore) -> None:
     result = run("counts", restore[0] / "db.sqlite3")
     assert result == (
+        0,
+        '{"attachments": 1, "ciphers": 2, "users": 1}\n',
+        "",
+    )
+
+
+def test_script_entrypoint_returns_counts(restore) -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "counts", str(restore[0] / "db.sqlite3")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (
         0,
         '{"attachments": 1, "ciphers": 2, "users": 1}\n',
         "",

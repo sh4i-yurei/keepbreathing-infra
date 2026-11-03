@@ -116,6 +116,7 @@ grep -Fq 'baseline' "$work/linger.log" || fail 'lingering failure must name base
 [[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'missing lingering must create no role files'
 [[ ! -e /var/lib/systemd/linger/vwtest ]] || fail 'role must not enable lingering'
 loginctl enable-linger vwtest
+systemctl start "user@$vw_uid.service"
 as_vw systemctl --user start vaultwarden.service
 printf 'PASS role requires baseline lingering before changes\n'
 

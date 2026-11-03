@@ -111,8 +111,7 @@ printf 'PASS Vaultwarden API seed\n'
 
 loginctl disable-linger vwtest
 if ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml >"$work/linger.log" 2>&1; then fail 'role must require baseline lingering'; fi
-grep -Fq 'lingering' "$work/linger.log" || fail 'lingering failure must name lingering'
-grep -Fq 'baseline' "$work/linger.log" || fail 'lingering failure must name baseline role'
+grep -Fq '"msg": "Account lingering is required; run the baseline role first."' "$work/linger.log" || fail 'lingering failure must show the exact baseline message'
 [[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'missing lingering must create no role files'
 [[ ! -e /var/lib/systemd/linger/vwtest ]] || fail 'role must not enable lingering'
 loginctl enable-linger vwtest
@@ -143,7 +142,13 @@ restic() {
     --env-file "$env_file" --volume "$work:$work:rw" "$restic_image" "$@"
 }
 install -d -o vwtest -g vwtest -m 0755 /home/vwtest/.local
-chmod 0755 /home/vwtest/.config
+for folder in /home/vwtest/.config /home/vwtest/.local /home/vwtest/.config/systemd /home/vwtest/.config/systemd/user; do
+  chgrp root "$folder"
+  chmod 0755 "$folder"
+done
+[[ ! -e /home/vwtest/.local/libexec ]] || fail 'libexec must be absent before the first run'
+as_vw mkdir -p "$TEST_DATA/icon_cache" "$TEST_DATA/tmp"
+as_vw sh -c 'printf cache > "$TEST_DATA/icon_cache/seed"; printf temp > "$TEST_DATA/tmp/seed"'
 snapshot_count() { restic snapshots --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'; }
 assert_no_restore_state() {
   [[ $(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/alive) == 000 ]] || fail 'restore port 8090 must be closed'
@@ -152,8 +157,11 @@ assert_no_restore_state() {
 }
 
 play "$work/first.log"
-[[ $(stat -c '%a:%U' /home/vwtest/.config) == 755:vwtest ]] || fail 'role must preserve .config mode and owner'
-[[ $(stat -c '%a:%U' /home/vwtest/.local) == 755:vwtest ]] || fail 'role must preserve .local mode and owner'
+for folder in /home/vwtest/.config /home/vwtest/.local /home/vwtest/.config/systemd /home/vwtest/.config/systemd/user; do
+  [[ $(stat -c '%a:%U:%G' "$folder") == 755:vwtest:root ]] || fail "role must preserve shared folder mode, owner and group: $folder"
+done
+[[ $(stat -c '%a:%U:%G' /home/vwtest/.local/libexec) == 700:vwtest:vwtest ]] || fail 'role must create private libexec folder'
+[[ $(stat -c '%a:%U' /home/vwtest/.config/vaultwarden-backup) == 700:vwtest ]] || fail 'role must own its private folder'
 [[ $(systemctl show vaultwarden-backup.timer -p UnitFileState --value) == enabled ]] || fail 'backup timer must be enabled'
 [[ $(systemctl show vaultwarden-backup.timer -p ActiveState --value) == active ]] || fail 'backup timer must be active'
 [[ $(systemctl show vaultwarden-backup.timer -p Persistent --value) == yes ]] || fail 'backup timer must be persistent'

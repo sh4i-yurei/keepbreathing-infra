@@ -1,0 +1,12 @@
+---
+argument_specs:
+  main:
+    short_description: Manage B2 backup buckets and hub keys
+    options:
+      b2_buckets:
+        type: list
+        elements: dict
+        required: true
+      b2_credentials_user:
+        type: str
+        required: true

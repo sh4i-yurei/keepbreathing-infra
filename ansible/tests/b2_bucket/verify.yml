@@ -1,0 +1,18 @@
+---
+- name: Verify B2 bucket against local stand-in
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    b2_api_url: "{{ lookup('ansible.builtin.env', 'TEST_B2_API_URL') }}"
+    b2_master_key_id: test-master-id
+    b2_master_key: test-master-secret
+    b2_credentials_user: b2test
+    b2_buckets:
+      - machine: vaultserv
+        name: keepbreathing-vaultserv-backup
+  tasks:
+    - name: Run B2 verify tasks without setup
+      ansible.builtin.import_role:
+        name: b2_bucket
+        tasks_from: verify

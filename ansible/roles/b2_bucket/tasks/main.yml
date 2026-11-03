@@ -1,0 +1,51 @@
+---
+- name: B2 bucket | Authorize master key on controller
+  ansible.builtin.uri:
+    url: "{{ b2_api_url }}b2_authorize_account"
+    method: GET
+    url_username: "{{ b2_master_key_id }}"
+    url_password: "{{ b2_master_key }}"
+    force_basic_auth: true
+    return_content: true
+  register: b2_bucket_master_auth
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  no_log: true
+
+- name: B2 bucket | List buckets on controller
+  ansible.builtin.uri:
+    url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_list_buckets"
+    method: POST
+    headers:
+      Authorization: "{{ b2_bucket_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      accountId: "{{ b2_bucket_master_auth.json.accountId }}"
+    return_content: true
+  register: b2_bucket_list
+  delegate_to: localhost
+  become: false
+  run_once: true
+  check_mode: false
+  no_log: true
+
+- name: B2 bucket | Reconcile each machine's bucket and key
+  ansible.builtin.include_tasks: bucket.yml
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    loop_var: b2_target
+    label: "{{ b2_target.machine }}"
+
+- name: B2 bucket | Install hub-side verifier
+  ansible.builtin.copy:
+    src: b2_verify.py
+    dest: /usr/local/bin/b2-verify.py
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: B2 bucket | Verify remote settings and refusal behavior
+  ansible.builtin.import_tasks: verify.yml
+  when: not ansible_check_mode

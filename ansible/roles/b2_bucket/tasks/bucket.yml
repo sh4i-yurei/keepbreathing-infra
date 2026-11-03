@@ -1,0 +1,102 @@
+---
+- name: B2 bucket | Select current bucket
+  ansible.builtin.set_fact:
+    b2_bucket_current_bucket: "{{ (b2_bucket_list.json.buckets | selectattr('bucketName', 'equalto', b2_target.name) | list | first) | default(none) }}"
+
+- name: B2 bucket | Plan bucket changes
+  ansible.builtin.set_fact:
+    b2_bucket_changes: "{{ b2_bucket_current_bucket | b2_bucket_plan(b2_retention_days, b2_hidden_days) }}"
+
+- name: B2 bucket | Report bucket creation in check mode
+  ansible.builtin.debug:
+    msg: "B2 would create bucket {{ b2_target.name }}"
+  changed_when: true
+  when: ansible_check_mode and b2_bucket_changes.create
+
+- name: B2 bucket | Report hub key creation for absent bucket in check mode
+  ansible.builtin.debug:
+    msg: "B2 would create hub key {{ b2_target.machine }}-hub-backup"
+  changed_when: true
+  when: ansible_check_mode and b2_bucket_changes.create
+
+- name: B2 bucket | Create private locked bucket on controller
+  ansible.builtin.uri:
+    url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_create_bucket"
+    method: POST
+    headers:
+      Authorization: "{{ b2_bucket_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      accountId: "{{ b2_bucket_master_auth.json.accountId }}"
+      bucketName: "{{ b2_target.name }}"
+      bucketType: allPrivate
+      fileLockEnabled: true
+      lifecycleRules:
+        - daysFromHidingToDeleting: "{{ b2_hidden_days }}"
+          daysFromStartingToCancelingUnfinishedLargeFiles: null
+          daysFromUploadingToHiding: null
+          fileNamePrefix: ""
+    status_code: [200, 400]
+    return_content: true
+  register: b2_bucket_created_bucket
+  changed_when: b2_bucket_created_bucket.status | default(0) == 200
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  when: b2_bucket_changes.create and not ansible_check_mode
+
+- name: B2 bucket | Report create failure
+  ansible.builtin.fail:
+    msg: "b2_create_bucket failed for {{ b2_target.name }}: {{ b2_bucket_created_bucket.json.code | default('unknown') }}"
+  when: b2_bucket_created_bucket is not skipped and b2_bucket_created_bucket.status | default(200) != 200
+
+- name: B2 bucket | Use newly created bucket
+  ansible.builtin.set_fact:
+    b2_bucket_current_bucket: "{{ b2_bucket_created_bucket.json }}"
+  when: b2_bucket_created_bucket is not skipped
+
+- name: B2 bucket | Plan settings after creation
+  ansible.builtin.set_fact:
+    b2_bucket_changes: "{{ b2_bucket_current_bucket | b2_bucket_plan(b2_retention_days, b2_hidden_days) }}"
+  when: b2_bucket_current_bucket is not none
+
+- name: B2 bucket | Report bucket settings update in check mode
+  ansible.builtin.debug:
+    msg: "B2 would update bucket {{ b2_target.name }} settings"
+  changed_when: true
+  when: ansible_check_mode and (b2_bucket_changes.create or b2_bucket_changes['update'])
+
+- name: B2 bucket | Set exact lock and lifecycle settings on controller
+  ansible.builtin.uri:
+    url: "{{ b2_bucket_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_update_bucket"
+    method: POST
+    headers:
+      Authorization: "{{ b2_bucket_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      accountId: "{{ b2_bucket_master_auth.json.accountId }}"
+      bucketId: "{{ b2_bucket_current_bucket.bucketId }}"
+      bucketType: allPrivate
+      fileLockEnabled: true
+      defaultRetention:
+        mode: compliance
+        period:
+          duration: "{{ b2_retention_days }}"
+          unit: days
+      lifecycleRules:
+        - daysFromHidingToDeleting: "{{ b2_hidden_days }}"
+          daysFromStartingToCancelingUnfinishedLargeFiles: null
+          daysFromUploadingToHiding: null
+          fileNamePrefix: ""
+    return_content: true
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  run_once: true
+  no_log: true
+  when: b2_bucket_current_bucket is not none and b2_bucket_changes['update'] and not ansible_check_mode
+
+- name: B2 bucket | Reconcile this bucket's hub key
+  ansible.builtin.include_tasks: key.yml
+  when: b2_bucket_current_bucket is not none

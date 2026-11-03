@@ -26,6 +26,15 @@ jobs:
       - run: pip install -r ../requirements.txt
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
+      - name: Vaultwarden driver restores the runner environment
+        run: |
+          before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          before_manager=$(systemctl show-environment)
+          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/vaultwarden_backup/run.sh
+          after_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          after_manager=$(systemctl show-environment)
+          test "$before_file" = "$after_file" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
+          test "$before_manager" = "$after_manager" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
       - name: Existing Vaultwarden test accounts survive driver refusal
         run: |
           for account in bstest vwtest; do
@@ -39,15 +48,6 @@ jobs:
             test -d "/home/$account" || { echo "ASSERTION FAILED: $account home removed"; exit 1; }
             sudo userdel -r "$account"
           done
-      - name: Vaultwarden driver restores the runner environment
-        run: |
-          before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
-          before_manager=$(systemctl show-environment)
-          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/vaultwarden_backup/run.sh
-          after_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
-          after_manager=$(systemctl show-environment)
-          test "$before_file" = "$after_file" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
-          test "$before_manager" = "$after_manager" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
 
   b2-bucket:
     runs-on: ubuntu-latest

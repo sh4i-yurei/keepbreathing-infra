@@ -283,7 +283,15 @@ class Handler(BaseHTTPRequestHandler):
                         "defaultRetention": {"mode": None, "period": None},
                     },
                 },
-                "lifecycleRules": payload.get("lifecycleRules", []),
+                "lifecycleRules": [
+                    {
+                        **rule,
+                        "daysFromStartingToCancelingUnfinishedLargeFiles": rule.get(
+                            "daysFromStartingToCancelingUnfinishedLargeFiles"
+                        ),
+                    }
+                    for rule in payload.get("lifecycleRules", [])
+                ],
                 "revision": 1,
             }
             state.buckets.append(result)

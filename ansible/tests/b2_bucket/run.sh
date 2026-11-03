@@ -76,6 +76,14 @@ grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/bucket.log" || {
 assert_state idempotent
 printf 'PASS second run changed=0\n'
 
+control '{"action":"change_bucket","values":{"lifecycleRules":[{"daysFromHidingToDeleting":30,"daysFromStartingToCancelingUnfinishedLargeFiles":null,"daysFromUploadingToHiding":null,"fileNamePrefix":""}]}}'
+clear_calls
+run verify
+run bucket
+grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/bucket.log" || fail 'real B2 rule next run changed=0'
+assert_state idempotent
+printf 'PASS real B2 lifecycle rule verifies and stays unchanged\n'
+
 old=$(key_id)
 control "$(jq -nc --arg id "$old" '{action:"remove_key",id:$id}')"
 clear_calls
@@ -105,6 +113,18 @@ clear_calls
 run bucket
 grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/bucket.log" || fail 'drift correction next run changed=0'
 printf 'PASS bucket drift corrected and idempotent\n'
+
+control '{"action":"change_bucket","values":{"lifecycleRules":[{"daysFromHidingToDeleting":30,"daysFromStartingToCancelingUnfinishedLargeFiles":7,"daysFromUploadingToHiding":null,"fileNamePrefix":""}]}}'
+clear_calls
+run bucket
+assert_state drift
+printf 'PASS unfinished large file lifecycle drift corrected\n'
+
+control '{"action":"change_bucket","values":{"lifecycleRules":[{"daysFromHidingToDeleting":30,"daysFromStartingToCancelingUnfinishedLargeFiles":null,"daysFromUploadingToHiding":null,"fileNamePrefix":""},{"daysFromHidingToDeleting":1,"fileNamePrefix":"logs/"}]}}'
+clear_calls
+run bucket
+assert_state drift
+printf 'PASS extra lifecycle rule removed\n'
 
 old=$(key_id)
 before=$(sha256sum "$credential" | cut -d' ' -f1)

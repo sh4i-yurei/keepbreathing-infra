@@ -55,6 +55,105 @@ def test_matching_bucket_needs_no_change():
     assert module.b2_bucket_plan(bucket, 30, 30) == {"create": False, "update": False}
 
 
+@pytest.mark.parametrize(
+    "rule_change, expected_update",
+    [
+        ({"daysFromStartingToCancelingUnfinishedLargeFiles": None}, False),
+        ({}, False),
+        ({"daysFromStartingToCancelingUnfinishedLargeFiles": 7}, True),
+        ({"fileNamePrefix": "other/"}, True),
+    ],
+)
+def test_live_bucket_lifecycle_rules_plan_exact_changes(rule_change, expected_update):
+    rule = {
+        "daysFromHidingToDeleting": 30,
+        "daysFromUploadingToHiding": None,
+        "fileNamePrefix": "",
+    }
+    rule.update(rule_change)
+    bucket = {
+        "bucketType": "allPrivate",
+        "fileLockConfiguration": {
+            "value": {
+                "isFileLockEnabled": True,
+                "defaultRetention": {
+                    "mode": "compliance",
+                    "period": {"duration": 30, "unit": "days"},
+                },
+            }
+        },
+        "lifecycleRules": [rule],
+    }
+    assert module.b2_bucket_plan(bucket, 30, 30) == {
+        "create": False,
+        "update": expected_update,
+    }
+
+
+def test_extra_lifecycle_rule_needs_update():
+    bucket = {
+        "bucketType": "allPrivate",
+        "fileLockConfiguration": {
+            "value": {
+                "isFileLockEnabled": True,
+                "defaultRetention": {
+                    "mode": "compliance",
+                    "period": {"duration": 30, "unit": "days"},
+                },
+            }
+        },
+        "lifecycleRules": [
+            {
+                "daysFromHidingToDeleting": 30,
+                "daysFromStartingToCancelingUnfinishedLargeFiles": None,
+                "daysFromUploadingToHiding": None,
+                "fileNamePrefix": "",
+            },
+            {"daysFromHidingToDeleting": 1, "fileNamePrefix": "logs/"},
+        ],
+    }
+    assert module.b2_bucket_plan(bucket, 30, 30) == {"create": False, "update": True}
+
+
+@pytest.mark.parametrize(
+    "rules, expected_update",
+    [
+        ([{"daysFromHidingToDeleting": 30, "fileNamePrefix": ""}], False),
+        ([{"daysFromHidingToDeleting": 30}], True),
+        ([{"daysFromHidingToDeleting": 30, "fileNamePrefix": "", "other": 1}], True),
+        (["invalid rule"], True),
+    ],
+)
+def test_lifecycle_rule_optional_fields_and_invalid_shapes(rules, expected_update):
+    bucket = {
+        "bucketType": "allPrivate",
+        "fileLockConfiguration": {
+            "value": {
+                "isFileLockEnabled": True,
+                "defaultRetention": {
+                    "mode": "compliance",
+                    "period": {"duration": 30, "unit": "days"},
+                },
+            }
+        },
+        "lifecycleRules": rules,
+    }
+    assert module.b2_bucket_plan(bucket, 30, 30) == {
+        "create": False,
+        "update": expected_update,
+    }
+
+
+def test_filter_interface_exposes_shared_lifecycle_comparison():
+    filters = module.FilterModule().filters()
+    assert (
+        filters["b2_lifecycle_rules_match"](
+            [{"daysFromHidingToDeleting": 30, "fileNamePrefix": ""}], 30
+        )
+        is True
+    )
+
+
 def test_filter_interface_exposes_bucket_plan():
     assert module.FilterModule().filters()["b2_bucket_plan"] is module.b2_bucket_plan
 

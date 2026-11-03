@@ -15,6 +15,7 @@ retention = {"mode": "compliance", "period": {"duration": 30, "unit": "days"}}
 lifecycle = [
     {
         "daysFromHidingToDeleting": 30,
+        "daysFromStartingToCancelingUnfinishedLargeFiles": None,
         "daysFromUploadingToHiding": None,
         "fileNamePrefix": "",
     }
@@ -77,6 +78,8 @@ if case == "check":
         assert not named(name), name
 elif case == "first":
     key = assert_key()
+    assert named("b2_create_bucket")[0]["request"]["lifecycleRules"] == lifecycle
+    assert named("b2_update_bucket")[0]["request"]["lifecycleRules"] == lifecycle
     uploads = named("b2_upload_file")
     assert len(uploads) == 2, uploads
     assert all(call["key"] == key["applicationKeyId"] for call in uploads)
@@ -127,6 +130,7 @@ elif case == "replaced_key":
 elif case == "drift":
     assert_bucket()
     assert len(named("b2_update_bucket")) == 1
+    assert named("b2_update_bucket")[0]["request"]["lifecycleRules"] == lifecycle
 elif case == "legacy":
     assert not named("b2_create_key") and not named("b2_delete_key")
 elif case == "paged":

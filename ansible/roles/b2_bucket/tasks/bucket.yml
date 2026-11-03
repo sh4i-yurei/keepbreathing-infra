@@ -21,6 +21,7 @@
       fileLockEnabled: true
       lifecycleRules:
         - daysFromHidingToDeleting: "{{ b2_hidden_days }}"
+          daysFromStartingToCancelingUnfinishedLargeFiles: null
           daysFromUploadingToHiding: null
           fileNamePrefix: ""
     status_code: [200, 400]
@@ -67,6 +68,7 @@
           unit: days
       lifecycleRules:
         - daysFromHidingToDeleting: "{{ b2_hidden_days }}"
+          daysFromStartingToCancelingUnfinishedLargeFiles: null
           daysFromUploadingToHiding: null
           fileNamePrefix: ""
     return_content: true

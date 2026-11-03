@@ -13,7 +13,7 @@
       - b2_bucket_current_bucket.bucketType == 'allPrivate'
       - b2_bucket_current_bucket.fileLockConfiguration.value.isFileLockEnabled == true
       - "b2_bucket_current_bucket.fileLockConfiguration.value.defaultRetention == {'mode':'compliance','period':{'duration': b2_retention_days,'unit':'days'}}"
-      - "b2_bucket_current_bucket.lifecycleRules == [{'daysFromHidingToDeleting': b2_hidden_days,'daysFromUploadingToHiding': none,'fileNamePrefix':''}]"
+      - b2_bucket_current_bucket.lifecycleRules | b2_lifecycle_rules_match(b2_hidden_days)
     fail_msg: "B2 bucket settings differ for {{ b2_target.name }}"
 
 - name: B2 bucket | Read stored hub key ID for verification

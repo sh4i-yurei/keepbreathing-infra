@@ -26,6 +26,8 @@ jobs:
       - run: pip install -r ../requirements.txt
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
+      - name: Seed system manager XDG setting for restoration checks
+        run: sudo systemctl set-environment "XDG_RUNTIME_DIR=/run/user/$(id -u)"
       - name: Existing Vaultwarden test accounts survive driver refusal
         run: |
           for account in bstest vwtest; do
@@ -62,6 +64,7 @@ jobs:
             echo 'ASSERTION FAILED: busy mount run was accepted'; exit 1
           fi
           test -s /tmp/vw-held-mount || { echo 'ASSERTION FAILED: mount holder never entered mount'; tail -30 /tmp/vw-busy-mount.log; exit 1; }
+          test "$(sudo readlink "/proc/$(cat /tmp/vw-held-mount.pid)/cwd")" = "$(cat /tmp/vw-held-mount)" || { echo 'ASSERTION FAILED: mount holder left mount before driver exit'; exit 1; }
           grep -E '^CLEANUP FAILED:.*unmount' /tmp/vw-busy-mount.log || { tail -30 /tmp/vw-busy-mount.log; exit 1; }
           if id bstest; then echo 'ASSERTION FAILED: bstest survived busy mount cleanup'; exit 1; fi
           test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }

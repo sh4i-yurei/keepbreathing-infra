@@ -1,0 +1,26 @@
+---
+- name: Test the B2 copy role locally
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    b2_buckets:
+      - machine: testhost
+        name: b2copy-locked
+    b2_copy_user: bstest
+    b2_copy_repository_root: "{{ lookup('ansible.builtin.env', 'TEST_MOUNT') }}/restic"
+    b2_copy_restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
+    b2_copy_aws_image: "{{ lookup('ansible.builtin.env', 'TEST_AWS_IMAGE') }}"
+    b2_copy_passwords:
+      testhost:
+        hub: "{{ lookup('ansible.builtin.env', 'TEST_HUB_PASSWORD') }}"
+        b2: "{{ lookup('ansible.builtin.env', 'TEST_B2_PASSWORD') }}"
+    b2_copy_timeout: 60
+  roles:
+    - b2_copy
+  tasks:
+    - name: Fail after B2 copy for driver cleanup test
+      ansible.builtin.fail:
+        msg: Deliberate failure after B2 copy
+      when: lookup('ansible.builtin.env', 'TEST_FAIL_AFTER_COPY_ROLE') == '1'

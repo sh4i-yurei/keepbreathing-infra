@@ -1,0 +1,4 @@
+---
+- name: B2 copy | Implementation pending test assertions
+  ansible.builtin.fail:
+    msg: B2 copy role has not been implemented

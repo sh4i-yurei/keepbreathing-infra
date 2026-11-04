@@ -7,6 +7,10 @@ for account in bstest vwtest; do
     exit 1
   fi
 done
+if [[ -e /etc/systemd/system/vaultwarden-backup.timer || -e /etc/systemd/system/vaultwarden-backup.service ]]; then
+  printf 'ASSERTION FAILED: vaultwarden-backup units already exist\n' >&2
+  exit 1
+fi
 
 work=$(mktemp -d)
 point=$work/backup

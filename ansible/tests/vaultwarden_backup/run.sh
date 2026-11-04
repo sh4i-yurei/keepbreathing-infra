@@ -205,6 +205,9 @@ assert_no_restore_state() {
   [[ -z $(find /tmp -maxdepth 1 -name 'vaultwarden-restore-*' -print -quit) ]] || fail 'restore folder must be removed'
 }
 
+if [[ ${TEST_FAIL_AT_IMAGE_PULL:-} == 1 ]]; then
+  export TEST_RESTIC_IMAGE="localhost/vaultwarden-backup-unpullable@sha256:$(printf '0%.0s' {1..64})"
+fi
 play "$work/first.log"
 for folder in /home/vwtest/.config /home/vwtest/.local /home/vwtest/.config/systemd /home/vwtest/.config/systemd/user; do
   [[ $(stat -c '%a:%U:%G' "$folder") == 755:vwtest:root ]] || fail "role must preserve shared folder mode, owner and group: $folder"

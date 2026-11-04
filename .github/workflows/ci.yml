@@ -81,6 +81,22 @@ jobs:
           test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
           sudo kill "$(cat /tmp/vw-held-mount.pid)"
           sudo umount "$(cat /tmp/vw-held-mount)"
+      - name: Failed image pull removes Vaultwarden system units
+        run: |
+          before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          before_manager=$(systemctl show-environment)
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AT_IMAGE_PULL=1 bash tests/vaultwarden_backup/run.sh > /tmp/vw-image-pull-failure.log 2>&1; then
+            echo 'ASSERTION FAILED: failed image pull was accepted'; exit 1
+          fi
+          grep -F 'TASK [vaultwarden_backup : Vaultwarden backup | Pull the pinned restic image]' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull task was not reached'; tail -30 /tmp/vw-image-pull-failure.log; exit 1; }
+          grep -F 'ASSERTION FAILED: Vaultwarden backup role play must pass' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull failure was not reported'; tail -30 /tmp/vw-image-pull-failure.log; exit 1; }
+          ! grep -E '^CLEANUP FAILED:' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull cleanup failed'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.timer || { echo 'ASSERTION FAILED: Vaultwarden timer file survived image pull cleanup'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.service || { echo 'ASSERTION FAILED: Vaultwarden service file survived image pull cleanup'; exit 1; }
+          test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded after image pull failure'; exit 1; }
+          ! id vwtest && ! id bstest || { echo 'ASSERTION FAILED: test account survived image pull cleanup'; exit 1; }
+          test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
+          test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
       - name: Vaultwarden driver restores the runner environment
         run: |
           before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)

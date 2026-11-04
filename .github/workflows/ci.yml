@@ -261,7 +261,7 @@ jobs:
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_backup_disk/run.sh
 
   python:
-    uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@95383033d70f2b91d79792739806b44e1a9bf754
+    uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@8d1ea0f42d357f6639eda1ac9359b9b1420d8789
     with:
       coverage_floor: 100
       caller_workflow: .github/workflows/ci.yml

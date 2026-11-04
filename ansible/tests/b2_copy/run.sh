@@ -197,6 +197,10 @@ assert len(hub) == len(b2) == 1
 assert [s['id'] for s in hub] == [s['original'] for s in b2]
 PY
 printf 'PASS first role run copies snapshot and starts timer\n'
+if [[ ${TEST_FAIL_AFTER_COPY_ROLE:-} == 1 ]]; then
+  TEST_POST_RUN_FAILURE_ARMED=1 play "$work/post-run-failure.log"
+  fail 'post-run failure injection did not fail'
+fi
 
 play "$work/check-existing.log" --check --diff
 grep -Eq 'localhost[[:space:]]+:.*changed=0.*failed=0' "$work/check-existing.log" ||

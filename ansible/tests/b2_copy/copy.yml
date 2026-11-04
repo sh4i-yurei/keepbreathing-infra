@@ -23,4 +23,6 @@
     - name: Fail after B2 copy for driver cleanup test
       ansible.builtin.fail:
         msg: Deliberate failure after B2 copy
-      when: lookup('ansible.builtin.env', 'TEST_FAIL_AFTER_COPY_ROLE') == '1'
+      when:
+        - lookup('ansible.builtin.env', 'TEST_FAIL_AFTER_COPY_ROLE') == '1'
+        - lookup('ansible.builtin.env', 'TEST_POST_RUN_FAILURE_ARMED') == '1'

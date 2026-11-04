@@ -38,6 +38,7 @@ jobs:
             id "$account" || { echo "ASSERTION FAILED: $account account removed"; exit 1; }
             test -d "/home/$account" || { echo "ASSERTION FAILED: $account home removed"; exit 1; }
             sudo userdel -r "$account"
+          done
       - name: Backup server failure leaves no driver state
         run: |
           before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)

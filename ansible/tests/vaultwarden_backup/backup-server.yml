@@ -18,3 +18,8 @@
     backup_server_verify_restic_password: "{{ lookup('ansible.builtin.env', 'TEST_VERIFY_RESTIC_PASSWORD') }}"
   roles:
     - backup_server
+  tasks:
+    - name: Fail after backup server for driver cleanup test
+      ansible.builtin.fail:
+        msg: Deliberate failure after backup server setup
+      when: lookup('ansible.builtin.env', 'TEST_FAIL_AFTER_BACKUP_SERVER') == '1'

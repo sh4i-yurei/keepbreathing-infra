@@ -1,0 +1,9 @@
+---
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+- name: Copy hub backup repositories to B2
+  hosts: hub
+  force_handlers: true
+  roles:
+    - b2_copy

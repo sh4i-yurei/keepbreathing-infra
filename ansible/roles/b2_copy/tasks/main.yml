@@ -1,4 +1,148 @@
 ---
-- name: B2 copy | Implementation pending test assertions
-  ansible.builtin.fail:
-    msg: B2 copy role has not been implemented
+- name: B2 copy | Require both passwords for every machine
+  ansible.builtin.assert:
+    that:
+      - (b2_copy_passwords.get(item.machine, {}).get('hub', '') | length) > 0
+      - (b2_copy_passwords.get(item.machine, {}).get('b2', '') | length) > 0
+    fail_msg: "b2_copy_passwords has no hub and b2 password for {{ item.machine }}"
+    quiet: true
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+
+- name: B2 copy | Check account lingering
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ b2_copy_user }}"
+  register: b2_copy_linger
+
+- name: B2 copy | Require account lingering
+  ansible.builtin.assert:
+    that: b2_copy_linger.stat.exists
+    fail_msg: "Account lingering is required; run the backup_server role first."
+    quiet: true
+
+- name: B2 copy | Check credential files
+  ansible.builtin.stat:
+    path: "/home/{{ b2_copy_user }}/.config/b2/{{ item.machine }}.env"
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  register: b2_copy_credentials
+
+- name: B2 copy | Require credential files
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: "B2 credentials for {{ item.item.machine }} are missing; run playbooks/b2.yml first."
+    quiet: true
+  loop: "{{ b2_copy_credentials.results }}"
+  loop_control:
+    label: "{{ item.item.machine }}"
+
+- name: B2 copy | Read account UID
+  ansible.builtin.command:
+    argv: [id, -u, "{{ b2_copy_user }}"]
+  register: b2_copy_uid
+  changed_when: false
+  check_mode: false
+
+- name: B2 copy | Check shared systemd folder
+  ansible.builtin.stat:
+    path: "/home/{{ b2_copy_user }}/.config/systemd/user"
+  register: b2_copy_systemd_folder
+
+- name: B2 copy | Create missing shared systemd folder
+  ansible.builtin.file:
+    path: "/home/{{ b2_copy_user }}/.config/systemd/user"
+    state: directory
+    owner: "{{ b2_copy_user }}"
+    group: "{{ b2_copy_user }}"
+    mode: "0700"
+  when: not b2_copy_systemd_folder.stat.exists
+
+- name: B2 copy | Create private password root
+  ansible.builtin.file:
+    path: "/home/{{ b2_copy_user }}/.config/b2-copy"
+    state: directory
+    owner: "{{ b2_copy_user }}"
+    group: "{{ b2_copy_user }}"
+    mode: "0700"
+
+- name: B2 copy | Create each machine's password folder
+  ansible.builtin.file:
+    path: "/home/{{ b2_copy_user }}/.config/b2-copy/{{ item.machine }}"
+    state: directory
+    owner: "{{ b2_copy_user }}"
+    group: "{{ b2_copy_user }}"
+    mode: "0700"
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+
+- name: "B2 copy | Write private hub password to {{ '/home/' ~ b2_copy_user ~ '/.config/b2-copy/' ~ item.machine ~ '/hub-password' }}"
+  ansible.builtin.copy:
+    content: "{{ b2_copy_passwords[item.machine].hub }}\n"
+    dest: "/home/{{ b2_copy_user }}/.config/b2-copy/{{ item.machine }}/hub-password"
+    owner: "{{ b2_copy_user }}"
+    group: "{{ b2_copy_user }}"
+    mode: "0600"
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  no_log: true
+  diff: false
+
+- name: "B2 copy | Write private B2 password to {{ '/home/' ~ b2_copy_user ~ '/.config/b2-copy/' ~ item.machine ~ '/b2-password' }}"
+  ansible.builtin.copy:
+    content: "{{ b2_copy_passwords[item.machine].b2 }}\n"
+    dest: "/home/{{ b2_copy_user }}/.config/b2-copy/{{ item.machine }}/b2-password"
+    owner: "{{ b2_copy_user }}"
+    group: "{{ b2_copy_user }}"
+    mode: "0600"
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  no_log: true
+  diff: false
+
+- name: "B2 copy | Write user unit to {{ '/home/' ~ b2_copy_user ~ '/.config/systemd/user/b2-copy-run@.service' }}"
+  ansible.builtin.template:
+    src: b2-copy-run@.service.j2
+    dest: "/home/{{ b2_copy_user }}/.config/systemd/user/b2-copy-run@.service"
+    owner: "{{ b2_copy_user }}"
+    group: "{{ b2_copy_user }}"
+    mode: "0644"
+  notify: Reload B2 copy user manager
+
+- name: "B2 copy | Write system unit to {{ '/etc/systemd/system/' ~ item }}"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - b2-copy@.service
+    - b2-copy@.timer
+  notify: Reload B2 copy system manager
+
+- name: B2 copy | Pull pinned client images
+  containers.podman.podman_image:
+    name: "{{ item }}"
+  loop:
+    - "{{ b2_copy_restic_image }}"
+    - "{{ b2_copy_aws_image }}"
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ b2_copy_uid.stdout }}"
+  when: not ansible_check_mode
+
+- name: B2 copy | Apply manager reloads
+  ansible.builtin.meta: flush_handlers
+
+- name: B2 copy | Prepare and verify every machine
+  ansible.builtin.include_tasks: copy-one.yml
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    loop_var: b2_copy_target
+    label: "{{ b2_copy_target.machine }}"

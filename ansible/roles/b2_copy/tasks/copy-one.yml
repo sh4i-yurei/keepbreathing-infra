@@ -1,0 +1,79 @@
+---
+- name: "B2 copy | Probe B2 repository for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
+      - --volume
+      - "/home/{{ b2_copy_user }}/.config/b2-copy/{{ b2_copy_target.machine }}:/passwords:ro"
+      - "{{ b2_copy_restic_image }}"
+      - --password-file
+      - /passwords/b2-password
+      - snapshots
+      - --json
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment: &b2_copy_user_environment
+    XDG_RUNTIME_DIR: "/run/user/{{ b2_copy_uid.stdout }}"
+  register: b2_copy_probe
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: "B2 copy | Require an available or absent repository for {{ b2_copy_target.machine }}"
+  ansible.builtin.assert:
+    that: b2_copy_probe.rc in [0, 10]
+    fail_msg: "{{ b2_copy_probe.stderr }}"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: "B2 copy | Initialize absent B2 repository for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
+      - --volume
+      - "{{ b2_copy_repository_root }}/{{ b2_copy_target.machine }}:/source:ro"
+      - --volume
+      - "/home/{{ b2_copy_user }}/.config/b2-copy/{{ b2_copy_target.machine }}:/passwords:ro"
+      - "{{ b2_copy_restic_image }}"
+      - --password-file
+      - /passwords/b2-password
+      - init
+      - --from-repo
+      - /source
+      - --from-password-file
+      - /passwords/hub-password
+      - --copy-chunker-params
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment: *b2_copy_user_environment
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - b2_copy_probe.rc == 10
+
+- name: "B2 copy | Enable and start timer for {{ b2_copy_target.machine }}"
+  ansible.builtin.systemd_service:
+    name: "b2-copy@{{ b2_copy_target.machine }}.timer"
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: "B2 copy | Verify copy for {{ b2_copy_target.machine }}"
+  ansible.builtin.include_tasks: verify-one.yml
+  when: not ansible_check_mode

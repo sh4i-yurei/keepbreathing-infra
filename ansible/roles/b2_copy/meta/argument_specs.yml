@@ -1,0 +1,19 @@
+---
+argument_specs:
+  main:
+    short_description: Copy the hub's repositories into their B2 buckets
+    options:
+      b2_buckets:
+        type: list
+        elements: dict
+        required: true
+      b2_copy_user:
+        type: str
+        required: true
+      b2_copy_repository_root:
+        type: path
+        required: true
+      b2_copy_passwords:
+        type: dict
+        required: true
+        no_log: true

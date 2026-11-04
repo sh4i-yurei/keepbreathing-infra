@@ -10,6 +10,12 @@ b2_credentials_user: "{{ backup_server_user }}"
 b2_buckets:
   - machine: vaultserv
     name: keepbreathing-vaultserv-backup
+b2_copy_user: "{{ backup_server_user }}"
+b2_copy_repository_root: "{{ backup_server_mount_point }}/restic"
+b2_copy_passwords:
+  vaultserv:
+    hub: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='restic') }}"
+    b2: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='b2_restic') }}"
 backup_server_port: 8082
 backup_server_logins:
   - name: verify

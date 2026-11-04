@@ -1,0 +1,191 @@
+---
+- name: "B2 copy verify | Read B2 credential file for {{ b2_copy_target.machine }}"
+  ansible.builtin.slurp:
+    src: "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
+  register: b2_copy_credential_contents
+  no_log: true
+
+- name: "B2 copy verify | Parse repository endpoint for {{ b2_copy_target.machine }}"
+  ansible.builtin.set_fact:
+    b2_copy_repository: >-
+      {{ ((b2_copy_credential_contents.content | b64decode).splitlines()
+          | select('match', '^RESTIC_REPOSITORY=') | first).split('=', 1)[1] }}
+  no_log: true
+
+- name: "B2 copy verify | Set S3 address and lock prefix for {{ b2_copy_target.machine }}"
+  ansible.builtin.set_fact:
+    b2_copy_endpoint: >-
+      {{ (b2_copy_repository[3:] | urlsplit('scheme')) ~ '://' ~
+         (b2_copy_repository[3:] | urlsplit('netloc')) }}
+    b2_copy_region: "{{ (b2_copy_repository[3:] | urlsplit('hostname')).split('.')[1] }}"
+    b2_copy_bucket: "{{ (b2_copy_repository[3:] | urlsplit('path')).split('/')[1] }}"
+    b2_copy_lock_prefix: >-
+      {{ ((b2_copy_repository[3:] | urlsplit('path')).split('/')[2:] | join('/')) ~ '/locks/' }}
+
+- name: "B2 copy verify | Read locks before copy for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --env-file
+      - "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
+      - "{{ b2_copy_aws_image }}"
+      - --endpoint-url
+      - "{{ b2_copy_endpoint }}"
+      - --region
+      - "{{ b2_copy_region }}"
+      - s3api
+      - list-object-versions
+      - --bucket
+      - "{{ b2_copy_bucket }}"
+      - --prefix
+      - "{{ b2_copy_lock_prefix }}"
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment: &b2_copy_verify_environment
+    XDG_RUNTIME_DIR: "/run/user/{{ b2_copy_uid.stdout }}"
+  register: b2_copy_locks_before
+  changed_when: false
+
+- name: "B2 copy verify | Start timer's system service for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - start
+      - "b2-copy@{{ b2_copy_target.machine }}.service"
+  changed_when: false
+
+- name: "B2 copy verify | List hub snapshots for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --volume
+      - "{{ b2_copy_repository_root }}/{{ b2_copy_target.machine }}:/source:ro"
+      - --volume
+      - "/home/{{ b2_copy_user }}/.config/b2-copy/{{ b2_copy_target.machine }}:/passwords:ro"
+      - "{{ b2_copy_restic_image }}"
+      - --repo
+      - /source
+      - --password-file
+      - /passwords/hub-password
+      - snapshots
+      - --json
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment: *b2_copy_verify_environment
+  register: b2_copy_hub_snapshots
+  changed_when: false
+
+- name: "B2 copy verify | List B2 snapshots for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
+      - --volume
+      - "/home/{{ b2_copy_user }}/.config/b2-copy/{{ b2_copy_target.machine }}:/passwords:ro"
+      - "{{ b2_copy_restic_image }}"
+      - --password-file
+      - /passwords/b2-password
+      - snapshots
+      - --json
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment: *b2_copy_verify_environment
+  register: b2_copy_b2_snapshots
+  changed_when: false
+
+- name: "B2 copy verify | Require each hub snapshot's copy for {{ b2_copy_target.machine }}"
+  ansible.builtin.assert:
+    that: >-
+      ((b2_copy_hub_snapshots.stdout | from_json | map(attribute='id') | list) | sort)
+      ==
+      ((b2_copy_b2_snapshots.stdout | from_json | map(attribute='original') | list) | sort)
+    fail_msg: "B2 copy snapshots do not match the hub repository"
+    quiet: true
+
+- name: "B2 copy verify | Check all B2 data for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
+      - --volume
+      - "/home/{{ b2_copy_user }}/.config/b2-copy/{{ b2_copy_target.machine }}:/passwords:ro"
+      - "{{ b2_copy_restic_image }}"
+      - --password-file
+      - /passwords/b2-password
+      - check
+      - --read-data
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment: *b2_copy_verify_environment
+  changed_when: false
+
+- name: "B2 copy verify | Read locks after copy for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --env-file
+      - "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
+      - "{{ b2_copy_aws_image }}"
+      - --endpoint-url
+      - "{{ b2_copy_endpoint }}"
+      - --region
+      - "{{ b2_copy_region }}"
+      - s3api
+      - list-object-versions
+      - --bucket
+      - "{{ b2_copy_bucket }}"
+      - --prefix
+      - "{{ b2_copy_lock_prefix }}"
+  become: true
+  become_user: "{{ b2_copy_user }}"
+  environment: *b2_copy_verify_environment
+  register: b2_copy_locks_after
+  changed_when: false
+
+- name: "B2 copy verify | Compare kept and hidden locks for {{ b2_copy_target.machine }}"
+  ansible.builtin.set_fact:
+    b2_copy_kept_keys: "{{ (b2_copy_locks_after.stdout | from_json).get('Versions', []) | map(attribute='Key') | unique | list }}"
+    b2_copy_hidden_keys: >-
+      {{ (b2_copy_locks_after.stdout | from_json).get('DeleteMarkers', [])
+         | selectattr('IsLatest', 'equalto', true) | map(attribute='Key') | unique | list }}
+    b2_copy_old_hidden_keys: >-
+      {{ (b2_copy_locks_before.stdout | from_json).get('DeleteMarkers', [])
+         | selectattr('IsLatest', 'equalto', true) | map(attribute='Key') | unique | list }}
+
+- name: "B2 copy verify | Require a new hidden lock and no deleted versions for {{ b2_copy_target.machine }}"
+  ansible.builtin.assert:
+    that:
+      - b2_copy_kept_keys | length > 0
+      - (b2_copy_kept_keys | difference(b2_copy_hidden_keys)) | length == 0
+      - (b2_copy_hidden_keys | difference(b2_copy_kept_keys)) | length == 0
+      - (b2_copy_hidden_keys | difference(b2_copy_old_hidden_keys)) | length > 0
+    fail_msg: "B2 deleted the copy's lock file instead of hiding it"
+    quiet: true

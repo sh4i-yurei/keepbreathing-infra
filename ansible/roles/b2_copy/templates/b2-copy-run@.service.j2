@@ -1,0 +1,14 @@
+# Managed by Ansible (roles/b2_copy). Edits here are overwritten.
+[Unit]
+Description=Copy the hub repository for %i to B2
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ b2_copy_timeout }}
+ExecStart=/usr/bin/podman run --rm --network host --security-opt label=disable \
+  --env-file /home/{{ b2_copy_user }}/.config/b2/%i.env \
+  --volume {{ b2_copy_repository_root }}/%i:/source:ro \
+  --volume /home/{{ b2_copy_user }}/.config/b2-copy/%i:/passwords:ro \
+  {{ b2_copy_restic_image }} --password-file /passwords/b2-password \
+  copy --from-repo /source --from-password-file /passwords/hub-password \
+  --retry-lock {{ b2_copy_lock_wait }}

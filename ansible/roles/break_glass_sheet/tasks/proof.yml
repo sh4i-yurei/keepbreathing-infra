@@ -1,0 +1,70 @@
+---
+- name: Break-glass sheet | Prove restore and write refusal
+  block:
+    - name: Break-glass sheet | Make private proof folder
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: break-glass-sheet
+      register: break_glass_sheet_temp
+      no_log: true
+
+    - name: Break-glass sheet | Pull pinned restic image
+      ansible.builtin.command:
+        argv: [podman, pull, "{{ restic_image }}"]
+      changed_when: false
+      no_log: true
+
+    - name: Break-glass sheet | Pull pinned AWS CLI image
+      ansible.builtin.command:
+        argv: [podman, pull, "{{ aws_cli_image }}"]
+      changed_when: false
+      no_log: true
+
+    - name: Break-glass sheet | Prove each repository restore
+      ansible.builtin.include_tasks: prove-restore.yml
+      loop: "{{ b2_buckets }}"
+      loop_control:
+        loop_var: break_glass_sheet_target
+        label: "{{ break_glass_sheet_target.machine }}"
+      no_log: true
+
+    - name: Break-glass sheet | Write upload probe file
+      ansible.builtin.copy:
+        dest: "{{ break_glass_sheet_temp.path }}/probe"
+        content: "break-glass write probe\n"
+        mode: "0600"
+      no_log: true
+
+    - name: Break-glass sheet | Prove upload refusal for each bucket
+      ansible.builtin.include_tasks: prove-write-refusal.yml
+      loop: "{{ b2_buckets }}"
+      loop_control:
+        loop_var: break_glass_sheet_target
+        label: "{{ break_glass_sheet_target.name }}"
+      no_log: true
+  rescue:
+    - name: Break-glass sheet | Delete failed new key on controller
+      ansible.builtin.uri:
+        url: "{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_delete_key"
+        method: POST
+        headers:
+          Authorization: "{{ break_glass_sheet_master_auth.json.authorizationToken }}"
+        body_format: json
+        body:
+          applicationKeyId: "{{ break_glass_sheet_new_key.json.applicationKeyId }}"
+        return_content: true
+      delegate_to: localhost
+      become: false
+      changed_when: true
+      no_log: true
+
+    - name: Break-glass sheet | Report failed proof
+      ansible.builtin.fail:
+        msg: "{{ break_glass_sheet_proof_failure | default('Break-glass sheet proof failed') }}"
+  always:
+    - name: Break-glass sheet | Remove private proof folder
+      ansible.builtin.file:
+        path: "{{ break_glass_sheet_temp.path }}"
+        state: absent
+      when: break_glass_sheet_temp.path is defined
+      no_log: true

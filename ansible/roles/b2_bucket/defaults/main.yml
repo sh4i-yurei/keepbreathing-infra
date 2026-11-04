@@ -1,5 +1,4 @@
 ---
-b2_api_url: https://api.backblazeb2.com/b2api/v4/ # noqa: var-naming[no-role-prefix] - handoff interface
 b2_retention_days: 30 # noqa: var-naming[no-role-prefix] - handoff interface
 b2_hidden_days: 30 # noqa: var-naming[no-role-prefix] - handoff interface
 b2_key_page_size: 100 # noqa: var-naming[no-role-prefix] - paging test override

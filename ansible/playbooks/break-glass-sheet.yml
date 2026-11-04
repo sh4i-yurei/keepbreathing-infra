@@ -1,0 +1,9 @@
+---
+- name: Fetch the become password
+  ansible.builtin.import_playbook: become-password.yml
+
+- name: Rotate and prove the B2 break-glass sheet key
+  hosts: hub
+  become: true
+  roles:
+    - break_glass_sheet

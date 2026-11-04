@@ -1,0 +1,10 @@
+{% set lines = [] %}
+{% for target in b2_buckets %}
+{% set password = b2_copy_passwords[target.machine].b2 %}
+{% set endpoint = break_glass_sheet_master_auth.json.apiInfo.storageApi.s3ApiUrl %}
+{% set key_id = break_glass_sheet_new_key.json.applicationKeyId %}
+{% set key = break_glass_sheet_new_key.json.applicationKey %}
+{% set _ = lines.append(target.machine ~ ': bucket ' ~ target.name ~ ', repository password ' ~ password) %}
+{% set _ = lines.append(target.machine ~ ' restore: podman run --rm -e AWS_ACCESS_KEY_ID=' ~ key_id ~ ' -e AWS_SECRET_ACCESS_KEY=' ~ key ~ ' -e RESTIC_PASSWORD=' ~ password ~ ' -v ./restore:/restore:Z ' ~ restic_image_tag ~ ' -r s3:' ~ endpoint ~ '/' ~ target.name ~ '/restic --no-lock restore latest --target /restore --verify') %}
+{% endfor %}
+{{ lines | to_yaml }}

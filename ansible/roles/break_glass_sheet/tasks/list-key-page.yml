@@ -1,0 +1,32 @@
+---
+- name: Break-glass sheet | Read a key page on controller
+  ansible.builtin.uri:
+    url: "{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_list_keys"
+    method: POST
+    headers:
+      Authorization: "{{ break_glass_sheet_master_auth.json.authorizationToken }}"
+    body_format: json
+    body: >-
+      {{ {'accountId': break_glass_sheet_master_auth.json.accountId,
+          'maxKeyCount': break_glass_sheet_key_page_size | default(100)}
+         | combine({'startApplicationKeyId': break_glass_sheet_next_key_id}
+                   if break_glass_sheet_next_key_id else {}) }}
+    return_content: true
+  register: break_glass_sheet_key_page
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  no_log: true
+
+- name: Break-glass sheet | Keep named keys and next page ID
+  ansible.builtin.set_fact:
+    break_glass_sheet_old_keys: >-
+      {{ break_glass_sheet_old_keys +
+         (break_glass_sheet_key_page.json['keys']
+          | selectattr('keyName', 'equalto', 'break-glass-sheet') | list) }}
+    break_glass_sheet_next_key_id: "{{ break_glass_sheet_key_page.json.nextApplicationKeyId | default('', true) }}"
+  no_log: true
+
+- name: Break-glass sheet | Continue to next key page
+  ansible.builtin.include_tasks: list-key-page.yml
+  when: break_glass_sheet_next_key_id | length > 0

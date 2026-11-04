@@ -1,0 +1,60 @@
+---
+- name: Break-glass sheet | Name restore failure
+  ansible.builtin.set_fact:
+    break_glass_sheet_proof_failure: "Restore with the sheet's key failed for {{ break_glass_sheet_target.machine }}"
+  no_log: true
+
+- name: Break-glass sheet | Make target folder
+  ansible.builtin.file:
+    path: "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}"
+    state: directory
+    mode: "0700"
+  no_log: true
+
+- name: Break-glass sheet | Run sheet restore for machine
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - -e
+      - "AWS_ACCESS_KEY_ID={{ break_glass_sheet_new_key.json.applicationKeyId }}"
+      - -e
+      - "AWS_SECRET_ACCESS_KEY={{ break_glass_sheet_new_key.json.applicationKey }}"
+      - -e
+      - "RESTIC_PASSWORD={{ b2_copy_passwords[break_glass_sheet_target.machine].b2 }}"
+      - -v
+      - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}:/restore:Z"
+      - "{{ restic_image }}"
+      - -r
+      - "s3:{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.s3ApiUrl }}/{{ break_glass_sheet_target.name }}/restic"
+      - --no-lock
+      - restore
+      - latest
+      - --target
+      - /restore
+      - --verify
+  register: break_glass_sheet_restore
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Break-glass sheet | Find restored regular file
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}"
+      - -type
+      - f
+      - -print
+      - -quit
+  register: break_glass_sheet_restored_file
+  changed_when: false
+  no_log: true
+
+- name: Break-glass sheet | Require successful nonempty restore
+  ansible.builtin.assert:
+    that:
+      - break_glass_sheet_restore.rc == 0
+      - break_glass_sheet_restored_file.stdout | length > 0
+  no_log: true

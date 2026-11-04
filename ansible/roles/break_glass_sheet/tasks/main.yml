@@ -1,0 +1,141 @@
+---
+- name: Break-glass sheet | Require every repository password before API writes
+  ansible.builtin.fail:
+    msg: "b2_copy_passwords has no b2 password for {{ item.machine }}"
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  when: >-
+    b2_copy_passwords[item.machine] is not defined or
+    b2_copy_passwords[item.machine].b2 is not defined or
+    not b2_copy_passwords[item.machine].b2
+
+- name: Break-glass sheet | Authorize master key on controller
+  ansible.builtin.uri:
+    url: "{{ b2_api_url }}b2_authorize_account"
+    method: GET
+    url_username: "{{ b2_master_key_id }}"
+    url_password: "{{ b2_master_key }}"
+    force_basic_auth: true
+    return_content: true
+  register: break_glass_sheet_master_auth
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  no_log: true
+
+- name: Break-glass sheet | List buckets on controller
+  ansible.builtin.uri:
+    url: "{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_list_buckets"
+    method: POST
+    headers:
+      Authorization: "{{ break_glass_sheet_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      accountId: "{{ break_glass_sheet_master_auth.json.accountId }}"
+    return_content: true
+  register: break_glass_sheet_bucket_list
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  no_log: true
+
+- name: Break-glass sheet | Require every bucket before API writes
+  ansible.builtin.fail:
+    msg: "B2 bucket {{ item.name }} is missing; run playbooks/b2.yml first."
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    (break_glass_sheet_bucket_list.json.buckets
+     | selectattr('bucketName', 'equalto', item.name) | list | length) != 1
+
+- name: Break-glass sheet | Collect bucket IDs in inventory order
+  ansible.builtin.set_fact:
+    break_glass_sheet_bucket_ids: >-
+      {{ (break_glass_sheet_bucket_ids | default([])) +
+         [(break_glass_sheet_bucket_list.json.buckets
+           | selectattr('bucketName', 'equalto', item.name) | first).bucketId] }}
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: Break-glass sheet | Start paged key lookup
+  ansible.builtin.set_fact:
+    break_glass_sheet_old_keys: []
+    break_glass_sheet_next_key_id: ""
+  no_log: true
+
+- name: Break-glass sheet | List all key pages
+  ansible.builtin.include_tasks: list-key-page.yml
+
+- name: Break-glass sheet | Report key creation in check mode
+  ansible.builtin.debug:
+    msg: B2 would create key break-glass-sheet
+  changed_when: true
+  when: ansible_check_mode
+
+- name: Break-glass sheet | Report old-key deletion in check mode
+  ansible.builtin.debug:
+    msg: "B2 would delete key {{ item.applicationKeyId }} named break-glass-sheet"
+  changed_when: true
+  loop: "{{ break_glass_sheet_old_keys }}"
+  loop_control:
+    label: "{{ item.applicationKeyId }}"
+  when: ansible_check_mode
+
+- name: Break-glass sheet | Create scoped key on controller
+  ansible.builtin.uri:
+    url: "{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_create_key"
+    method: POST
+    headers:
+      Authorization: "{{ break_glass_sheet_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      accountId: "{{ break_glass_sheet_master_auth.json.accountId }}"
+      keyName: break-glass-sheet
+      capabilities:
+        - listBuckets
+        - listFiles
+        - readFiles
+      bucketIds: "{{ break_glass_sheet_bucket_ids }}"
+    return_content: true
+  register: break_glass_sheet_new_key
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Break-glass sheet | Prove new key on hub
+  ansible.builtin.import_tasks: proof.yml
+  when: not ansible_check_mode
+
+- name: Break-glass sheet | Retire older keys on controller
+  ansible.builtin.uri:
+    url: "{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.apiUrl }}/b2api/v4/b2_delete_key"
+    method: POST
+    headers:
+      Authorization: "{{ break_glass_sheet_master_auth.json.authorizationToken }}"
+    body_format: json
+    body:
+      applicationKeyId: "{{ item.applicationKeyId }}"
+    return_content: true
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  no_log: true
+  loop: "{{ break_glass_sheet_old_keys }}"
+  when: not ansible_check_mode
+
+- name: Break-glass sheet | Print the sheet
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['BREAK-GLASS SHEET',
+          'Made: ' ~ now(utc=true, fmt='%Y-%m-%d'),
+          'B2 key ID: ' ~ break_glass_sheet_new_key.json.applicationKeyId,
+          'B2 key: ' ~ break_glass_sheet_new_key.json.applicationKey,
+          'S3 endpoint: ' ~ break_glass_sheet_master_auth.json.apiInfo.storageApi.s3ApiUrl]
+         + (lookup('ansible.builtin.template', 'sheet-lines.j2') | from_yaml) }}
+  when: not ansible_check_mode

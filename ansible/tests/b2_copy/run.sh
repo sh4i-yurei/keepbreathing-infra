@@ -250,7 +250,13 @@ data = json.load(open(sys.argv[1]))
 expected = {f'restic/locks/0000{n:04d}' for n in range(1001)}
 versions = {entry['Key'] for entry in data.get('Versions', [])}
 markers = {entry['Key'] for entry in data.get('DeleteMarkers', []) if entry['IsLatest']}
-assert versions == markers == expected
+assert versions == markers == expected, (
+    f'versions={len(versions)} markers={len(markers)} expected={len(expected)} '
+    f'missing_versions={sorted(expected - versions)[:3]} '
+    f'missing_markers={sorted(expected - markers)[:3]} '
+    f'extra_versions={sorted(versions - expected)[:3]} '
+    f'extra_markers={sorted(markers - expected)[:3]}'
+)
 PY
 play "$work/paged.log"
 printf 'PASS lock verification reads past the first 1000 entries\n'
@@ -284,9 +290,9 @@ python3 - "$work/listener-ready" <<'PY' &
 import pathlib, socket, sys, time
 server = socket.socket()
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-server.bind(('127.0.0.1', 18333))
+server.bind(('127.0.0.1', 0))
 server.listen()
-pathlib.Path(sys.argv[1]).touch()
+pathlib.Path(sys.argv[1]).write_text(str(server.getsockname()[1]))
 while True:
     connection, _ = server.accept()
     time.sleep(120)
@@ -294,9 +300,10 @@ while True:
 PY
 listener=$!
 undo_add 'stop hanging listener' undo_listener
-for ((attempt=0; attempt<40; attempt++)); do [[ -e $work/listener-ready ]] && break; sleep 0.25; done
-[[ -e $work/listener-ready ]] || fail 'hanging listener must start'
-sed -i 's@:8333/b2copy-locked@:18333/b2copy-locked@' "$cred"
+for ((attempt=0; attempt<40; attempt++)); do [[ -s $work/listener-ready ]] && break; sleep 0.25; done
+[[ -s $work/listener-ready ]] || fail 'hanging listener must start'
+listener_port=$(<"$work/listener-ready")
+sed -i "s@:8333/b2copy-locked@:$listener_port/b2copy-locked@" "$cred"
 if systemctl start b2-copy@testhost.service; then fail 'hanging S3 run must time out'; fi
 [[ $(as_bs systemctl --user show b2-copy-run@testhost.service -p Result --value) == timeout ]] ||
   fail 'run unit must report timeout'

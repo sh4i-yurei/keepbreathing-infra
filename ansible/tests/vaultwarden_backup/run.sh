@@ -10,10 +10,10 @@ done
 
 work=$(mktemp -d)
 point=$work/backup
-device=
 bs_uid=
 vw_uid=
 manager_xdg=
+source tests/lib/undo.sh
 image=docker.io/vaultwarden/server@sha256:5d326778c22f063d093d6b0c9c766a28249561632266776f2c93132ab0ad3a80
 restic_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["restic_image"])')
 run_unit=/home/vwtest/.config/systemd/user/vaultwarden-backup-run.service
@@ -29,31 +29,49 @@ as_user() {
 }
 as_bs() { as_user bstest "$bs_uid" "$@"; }
 as_vw() { as_user vwtest "$vw_uid" "$@"; }
-cleanup() {
-  if [[ -n ${listener:-} ]]; then kill "$listener" >/dev/null 2>&1 || true; fi
-  if [[ -n $vw_uid ]]; then
-    as_vw systemctl --user stop vaultwarden.service >/dev/null 2>&1 || true
-    loginctl disable-linger vwtest >/dev/null 2>&1 || true
-    systemctl stop "user@$vw_uid.service" >/dev/null 2>&1 || true
-    userdel -r vwtest >/dev/null 2>&1 || true
+undo_scratch() { rm -rf --one-file-system -- "$work"; }
+undo_environment() { cp -p -- "$work/environment" /etc/environment; }
+undo_manager_environment() {
+  if [[ -n $manager_xdg ]]; then
+    systemctl set-environment "$manager_xdg"
+  else
+    systemctl unset-environment XDG_RUNTIME_DIR
   fi
-  if [[ -n $bs_uid ]]; then
-    as_bs systemctl --user stop backup-server.service >/dev/null 2>&1 || true
-    loginctl disable-linger bstest >/dev/null 2>&1 || true
-    systemctl stop "user@$bs_uid.service" >/dev/null 2>&1 || true
-    userdel -r bstest >/dev/null 2>&1 || true
-  fi
-  mountpoint -q "$point" && umount "$point"
-  [[ -z $device ]] || losetup -d "$device"
-  if [[ -f $work/environment ]]; then cp -p -- "$work/environment" /etc/environment; fi
-  if [[ -n $manager_xdg ]]; then systemctl set-environment "$manager_xdg"; fi
-  rm -rf "$work"
 }
-trap cleanup EXIT
+undo_mount() {
+  if mountpoint -q "$point"; then umount "$point"; fi
+}
+undo_account() {
+  local account=$1 uid attempt
+  if ! id -u "$account" >/dev/null 2>&1; then return 0; fi
+  uid=$(id -u "$account")
+  if [[ -e /var/lib/systemd/linger/$account ]]; then loginctl disable-linger "$account"; fi
+  systemctl stop "user@$uid.service"
+  for ((attempt=0; attempt<40; attempt++)); do
+    if ! pgrep -u "$uid" >/dev/null; then break; fi
+    pkill -KILL -u "$uid"
+    sleep 0.25
+  done
+  if pgrep -u "$uid" >/dev/null; then
+    printf 'Processes remain for %s\n' "$account" >&2
+    return 1
+  fi
+  userdel -r "$account"
+}
+undo_bstest() { undo_account bstest; }
+undo_vwtest() { undo_account vwtest; }
+undo_listener() {
+  if [[ -n ${listener:-} ]] && kill -0 "$listener" 2>/dev/null; then kill "$listener"; fi
+}
+
+undo_install
+undo_add 'remove scratch folder' undo_scratch
 
 # GitHub's image leaks the runner's XDG paths through PAM into fresh user managers.
 cp -p -- /etc/environment "$work/environment"
+undo_add 'restore /etc/environment' undo_environment
 manager_xdg=$(systemctl show-environment | sed -n '/^XDG_RUNTIME_DIR=/p')
+undo_add 'restore system manager environment' undo_manager_environment
 sed -i '/^XDG_CONFIG_HOME=/d; /^XDG_RUNTIME_DIR=/d' /etc/environment
 unset XDG_CONFIG_HOME XDG_RUNTIME_DIR
 systemctl unset-environment XDG_RUNTIME_DIR
@@ -73,9 +91,9 @@ export TEST_VERIFY_BCRYPT="$(htpasswd -nbB verify "$TEST_VERIFY_PASSWORD" | cut 
 mkdir -p "$point" "$TEST_DATA"
 chmod 0755 "$work"
 truncate -s 512M "$work/backup.img"
-device=$(losetup --find --show "$work/backup.img")
-mkfs.xfs -f -q "$device"
-mount "$device" "$point"
+mkfs.xfs -f -q "$work/backup.img"
+mount -o loop "$work/backup.img" "$point"
+undo_add 'unmount backup image' undo_mount
 
 if ansible-playbook -i localhost, tests/vaultwarden_backup/missing-repository.yml >"$work/missing.log" 2>&1; then
   fail 'missing repository must fail argument validation'
@@ -85,12 +103,14 @@ grep -Fq "Validating arguments against arg spec 'main'" "$work/missing.log" || f
 [[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'missing repository must create no role files'
 printf 'PASS missing repository rejected before changes\n'
 
+undo_add 'remove bstest account' undo_bstest
 if ! ansible-playbook -i localhost, tests/vaultwarden_backup/backup-server.yml >"$work/server.log" 2>&1; then
   tail -30 "$work/server.log"
   fail 'backup server role must pass'
 fi
 bs_uid=$(id -u bstest)
 useradd -m vwtest
+undo_add 'remove vwtest account' undo_vwtest
 vw_uid=$(id -u vwtest)
 loginctl enable-linger vwtest
 systemctl start "user@$vw_uid.service"
@@ -296,6 +316,7 @@ while True:
     connection.close()
 PY
 listener=$!
+undo_add 'stop hanging listener' undo_listener
 for ((attempt=0; attempt<40; attempt++)); do [[ -e $work/listener-ready ]] && break; sleep 0.25; done
 [[ -e $work/listener-ready ]] || fail 'hanging listener must start'
 if systemctl start vaultwarden-backup.service; then fail 'hanging restic run must time out'; fi

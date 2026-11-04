@@ -1,0 +1,44 @@
+---
+- name: Break-glass sheet | Name write-refusal failure
+  ansible.builtin.set_fact:
+    break_glass_sheet_proof_failure: "B2 accepted an upload from the sheet's key for {{ break_glass_sheet_target.name }}"
+  no_log: true
+
+- name: Break-glass sheet | Ask S3 to accept an upload
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - -e
+      - "AWS_ACCESS_KEY_ID={{ break_glass_sheet_new_key.json.applicationKeyId }}"
+      - -e
+      - "AWS_SECRET_ACCESS_KEY={{ break_glass_sheet_new_key.json.applicationKey }}"
+      - -v
+      - "{{ break_glass_sheet_temp.path }}:/proof:ro,Z"
+      - "{{ aws_cli_image }}"
+      - --endpoint-url
+      - "{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.s3ApiUrl }}"
+      - --region
+      - "{{ (break_glass_sheet_master_auth.json.apiInfo.storageApi.s3ApiUrl | urlsplit('hostname')).split('.')[1] }}"
+      - s3api
+      - put-object
+      - --bucket
+      - "{{ break_glass_sheet_target.name }}"
+      - --key
+      - break-glass-write-probe
+      - --body
+      - /proof/probe
+  register: break_glass_sheet_upload
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Break-glass sheet | Require AccessDenied
+  ansible.builtin.assert:
+    that:
+      - break_glass_sheet_upload.rc != 0
+      - "'AccessDenied' in (break_glass_sheet_upload.stdout ~ break_glass_sheet_upload.stderr)"
+  no_log: true

@@ -16,6 +16,8 @@ tailnet_domain: tail4cf2f3.ts.net
 
 # restic v0.19.1
 restic_image: docker.io/restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+restic_image_tag: docker.io/restic/restic:0.19.1
+b2_api_url: https://api.backblazeb2.com/b2api/v4/
 
 # AWS CLI 2.39.3
 aws_cli_image: docker.io/amazon/aws-cli@sha256:d557b3524475d70dd3104cf44d96568ee3188897b73a6ece2b37aa50e1af362f

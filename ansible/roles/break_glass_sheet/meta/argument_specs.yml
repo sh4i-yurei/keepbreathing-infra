@@ -1,0 +1,18 @@
+---
+argument_specs:
+  main:
+    short_description: Rotate and prove the B2 break-glass sheet key
+    options:
+      b2_buckets:
+        type: list
+        elements: dict
+        required: true
+      b2_copy_passwords:
+        type: dict
+        required: true
+      b2_master_key_id:
+        type: str
+        required: true
+      b2_master_key:
+        type: str
+        required: true

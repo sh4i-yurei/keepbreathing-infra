@@ -55,6 +55,8 @@ class State:
         self.versions = []
         self.calls = []
         self.next_key = 1
+        self.next_key_credentials = None
+        self.s3_api_url = None
         self.next_file = 1
         self.page_size = 100
         self.duplicate_bucket = False
@@ -179,6 +181,13 @@ class Handler(BaseHTTPRequestHandler):
                 state.page_size = command["value"]
             elif action == "add_key":
                 state.keys.append(command["key"])
+            elif action == "s3_api_url":
+                state.s3_api_url = command["value"]
+            elif action == "next_key":
+                state.next_key_credentials = {
+                    "applicationKeyId": command["applicationKeyId"],
+                    "applicationKey": command["applicationKey"],
+                }
             elif action == "duplicate_bucket":
                 state.duplicate_bucket = True
             elif action == "allow_delete":
@@ -238,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                         "storageApi": {
                             "apiUrl": self.origin,
                             "downloadUrl": self.origin,
-                            "s3ApiUrl": self.origin,
+                            "s3ApiUrl": state.s3_api_url or self.origin,
                         }
                     },
                 },
@@ -336,16 +345,25 @@ class Handler(BaseHTTPRequestHandler):
                 "nextApplicationKeyId": next_id,
             }
         elif name == "b2_create_key":
-            key_id = f"test-key-{state.next_key:04d}"
+            key_id = (
+                state.next_key_credentials["applicationKeyId"]
+                if state.next_key_credentials
+                else f"test-key-{state.next_key:04d}"
+            )
             result = {
                 "accountId": "test-account",
                 "applicationKeyId": key_id,
-                "applicationKey": f"test-hub-secret-{state.next_key}",
+                "applicationKey": (
+                    state.next_key_credentials["applicationKey"]
+                    if state.next_key_credentials
+                    else f"test-hub-secret-{state.next_key}"
+                ),
                 "capabilities": payload["capabilities"],
                 "bucketIds": payload["bucketIds"],
                 "keyName": payload["keyName"],
             }
             state.next_key += 1
+            state.next_key_credentials = None
             state.keys.append(result)
         elif name == "b2_delete_key":
             credential = "/home/b2test/.config/b2/vaultserv.env"

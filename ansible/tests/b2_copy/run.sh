@@ -55,6 +55,7 @@ restic_b2() {
 }
 aws() {
   as_bs podman run --rm --network host --env-file "$cred" \
+    --volume "$work:$work:ro" \
     "$aws_image" --endpoint-url http://s3.us-east-1.seaweedfs.test:8333 \
     --region us-east-1 s3api "$@"
 }
@@ -80,8 +81,10 @@ undo_hosts() { cp -p -- "$work/hosts" /etc/hosts; }
 undo_weed() { if podman container exists "$weed_name"; then podman rm -f "$weed_name"; fi; }
 undo_listener() { if [[ -n \${listener:-} ]] && kill -0 "$listener" 2>/dev/null; then kill "$listener"; fi; }
 undo_units() {
+  if systemctl is-enabled --quiet b2-copy@testhost.timer; then
+    systemctl disable --now b2-copy@testhost.timer
+  fi
   for unit in b2-copy@testhost.timer b2-copy@testhost.service; do
-    if systemctl is-enabled --quiet "$unit"; then systemctl disable --now "$unit"; fi
     if systemctl is-active --quiet "$unit"; then systemctl stop "$unit"; fi
     if systemctl is-failed --quiet "$unit"; then systemctl reset-failed "$unit"; fi
   done

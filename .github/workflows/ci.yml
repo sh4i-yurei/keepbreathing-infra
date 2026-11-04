@@ -78,7 +78,6 @@ jobs:
           after_manager=$(systemctl show-environment)
           test "$before_file" = "$after_file" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
           test "$before_manager" = "$after_manager" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
-          done
 
   b2-bucket:
     runs-on: ubuntu-latest

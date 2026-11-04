@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/b2_copy). Edits here are overwritten.
+[Unit]
+Description=Nightly B2 copy for %i
+
+[Timer]
+OnCalendar={{ b2_copy_schedule }}
+Persistent=true
+Unit=b2-copy@%i.service
+
+[Install]
+WantedBy=timers.target

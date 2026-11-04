@@ -11,6 +11,93 @@ permissions:
   contents: read
 
 jobs:
+  b2-copy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
+      - name: Seed system manager XDG setting for restoration checks
+        run: sudo systemctl set-environment "XDG_RUNTIME_DIR=/run/user/$(id -u)"
+      - name: Refuse existing B2 copy test resources
+        run: |
+          sudo useradd -m bstest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_copy/run.sh > /tmp/b2-copy-existing-account.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted bstest'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: bstest already exists' /tmp/b2-copy-existing-account.log
+          id bstest
+          test -d /home/bstest
+          sudo userdel -r bstest
+          sudo touch /etc/systemd/system/b2-copy@.timer
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_copy/run.sh > /tmp/b2-copy-existing-unit.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted unit'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: b2-copy units already exist' /tmp/b2-copy-existing-unit.log
+          test -e /etc/systemd/system/b2-copy@.timer
+          ! id bstest
+          sudo rm /etc/systemd/system/b2-copy@.timer
+          sudo cp -p /etc/hosts /tmp/b2-copy-hosts
+          printf '127.0.0.1 s3.us-east-1.seaweedfs.test\n' | sudo tee -a /etc/hosts
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_copy/run.sh > /tmp/b2-copy-existing-host.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted hosts entry'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: s3.us-east-1.seaweedfs.test is already in /etc/hosts' /tmp/b2-copy-existing-host.log
+          grep -Fx '127.0.0.1 s3.us-east-1.seaweedfs.test' /etc/hosts
+          sudo cp -p /tmp/b2-copy-hosts /etc/hosts
+          sudo cmp /tmp/b2-copy-hosts /etc/hosts
+      - name: Failure after role cleans up all test resources
+        run: |
+          hosts_before=$(sudo sha256sum /etc/hosts | cut -d' ' -f1)
+          environment_before=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          manager_before=$(systemctl show-environment)
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AFTER_COPY_ROLE=1 bash tests/b2_copy/run.sh > /tmp/b2-copy-failure.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted deliberate failure'; exit 1
+          fi
+          grep -F 'ASSERTION FAILED: b2_copy role play must pass' /tmp/b2-copy-failure.log || { tail -35 /tmp/b2-copy-failure.log; exit 1; }
+          grep -F 'Deliberate failure after B2 copy' /tmp/b2-copy-failure.log || { tail -35 /tmp/b2-copy-failure.log; exit 1; }
+          python3 - /tmp/b2-copy-failure.log <<'PY'
+          import pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+          first = lines.index('PASS first role run copies snapshot and starts timer')
+          failure = next(i for i, line in enumerate(lines) if 'Deliberate failure after B2 copy' in line)
+          assert first < failure, 'deliberate failure must follow the first real role run'
+          PY
+          ! grep -E '^CLEANUP FAILED:' /tmp/b2-copy-failure.log
+          test ! -e /etc/systemd/system/b2-copy@.timer
+          test ! -e /etc/systemd/system/b2-copy@.service
+          test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
+          ! id bstest
+          ! sudo losetup --list | grep -F backup.img
+          ! sudo podman container exists b2-copy-weed
+          test "$hosts_before" = "$(sudo sha256sum /etc/hosts | cut -d' ' -f1)"
+          test "$environment_before" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)"
+          test "$manager_before" = "$(systemctl show-environment)"
+      - name: B2 copy role integration cases and cleanup
+        run: |
+          hosts_before=$(sudo sha256sum /etc/hosts | cut -d' ' -f1)
+          environment_before=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          manager_before=$(systemctl show-environment)
+          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_copy/run.sh
+          test ! -e /etc/systemd/system/b2-copy@.timer
+          test ! -e /etc/systemd/system/b2-copy@.service
+          test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
+          ! id bstest
+          ! sudo losetup --list | grep -F backup.img
+          ! sudo podman container exists b2-copy-weed
+          test "$hosts_before" = "$(sudo sha256sum /etc/hosts | cut -d' ' -f1)"
+          test "$environment_before" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)"
+          test "$manager_before" = "$(systemctl show-environment)"
+
   vaultwarden-backup:
     runs-on: ubuntu-latest
     defaults:

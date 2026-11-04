@@ -70,7 +70,9 @@ undo_vaultwarden_units() {
   fi
   if [[ -e /etc/systemd/system/vaultwarden-backup.service ]]; then
     systemctl stop vaultwarden-backup.service
-    systemctl reset-failed vaultwarden-backup.service
+    if systemctl is-failed --quiet vaultwarden-backup.service; then
+      systemctl reset-failed vaultwarden-backup.service
+    fi
   fi
   rm -f /etc/systemd/system/vaultwarden-backup.timer /etc/systemd/system/vaultwarden-backup.service
   systemctl daemon-reload
@@ -110,14 +112,6 @@ mkfs.xfs -f -q "$work/backup.img"
 mount -o loop "$work/backup.img" "$point"
 undo_add 'unmount backup image' undo_mount
 
-if ansible-playbook -i localhost, tests/vaultwarden_backup/missing-repository.yml >"$work/missing.log" 2>&1; then
-  fail 'missing repository must fail argument validation'
-fi
-grep -Fq "missing required arguments: vaultwarden_backup_repository" "$work/missing.log" || fail 'missing repository must fail at argument validation'
-grep -Fq "Validating arguments against arg spec 'main'" "$work/missing.log" || fail 'argument validation task name must be shown'
-[[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'missing repository must create no role files'
-printf 'PASS missing repository rejected before changes\n'
-
 undo_add 'remove bstest account' undo_bstest
 if ! ansible-playbook -i localhost, tests/vaultwarden_backup/backup-server.yml >"$work/server.log" 2>&1; then
   tail -30 "$work/server.log"
@@ -128,6 +122,14 @@ useradd -m vwtest
 undo_add 'remove vwtest account' undo_vwtest
 undo_add 'remove Vaultwarden backup system units' undo_vaultwarden_units
 vw_uid=$(id -u vwtest)
+if ansible-playbook -i localhost, tests/vaultwarden_backup/missing-repository.yml >"$work/missing.log" 2>&1; then
+  fail 'missing repository must fail argument validation'
+fi
+grep -Fq "missing required arguments: vaultwarden_backup_repository" "$work/missing.log" || fail 'missing repository must fail at argument validation'
+grep -Fq "Validating arguments against arg spec 'main'" "$work/missing.log" || fail 'argument validation task name must be shown'
+[[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'missing repository must create no role files'
+printf 'PASS missing repository rejected before changes\n'
+
 loginctl enable-linger vwtest
 systemctl start "user@$vw_uid.service"
 install -d -o vwtest -g vwtest -m 0700 /home/vwtest/.config/containers/systemd

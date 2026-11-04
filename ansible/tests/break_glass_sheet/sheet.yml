@@ -17,6 +17,5 @@
     b2_copy_passwords: >-
       {{ {'testhost': {'b2': lookup('ansible.builtin.env', 'TEST_B2_PASSWORD')}}
          if lookup('ansible.builtin.env', 'TEST_HAS_PASSWORD') != '0' else {} }}
-    break_glass_sheet_key_page_size: "{{ lookup('ansible.builtin.env', 'TEST_B2_PAGE_SIZE') | default(100, true) | int }}"
   roles:
     - break_glass_sheet

@@ -8,7 +8,7 @@
     body_format: json
     body: >-
       {{ {'accountId': break_glass_sheet_master_auth.json.accountId,
-          'maxKeyCount': break_glass_sheet_key_page_size | default(100)}
+          'maxKeyCount': 100}
          | combine({'startApplicationKeyId': break_glass_sheet_next_key_id}
                    if break_glass_sheet_next_key_id else {}) }}
     return_content: true

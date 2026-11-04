@@ -24,7 +24,6 @@ export TEST_B2_API_URL="$base/b2api/v4/"
 export TEST_B2_PASSWORD=test-b2-password
 export TEST_HAS_PASSWORD=1
 export TEST_BUCKET=b2glass-locked
-export TEST_B2_PAGE_SIZE=1
 
 undo_scratch() { rm -rf --one-file-system -- "$work"; }
 undo_server() { if [[ -n $server ]] && kill -0 "$server" 2>/dev/null; then kill "$server"; fi; }
@@ -129,6 +128,7 @@ TEST_HAS_PASSWORD=1 TEST_BUCKET=b2glass-missing expect_failure missing_bucket 'B
 assert_calls no_writes
 printf 'PASS missing bucket refuses before key changes\n'
 add_old_keys
+control '{"action":"page_size","value":1}'
 clear_calls
 play check --check --diff || { tail -30 "$work/check.log"; fail 'check mode must pass'; }
 grep -Eq 'localhost[[:space:]]+:.*changed=[1-9].*failed=0' "$work/check.log" || fail 'check mode recap'

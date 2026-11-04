@@ -17,6 +17,9 @@ endpoint=http://s3.us-east-1.seaweedfs.test:8333
 weed_image=docker.io/chrislusf/seaweedfs@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
 restic_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["restic_image"])')
 aws_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["aws_cli_image"])')
+export TEST_RESTIC_IMAGE="$restic_image"
+export TEST_RESTIC_IMAGE_TAG=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["restic_image_tag"])')
+export TEST_AWS_IMAGE="$aws_image"
 export TEST_B2_API_URL="$base/b2api/v4/"
 export TEST_B2_PASSWORD=test-b2-password
 export TEST_HAS_PASSWORD=1
@@ -119,7 +122,7 @@ clear_calls() { control '{"action":"clear_calls"}'; }
 assert_calls() {
   state | python3 tests/break_glass_sheet/assertions.py "$1" || fail "$1 API state"
 }
-expect_failure missing_password 'b2_copy_passwords has no b2 password for testhost'
+TEST_HAS_PASSWORD=0 expect_failure missing_password 'b2_copy_passwords has no b2 password for testhost'
 assert_calls no_writes
 printf 'PASS missing password refuses before key changes\n'
 TEST_HAS_PASSWORD=1 TEST_BUCKET=b2glass-missing expect_failure missing_bucket 'B2 bucket b2glass-missing is missing; run playbooks/b2.yml first.'

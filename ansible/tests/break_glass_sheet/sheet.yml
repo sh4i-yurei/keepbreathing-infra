@@ -8,6 +8,9 @@
     b2_api_url: "{{ lookup('ansible.builtin.env', 'TEST_B2_API_URL') }}"
     b2_master_key_id: test-master-id
     b2_master_key: test-master-secret
+    restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
+    restic_image_tag: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE_TAG') }}"
+    aws_cli_image: "{{ lookup('ansible.builtin.env', 'TEST_AWS_IMAGE') }}"
     b2_buckets:
       - machine: testhost
         name: "{{ lookup('ansible.builtin.env', 'TEST_BUCKET') | default('b2glass-locked', true) }}"

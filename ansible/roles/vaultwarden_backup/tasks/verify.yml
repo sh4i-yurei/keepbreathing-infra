@@ -1,0 +1,228 @@
+---
+- name: Vaultwarden backup verify | Run only on a real play
+  when: not ansible_check_mode
+  block:
+    - name: Vaultwarden backup verify | Read the account UID
+      ansible.builtin.command:
+        argv:
+          - id
+          - -u
+          - "{{ vaultwarden_backup_user }}"
+      register: vaultwarden_backup_verify_uid
+      changed_when: false
+
+    - name: Vaultwarden backup verify | Check repository availability
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --security-opt
+          - label=disable
+          - --env-file
+          - "/home/{{ vaultwarden_backup_user }}/.config/vaultwarden-backup/restic.env"
+          - "{{ vaultwarden_backup_restic_image }}"
+          - snapshots
+          - --json
+      become: true
+      become_user: "{{ vaultwarden_backup_user }}"
+      environment: &vaultwarden_backup_user_environment
+        XDG_RUNTIME_DIR: "/run/user/{{ vaultwarden_backup_verify_uid.stdout }}"
+      register: vaultwarden_backup_repository_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Vaultwarden backup verify | Require available or absent repository
+      ansible.builtin.assert:
+        that: vaultwarden_backup_repository_probe.rc in [0, 10]
+        fail_msg: "{{ vaultwarden_backup_repository_probe.stderr }}"
+        quiet: true
+
+    - name: Vaultwarden backup verify | Initialize the repository once
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --security-opt
+          - label=disable
+          - --env-file
+          - "/home/{{ vaultwarden_backup_user }}/.config/vaultwarden-backup/restic.env"
+          - "{{ vaultwarden_backup_restic_image }}"
+          - init
+      become: true
+      become_user: "{{ vaultwarden_backup_user }}"
+      environment: *vaultwarden_backup_user_environment
+      when: vaultwarden_backup_repository_probe.rc == 10
+      changed_when: false
+
+    - name: Vaultwarden backup verify | Read live database counts
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "/home/{{ vaultwarden_backup_user }}/.local/libexec/vaultwarden-backup-verify"
+          - counts
+          - "{{ vaultwarden_backup_data_dir }}/db.sqlite3"
+      become: true
+      become_user: "{{ vaultwarden_backup_user }}"
+      environment: *vaultwarden_backup_user_environment
+      register: vaultwarden_backup_live_counts
+      changed_when: false
+
+    - name: Vaultwarden backup verify | Start the same system service as the timer
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - start
+          - vaultwarden-backup.service
+      changed_when: false
+
+    - name: Vaultwarden backup verify | Create a temporary restore folder
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: vaultwarden-restore-
+      become: true
+      become_user: "{{ vaultwarden_backup_user }}"
+      environment: *vaultwarden_backup_user_environment
+      register: vaultwarden_backup_restore_dir
+      changed_when: false
+
+    - name: Vaultwarden backup verify | Restore and inspect the newest snapshot
+      become: true
+      become_user: "{{ vaultwarden_backup_user }}"
+      environment: *vaultwarden_backup_user_environment
+      block:
+        - name: Vaultwarden backup verify | Restore the newest snapshot
+          ansible.builtin.command:
+            argv:
+              - podman
+              - run
+              - --rm
+              - --network
+              - host
+              - --security-opt
+              - label=disable
+              - --env-file
+              - "/home/{{ vaultwarden_backup_user }}/.config/vaultwarden-backup/restic.env"
+              - --volume
+              - "{{ vaultwarden_backup_restore_dir.path }}:/restore:rw"
+              - "{{ vaultwarden_backup_restic_image }}"
+              - restore
+              - latest
+              - --retry-lock
+              - "{{ vaultwarden_backup_lock_wait }}"
+              - --exclude-xattr
+              - "*"
+              - --target
+              - /restore
+          become: true
+          become_user: "{{ vaultwarden_backup_user }}"
+          environment: *vaultwarden_backup_user_environment
+          changed_when: false
+
+        - name: Vaultwarden backup verify | Compare database counts and all files
+          ansible.builtin.command:
+            argv:
+              - python3
+              - "/home/{{ vaultwarden_backup_user }}/.local/libexec/vaultwarden-backup-verify"
+              - compare
+              - "{{ vaultwarden_backup_data_dir }}"
+              - "{{ vaultwarden_backup_restore_dir.path }}/backup/data"
+              - "{{ vaultwarden_backup_quadlet }}"
+              - "{{ vaultwarden_backup_restore_dir.path }}/backup/vaultwarden.container"
+              - "{{ vaultwarden_backup_live_counts.stdout }}"
+          become: true
+          become_user: "{{ vaultwarden_backup_user }}"
+          environment: *vaultwarden_backup_user_environment
+          register: vaultwarden_backup_comparison
+          changed_when: false
+          failed_when: false
+
+        - name: Vaultwarden backup verify | Require matching counts and files
+          ansible.builtin.assert:
+            that: vaultwarden_backup_comparison.rc == 0
+            fail_msg: "{{ vaultwarden_backup_comparison.stderr }}"
+            quiet: true
+
+        - name: Vaultwarden backup verify | Read the live Quadlet image
+          ansible.builtin.command:
+            argv:
+              - python3
+              - "/home/{{ vaultwarden_backup_user }}/.local/libexec/vaultwarden-backup-verify"
+              - image
+              - "{{ vaultwarden_backup_quadlet }}"
+          register: vaultwarden_backup_live_image
+          changed_when: false
+
+        - name: Vaultwarden backup verify | Rename the restored database copy
+          ansible.builtin.command:
+            argv:
+              - python3
+              - "/home/{{ vaultwarden_backup_user }}/.local/libexec/vaultwarden-backup-verify"
+              - prepare
+              - "{{ vaultwarden_backup_restore_dir.path }}/backup/data"
+          changed_when: false
+
+        - name: Vaultwarden backup verify | Start the restored server
+          ansible.builtin.command:
+            argv:
+              - podman
+              - run
+              - -d
+              - --rm
+              - --name
+              - vaultwarden-backup-restore
+              - --publish
+              - "127.0.0.1:{{ vaultwarden_backup_restore_port }}:80"
+              - --volume
+              - "{{ vaultwarden_backup_restore_dir.path }}/backup/data:/data:Z"
+              - "{{ vaultwarden_backup_live_image.stdout }}"
+          register: vaultwarden_backup_restored_server
+          changed_when: false
+
+          failed_when: false
+
+        - name: Vaultwarden backup verify | Require the restored server to start
+          ansible.builtin.assert:
+            that: vaultwarden_backup_restored_server.rc == 0
+            fail_msg: "restored server check failed: {{ vaultwarden_backup_restored_server.stderr }}"
+            quiet: true
+
+        - name: Vaultwarden backup verify | Wait for restored server health
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ vaultwarden_backup_restore_port }}/alive"
+            method: GET
+            status_code: 200
+            use_proxy: false
+          register: vaultwarden_backup_restored_health
+          retries: 30
+          delay: 1
+          until: vaultwarden_backup_restored_health.status | default(0) == 200
+          changed_when: false
+          failed_when: false
+
+        - name: Vaultwarden backup verify | Require restored server health
+          ansible.builtin.assert:
+            that: vaultwarden_backup_restored_health.status | default(0) == 200
+            fail_msg: restored server check failed; /alive did not answer HTTP 200.
+            quiet: true
+      always:
+        - name: Vaultwarden backup verify | Remove the throwaway container
+          ansible.builtin.command:
+            argv:
+              - podman
+              - rm
+              - -f
+              - vaultwarden-backup-restore
+          failed_when: false
+          changed_when: false
+
+        - name: Vaultwarden backup verify | Remove the temporary restore folder
+          ansible.builtin.file:
+            path: "{{ vaultwarden_backup_restore_dir.path }}"
+            state: absent
+          changed_when: false

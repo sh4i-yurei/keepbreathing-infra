@@ -108,6 +108,16 @@
   reason: "subprocess text=False returns bytes; json.loads accepts UTF-8 bytes and produces the same item and public error for this JSON CLI output."
 - mutant: ansible.lookup_plugins.vault_secret.xǁLookupModuleǁrun__mutmut_101
   reason: "Both None and an empty string are rejected by the following dictionary type check, producing the same public error."
+- mutant: ansible.roles.vaultwarden_backup.files.verify-restore.x_compare__mutmut_49
+  reason: "filecmp.cmp with shallow=None performs the same byte comparison as shallow=False; both are false values."
+- mutant: ansible.roles.vaultwarden_backup.files.verify-restore.x_compare__mutmut_58
+  reason: "filecmp.cmp with shallow=None performs the same byte comparison as shallow=False; both are false values."
+- mutant: ansible.roles.vaultwarden_backup.files.verify-restore.x_counts__mutmut_2
+  reason: "On CI, uri=None has the same counts output and file effects as uri=True. SQLite can enable URI handling globally, making this flag redundant; the runner's SQLite configuration is not confirmed. The local SQLite build kills this mutant."
+- mutant: ansible.roles.vaultwarden_backup.files.verify-restore.x_counts__mutmut_4
+  reason: "On CI, omitting uri=True has the same counts output and file effects. SQLite can enable URI handling globally, making this flag redundant; the runner's SQLite configuration is not confirmed. The local SQLite build kills this mutant."
+- mutant: ansible.roles.vaultwarden_backup.files.verify-restore.x_counts__mutmut_5
+  reason: "On CI, uri=False has the same counts output and file effects as uri=True. SQLite can enable URI handling globally, making this flag redundant; the runner's SQLite configuration is not confirmed. The local SQLite build kills this mutant."
 - mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_6
   reason: "HTTP header names are case insensitive; changing Authorization capitalization sends the same credential and receives the same response."
 - mutant: ansible.roles.b2_bucket.files.b2_verify.x_request__mutmut_7

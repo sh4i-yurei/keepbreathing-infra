@@ -33,16 +33,18 @@
     ],
     "podman_exporter_basic_auth_password": [
       "fixture-password-2"
-    ]
+    ],
+    "vaultwarden_backup_password": ["fixture-password-14"],
+    "vaultwarden_backup_restic_password": ["fixture-restic-14"]
   },
   "host_vars/hub.yml": {
     "backup_server_logins": [
-      [{"name": "verify", "bcrypt": "fixture-bcrypt-13"}]
+      [{"name": "verify", "bcrypt": "fixture-bcrypt-13"}, {"name": "vaultserv", "bcrypt": "fixture-bcrypt-14"}]
     ],
     "backup_server_verify_password": ["fixture-password-13"],
     "backup_server_verify_restic_password": ["fixture-restic-13"],
-    "b2_master_key_id": ["fixture-user-14"],
-    "b2_master_key": ["fixture-password-14"]
+    "b2_master_key_id": ["fixture-user-15"],
+    "b2_master_key": ["fixture-password-15"]
   },
   "roles/hub/tasks/alertmanager-verify.yml": {
     "url_password": [

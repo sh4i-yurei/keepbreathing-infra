@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/vaultwarden_backup). Edits here are overwritten.
+[Unit]
+Description=Nightly Vaultwarden backup
+
+[Timer]
+OnCalendar={{ vaultwarden_backup_schedule }}
+Persistent=true
+Unit=vaultwarden-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,6 @@
+---
+vaultwarden_backup_restic_image: "{{ restic_image }}"
+vaultwarden_backup_schedule: "*-*-* 02:30:00"
+vaultwarden_backup_lock_wait: 10m
+vaultwarden_backup_restore_port: 8090
+vaultwarden_backup_timeout: 1800

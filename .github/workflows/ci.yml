@@ -11,6 +11,106 @@ permissions:
   contents: read
 
 jobs:
+  vaultwarden-backup:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
+      - name: Seed system manager XDG setting for restoration checks
+        run: sudo systemctl set-environment "XDG_RUNTIME_DIR=/run/user/$(id -u)"
+      - name: Existing Vaultwarden test accounts survive driver refusal
+        run: |
+          for account in bstest vwtest; do
+            sudo useradd -m "$account"
+            if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/vaultwarden_backup/run.sh > "/tmp/$account-existing.log" 2>&1; then
+              echo "Vaultwarden driver accepted existing $account"
+              exit 1
+            fi
+            grep -Fx "ASSERTION FAILED: $account already exists" "/tmp/$account-existing.log" || { echo "ASSERTION FAILED: $account refusal message missing"; exit 1; }
+            id "$account" || { echo "ASSERTION FAILED: $account account removed"; exit 1; }
+            test -d "/home/$account" || { echo "ASSERTION FAILED: $account home removed"; exit 1; }
+            sudo userdel -r "$account"
+          done
+          for unit in vaultwarden-backup.timer vaultwarden-backup.service; do
+            sudo touch "/etc/systemd/system/$unit"
+            if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/vaultwarden_backup/run.sh > "/tmp/$unit-existing.log" 2>&1; then
+              echo "ASSERTION FAILED: Vaultwarden driver accepted existing $unit"; exit 1
+            fi
+            grep -Fx 'ASSERTION FAILED: vaultwarden-backup units already exist' "/tmp/$unit-existing.log" || { echo "ASSERTION FAILED: $unit refusal message missing"; exit 1; }
+            test -e "/etc/systemd/system/$unit" || { echo "ASSERTION FAILED: $unit was removed"; exit 1; }
+            ! id bstest && ! id vwtest || { echo "ASSERTION FAILED: $unit refusal created an account"; exit 1; }
+            sudo rm "/etc/systemd/system/$unit"
+          done
+      - name: Backup server failure leaves no driver state
+        run: |
+          before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          before_manager=$(systemctl show-environment)
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AFTER_BACKUP_SERVER=1 bash tests/vaultwarden_backup/run.sh > /tmp/vw-server-failure.log 2>&1; then
+            echo 'ASSERTION FAILED: backup server failure was accepted'; exit 1
+          fi
+          grep -F 'ASSERTION FAILED: backup server role must pass' /tmp/vw-server-failure.log || { tail -30 /tmp/vw-server-failure.log; exit 1; }
+          if id bstest; then echo 'ASSERTION FAILED: bstest survived cleanup'; exit 1; fi
+          test ! -e /home/bstest || { echo 'ASSERTION FAILED: bstest home survived cleanup'; exit 1; }
+          test ! -e /var/lib/systemd/linger/bstest || { echo 'ASSERTION FAILED: bstest lingering survived cleanup'; exit 1; }
+          ! sudo losetup --list | grep -F 'backup.img' || { echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; }
+          test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
+          test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
+      - name: Busy mount reports cleanup failure and restores environment
+        run: |
+          before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          before_manager=$(systemctl show-environment)
+          sudo bash -c 'for ((n=0; n<600; n++)); do point=$(findmnt -rn -t xfs -o TARGET | grep -E "/tmp/tmp[^/]*/backup$" | head -1); if [[ -n $point ]]; then cd "$point"; printf "%s\n" "$point" > /tmp/vw-held-mount; echo "$BASHPID" > /tmp/vw-held-mount.pid; exec sleep 600; fi; sleep 0.1; done' &
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AFTER_BACKUP_SERVER=1 bash tests/vaultwarden_backup/run.sh > /tmp/vw-busy-mount.log 2>&1; then
+            echo 'ASSERTION FAILED: busy mount run was accepted'; exit 1
+          fi
+          test -s /tmp/vw-held-mount || { echo 'ASSERTION FAILED: mount holder never entered mount'; tail -30 /tmp/vw-busy-mount.log; exit 1; }
+          test "$(sudo readlink "/proc/$(cat /tmp/vw-held-mount.pid)/cwd")" = "$(cat /tmp/vw-held-mount)" || { echo 'ASSERTION FAILED: mount holder left mount before driver exit'; exit 1; }
+          grep -E '^CLEANUP FAILED:.*unmount' /tmp/vw-busy-mount.log || { tail -30 /tmp/vw-busy-mount.log; exit 1; }
+          if id bstest; then echo 'ASSERTION FAILED: bstest survived busy mount cleanup'; exit 1; fi
+          test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
+          test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
+          sudo kill "$(cat /tmp/vw-held-mount.pid)"
+          sudo umount "$(cat /tmp/vw-held-mount)"
+      - name: Failed image pull removes Vaultwarden system units
+        run: |
+          before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          before_manager=$(systemctl show-environment)
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AT_IMAGE_PULL=1 bash tests/vaultwarden_backup/run.sh > /tmp/vw-image-pull-failure.log 2>&1; then
+            echo 'ASSERTION FAILED: failed image pull was accepted'; exit 1
+          fi
+          grep -F 'TASK [vaultwarden_backup : Vaultwarden backup | Pull the pinned restic image]' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull task was not reached'; tail -30 /tmp/vw-image-pull-failure.log; exit 1; }
+          grep -F 'ASSERTION FAILED: Vaultwarden backup role play must pass' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull failure was not reported'; tail -30 /tmp/vw-image-pull-failure.log; exit 1; }
+          ! grep -E '^CLEANUP FAILED:' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull cleanup failed'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.timer || { echo 'ASSERTION FAILED: Vaultwarden timer file survived image pull cleanup'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.service || { echo 'ASSERTION FAILED: Vaultwarden service file survived image pull cleanup'; exit 1; }
+          test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded after image pull failure'; exit 1; }
+          ! id vwtest && ! id bstest || { echo 'ASSERTION FAILED: test account survived image pull cleanup'; exit 1; }
+          test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
+          test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
+      - name: Vaultwarden driver restores the runner environment
+        run: |
+          before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          before_manager=$(systemctl show-environment)
+          echo "$before_manager" | grep -E '^XDG_RUNTIME_DIR=' || { echo 'ASSERTION FAILED: system manager lacks XDG_RUNTIME_DIR'; exit 1; }
+          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/vaultwarden_backup/run.sh
+          after_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          after_manager=$(systemctl show-environment)
+          test "$before_file" = "$after_file" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
+          test "$before_manager" = "$after_manager" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.timer || { echo 'ASSERTION FAILED: Vaultwarden timer file survived cleanup'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.service || { echo 'ASSERTION FAILED: Vaultwarden service file survived cleanup'; exit 1; }
+          test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded'; exit 1; }
+
   b2-bucket:
     runs-on: ubuntu-latest
     defaults:

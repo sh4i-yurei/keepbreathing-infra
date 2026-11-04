@@ -8,7 +8,7 @@ device=
 uid=
 user=bstest
 quadlet=/home/$user/.config/containers/systemd/backup-server.container
-restic_image=docker.io/restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
+restic_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["restic_image"])')
 fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 as_user() {
   (
@@ -37,6 +37,7 @@ sed -i '/^XDG_CONFIG_HOME=/d; /^XDG_RUNTIME_DIR=/d' /etc/environment
 unset XDG_CONFIG_HOME XDG_RUNTIME_DIR
 systemctl unset-environment XDG_RUNTIME_DIR
 export TEST_MOUNT="$point"
+export TEST_RESTIC_IMAGE="$restic_image"
 export TEST_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
 export TEST_BCRYPT="$(htpasswd -nbB verify "$TEST_PASSWORD" | cut -d: -f2-)"

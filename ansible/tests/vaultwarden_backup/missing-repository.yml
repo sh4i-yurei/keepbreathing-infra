@@ -1,0 +1,16 @@
+---
+- name: Reject a missing repository before making changes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    vaultwarden_backup_user: vwtest
+    vaultwarden_backup_data_dir: "{{ lookup('ansible.builtin.env', 'TEST_DATA') }}"
+    vaultwarden_backup_quadlet: /home/vwtest/.config/containers/systemd/vaultwarden.container
+    vaultwarden_backup_container: vaultwarden
+    vaultwarden_backup_login: vwbackup
+    vaultwarden_backup_password: "{{ lookup('ansible.builtin.env', 'TEST_PASSWORD') }}"
+    vaultwarden_backup_restic_password: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"
+  roles:
+    - vaultwarden_backup

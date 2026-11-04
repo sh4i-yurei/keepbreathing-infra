@@ -53,12 +53,13 @@ restic_b2() {
     --env-file "$cred" --volume "$work/b2-password:/password:ro" "$restic_image" \
     --password-file /password "$@"
 }
-aws() {
+aws_cli() {
   as_bs podman run --rm --network host --env-file "$cred" \
     --volume "$work:$work:ro" \
     "$aws_image" --endpoint-url http://s3.us-east-1.seaweedfs.test:8333 \
-    --region us-east-1 s3api "$@"
+    --region us-east-1 "$@"
 }
+aws() { aws_cli s3api "$@"; }
 play() {
   local log=$1
   shift
@@ -236,11 +237,21 @@ assert versions and versions == markers
 PY
 printf 'PASS system service copies second snapshot and hides locks\n'
 
+mkdir "$work/fixtures"
 for ((n=0; n<1001; n++)); do
-  key=$(printf 'restic/locks/0000%04d' "$n")
-  aws put-object --bucket b2copy-locked --key "$key" --body "$work/source" >/dev/null
-  aws delete-object --bucket b2copy-locked --key "$key" >/dev/null
+  printf 'fixture\n' >"$work/fixtures/$(printf '0000%04d' "$n")"
 done
+aws_cli s3 cp "$work/fixtures" s3://b2copy-locked/restic/locks/ --recursive >"$work/fixture-upload.log"
+aws_cli s3 rm s3://b2copy-locked/restic/locks/0000 --recursive >"$work/fixture-hide.log"
+aws list-object-versions --bucket b2copy-locked --prefix restic/locks/0000 >"$work/fixture-versions.json"
+python3 - "$work/fixture-versions.json" <<'PY' || fail 'pagination fixture must retain and hide exactly 1001 keys'
+import json, sys
+data = json.load(open(sys.argv[1]))
+expected = {f'restic/locks/0000{n:04d}' for n in range(1001)}
+versions = {entry['Key'] for entry in data.get('Versions', [])}
+markers = {entry['Key'] for entry in data.get('DeleteMarkers', []) if entry['IsLatest']}
+assert versions == markers == expected
+PY
 play "$work/paged.log"
 printf 'PASS lock verification reads past the first 1000 entries\n'
 

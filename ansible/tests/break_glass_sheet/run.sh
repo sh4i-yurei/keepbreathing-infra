@@ -82,13 +82,13 @@ restart_weed() {
   wait_weed
 }
 aws() {
-  podman run --rm -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
+  podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
     "$aws_image" --endpoint-url "$endpoint" --region us-east-1 s3api "$@"
 }
 aws create-bucket --bucket b2glass-locked --object-lock-enabled-for-bucket >"$work/bucket.json"
 printf 'one restored file\n' >"$work/source"
 seed_restic() {
-  podman run --rm -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
+  podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
     -e RESTIC_PASSWORD=test-b2-password -v "$work/source:/source:ro" "$restic_image" \
     -r "s3:$endpoint/b2glass-locked/restic" "$@"
 }
@@ -167,3 +167,4 @@ TEST_B2_PASSWORD=wrong-repository-password failure_case bad_password "Restore wi
 TEST_B2_PASSWORD=test-b2-password
 restart_weed test-glass-secret Read,List,Write
 failure_case writable "B2 accepted an upload from the sheet's key for b2glass-locked"
+printf 'break-glass-sheet driver: all cases passed\n'

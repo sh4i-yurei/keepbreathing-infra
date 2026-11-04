@@ -54,9 +54,12 @@ jobs:
           sudo cp -p hosts-before /etc/hosts
           sudo cmp hosts-before /etc/hosts
       - name: Break-glass role integration cases and cleanup
+        shell: bash
         run: |
           before=$(sudo sha256sum /etc/hosts | cut -d' ' -f1)
           sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/break_glass_sheet/run.sh | tee driver.log
+          grep -Fx 'break-glass-sheet driver: all cases passed' driver.log
+          test "$(grep -c '^PASS ' driver.log)" -eq 7
           ! sudo podman container exists b2glass-weed
           ! sudo find /tmp -maxdepth 1 -name 'ansible.*break-glass-sheet' | grep -q .
           test "$before" = "$(sudo sha256sum /etc/hosts | cut -d' ' -f1)"

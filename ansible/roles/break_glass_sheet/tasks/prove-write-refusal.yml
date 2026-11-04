@@ -10,6 +10,8 @@
       - podman
       - run
       - --rm
+      - --network
+      - host
       - -e
       - "AWS_ACCESS_KEY_ID={{ break_glass_sheet_new_key.json.applicationKeyId }}"
       - -e

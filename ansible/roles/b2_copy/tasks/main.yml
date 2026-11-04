@@ -45,6 +45,39 @@
   changed_when: false
   check_mode: false
 
+- name: B2 copy | Check password file paths for the rehearsal
+  ansible.builtin.stat:
+    path: "/home/{{ b2_copy_user }}/.config/b2-copy/{{ item.0.machine }}/{{ item.1 }}-password"
+  loop: "{{ b2_buckets | product(['hub', 'b2']) | list }}"
+  register: b2_copy_password_plan
+  when: ansible_check_mode
+
+- name: B2 copy | Report password files the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ b2_copy_user }}/.config/b2-copy/{{ item.item.0.machine }}/{{ item.item.1 }}-password"
+  loop: "{{ b2_copy_password_plan.results }}"
+  when:
+    - ansible_check_mode
+    - not item.stat.exists
+
+- name: B2 copy | Check unit file paths for the rehearsal
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "/home/{{ b2_copy_user }}/.config/systemd/user/b2-copy-run@.service"
+    - /etc/systemd/system/b2-copy@.service
+    - /etc/systemd/system/b2-copy@.timer
+  register: b2_copy_unit_plan
+  when: ansible_check_mode
+
+- name: B2 copy | Report unit files the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would write {{ item.item }}"
+  loop: "{{ b2_copy_unit_plan.results }}"
+  when:
+    - ansible_check_mode
+    - not item.stat.exists
+
 - name: B2 copy | Check shared systemd folder
   ansible.builtin.stat:
     path: "/home/{{ b2_copy_user }}/.config/systemd/user"

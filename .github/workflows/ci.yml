@@ -41,6 +41,16 @@ jobs:
             test -d "/home/$account" || { echo "ASSERTION FAILED: $account home removed"; exit 1; }
             sudo userdel -r "$account"
           done
+          for unit in vaultwarden-backup.timer vaultwarden-backup.service; do
+            sudo touch "/etc/systemd/system/$unit"
+            if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/vaultwarden_backup/run.sh > "/tmp/$unit-existing.log" 2>&1; then
+              echo "ASSERTION FAILED: Vaultwarden driver accepted existing $unit"; exit 1
+            fi
+            grep -Fx 'ASSERTION FAILED: vaultwarden-backup units already exist' "/tmp/$unit-existing.log" || { echo "ASSERTION FAILED: $unit refusal message missing"; exit 1; }
+            test -e "/etc/systemd/system/$unit" || { echo "ASSERTION FAILED: $unit was removed"; exit 1; }
+            ! id bstest && ! id vwtest || { echo "ASSERTION FAILED: $unit refusal created an account"; exit 1; }
+            sudo rm "/etc/systemd/system/$unit"
+          done
       - name: Backup server failure leaves no driver state
         run: |
           before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
@@ -81,6 +91,9 @@ jobs:
           after_manager=$(systemctl show-environment)
           test "$before_file" = "$after_file" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
           test "$before_manager" = "$after_manager" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.timer || { echo 'ASSERTION FAILED: Vaultwarden timer file survived cleanup'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.service || { echo 'ASSERTION FAILED: Vaultwarden service file survived cleanup'; exit 1; }
+          test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded'; exit 1; }
 
   b2-bucket:
     runs-on: ubuntu-latest

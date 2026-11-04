@@ -47,7 +47,7 @@
       - --env-file
       - "/home/{{ b2_copy_user }}/.config/b2/{{ b2_copy_target.machine }}.env"
       - --volume
-      - "{{ b2_copy_repository_root }}/{{ b2_copy_target.machine }}:/source:ro"
+      - "{{ b2_copy_repository_root }}/{{ b2_copy_target.machine }}:/source:rw"
       - --volume
       - "/home/{{ b2_copy_user }}/.config/b2-copy/{{ b2_copy_target.machine }}:/passwords:ro"
       - "{{ b2_copy_restic_image }}"

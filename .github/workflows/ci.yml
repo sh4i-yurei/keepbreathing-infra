@@ -64,6 +64,7 @@ jobs:
             echo 'ASSERTION FAILED: driver accepted deliberate failure'; exit 1
           fi
           grep -F 'ASSERTION FAILED: b2_copy role play must pass' /tmp/b2-copy-failure.log || { tail -35 /tmp/b2-copy-failure.log; exit 1; }
+          grep -F 'Deliberate failure after B2 copy' /tmp/b2-copy-failure.log || { tail -35 /tmp/b2-copy-failure.log; exit 1; }
           ! grep -E '^CLEANUP FAILED:' /tmp/b2-copy-failure.log
           test ! -e /etc/systemd/system/b2-copy@.timer
           test ! -e /etc/systemd/system/b2-copy@.service

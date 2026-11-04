@@ -25,10 +25,10 @@ export TEST_HUB_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(2
 export TEST_B2_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
 export AWS_ACCESS_KEY_ID=$(python3 -c 'import secrets; print(secrets.token_hex(12))')
 export AWS_SECRET_ACCESS_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
-export TEST_BCRYPT=$(htpasswd -nbB testhost "$TEST_HUB_PASSWORD" | cut -d: -f2-)
+export TEST_BCRYPT=$(printf '%s\n' "$TEST_HUB_PASSWORD" | htpasswd -niB testhost | cut -d: -f2-)
 export TEST_VERIFY_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
 export TEST_VERIFY_RESTIC_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
-export TEST_VERIFY_BCRYPT=$(htpasswd -nbB verify "$TEST_VERIFY_PASSWORD" | cut -d: -f2-)
+export TEST_VERIFY_BCRYPT=$(printf '%s\n' "$TEST_VERIFY_PASSWORD" | htpasswd -niB verify | cut -d: -f2-)
 cred=/home/bstest/.config/b2/testhost.env
 hub_password=/home/bstest/.config/b2-copy/testhost/hub-password
 b2_password=/home/bstest/.config/b2-copy/testhost/b2-password
@@ -63,6 +63,8 @@ play() {
   shift
   if ! ansible-playbook -i localhost, tests/b2_copy/copy.yml "$@" >"$log" 2>&1; then
     tail -35 "$log"
+    as_bs systemctl --user status b2-copy-run@testhost.service --no-pager --full || :
+    journalctl -u b2-copy@testhost.service -n 25 --no-pager || :
     fail 'b2_copy role play must pass'
   fi
   grep -Eq 'localhost[[:space:]]+:.*failed=0' "$log" || fail 'role play recap must report failed=0'
@@ -118,7 +120,7 @@ as_bs podman run --rm --network host --security-opt label=disable \
   --repo /repo --password-file /password backup /source >"$work/hub-backup.log"
 
 podman run -d --name "$weed_name" --network host \
-  -e "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" -e "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
   "$weed_image" mini >"$work/weed-id"
 undo_add 'remove SeaweedFS container' undo_weed
 for ((attempt=0; attempt<60; attempt++)); do

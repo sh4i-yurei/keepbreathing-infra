@@ -242,7 +242,10 @@ for ((n=0; n<1001; n++)); do
   printf 'fixture\n' >"$work/fixtures/$(printf '0000%04d' "$n")"
 done
 aws_cli s3 cp "$work/fixtures" s3://b2copy-locked/restic/locks/ --recursive >"$work/fixture-upload.log"
-aws_cli s3 rm s3://b2copy-locked/restic/locks/0000 --recursive >"$work/fixture-hide.log"
+for ((n=0; n<1001; n++)); do
+  key=$(printf 'restic/locks/0000%04d' "$n")
+  aws delete-object --bucket b2copy-locked --key "$key" >/dev/null
+done
 aws list-object-versions --bucket b2copy-locked --prefix restic/locks/0000 >"$work/fixture-versions.json"
 python3 - "$work/fixture-versions.json" <<'PY' || fail 'pagination fixture must retain and hide exactly 1001 keys'
 import json, sys

@@ -64,6 +64,17 @@ undo_account() {
 }
 undo_bstest() { undo_account bstest; }
 undo_vwtest() { undo_account vwtest; }
+undo_vaultwarden_units() {
+  if [[ -e /etc/systemd/system/vaultwarden-backup.timer ]]; then
+    systemctl disable --now vaultwarden-backup.timer
+  fi
+  if [[ -e /etc/systemd/system/vaultwarden-backup.service ]]; then
+    systemctl stop vaultwarden-backup.service
+    systemctl reset-failed vaultwarden-backup.service
+  fi
+  rm -f /etc/systemd/system/vaultwarden-backup.timer /etc/systemd/system/vaultwarden-backup.service
+  systemctl daemon-reload
+}
 undo_listener() {
   if [[ -n ${listener:-} ]] && kill -0 "$listener" 2>/dev/null; then kill "$listener"; fi
 }
@@ -115,6 +126,7 @@ fi
 bs_uid=$(id -u bstest)
 useradd -m vwtest
 undo_add 'remove vwtest account' undo_vwtest
+undo_add 'remove Vaultwarden backup system units' undo_vaultwarden_units
 vw_uid=$(id -u vwtest)
 loginctl enable-linger vwtest
 systemctl start "user@$vw_uid.service"

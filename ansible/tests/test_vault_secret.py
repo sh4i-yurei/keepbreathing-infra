@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -356,7 +357,11 @@ def run_become_play(vault, tmp_path, monkeypatch, *, verbose=False):
     monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(items))
     play = tmp_path / "play.yml"
     play.write_text(
-        f"- import_playbook: {ANSIBLE / 'playbooks' / 'become-password.yml'}\n"
+        "- name: Fetch the become password\n"
+        "  hosts: all\n"
+        "  gather_facts: false\n"
+        "  become: false\n"
+        "  roles: [become_password]\n"
         "- hosts: all\n"
         "  gather_facts: false\n"
         "  become: false\n"
@@ -369,12 +374,20 @@ def run_become_play(vault, tmp_path, monkeypatch, *, verbose=False):
         "          - ansible_become_password == ('pw-' ~ inventory_hostname ~ '-1')\n"
         "      no_log: true\n"
     )
-    environment = os.environ.copy()
-    # The play is a child process; mutmut records lookup hits in this pytest process.
-    environment.pop("MUTANT_UNDER_TEST", None)
+    environment = {
+        key: os.environ[key]
+        for key in ("PATH", "HOME", "XDG_RUNTIME_DIR", "FAKE_BW_LOG", "FAKE_BW_ITEMS")
+    }
     environment["ANSIBLE_CONFIG"] = str(ANSIBLE / "ansible.cfg")
     environment["ANSIBLE_NOCOLOR"] = "1"
-    command = ["ansible-playbook", "-i", str(inventory_dir / "hosts.ini"), str(play)]
+    command = [
+        "ansible-playbook",
+        "-i",
+        str(inventory_dir / "hosts.ini"),
+        str(play),
+        "--limit",
+        "all",
+    ]
     if verbose:
         command += ["-vvv", "--check", "--diff"]
     return subprocess.run(
@@ -407,6 +420,141 @@ def test_become_play_stops_on_missing_session(vault, tmp_path, monkeypatch):
     assert "keepbreath0 sudo (alpha)" in shown and "run vu" in shown
     assert "Read the stored password three times" not in shown
     assert calls(vault) == []
+
+
+def run_scope_play(vault, tmp_path, monkeypatch, *, hosts="alpha:beta", flags=()):
+    inventory_dir = tmp_path / "inventory"
+    inventory_dir.mkdir()
+    (inventory_dir / "hosts.ini").write_text(
+        "alpha ansible_connection=local\nbeta ansible_connection=local\ngamma ansible_connection=local\n"
+    )
+    (inventory_dir / "group_vars").mkdir()
+    (inventory_dir / "group_vars" / "all.yml").write_text(
+        (ANSIBLE / "group_vars" / "all.yml").read_text()
+    )
+    items = {}
+    for host in ("alpha", "beta", "gamma"):
+        name = f"keepbreath0 sudo ({host})"
+        items[name] = {
+            "object": "item",
+            "name": name,
+            "login": {"username": "admin", "password": f"pw-{host}-1"},
+            "fields": [],
+        }
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(items))
+    session_file(vault)
+    play = tmp_path / "play.yml"
+    play.write_text(
+        "- name: Fetch the become password\n"
+        f"  hosts: {hosts}\n"
+        "  gather_facts: false\n"
+        "  become: false\n"
+        "  roles: [become_password]\n"
+        f"- hosts: {hosts}\n"
+        "  gather_facts: false\n"
+        "  become: false\n"
+        "  tasks:\n"
+        "    - ansible.builtin.debug:\n"
+        "        msg: reached {{ inventory_hostname }}\n"
+    )
+    environment = {
+        key: os.environ[key]
+        for key in ("PATH", "HOME", "XDG_RUNTIME_DIR", "FAKE_BW_LOG", "FAKE_BW_ITEMS")
+    }
+    environment.update(ANSIBLE_CONFIG=str(ANSIBLE / "ansible.cfg"), ANSIBLE_NOCOLOR="1")
+    return subprocess.run(
+        ["ansible-playbook", "-i", str(inventory_dir / "hosts.ini"), str(play), *flags],
+        cwd=ANSIBLE,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("hosts", "flags", "expected", "refused"),
+    [
+        ("alpha", (), ("alpha",), False),
+        ("alpha:beta", ("--limit", "alpha:beta"), ("alpha", "beta"), False),
+        ("alpha:beta", (), (), True),
+        ("alpha:beta", ("--limit", "all"), ("alpha", "beta"), False),
+        ("alpha:beta", ("--check",), (), True),
+        (
+            "alpha:beta",
+            ("--check", "--diff", "--limit", "alpha:beta"),
+            ("alpha", "beta"),
+            False,
+        ),
+    ],
+)
+def test_become_play_scope(
+    vault, tmp_path, monkeypatch, hosts, flags, expected, refused
+):
+    result = run_scope_play(vault, tmp_path, monkeypatch, hosts=hosts, flags=flags)
+    shown = result.stdout + result.stderr
+    if refused:
+        assert result.returncode != 0, shown
+        assert (
+            "This run would reach 2 machines (alpha, beta) without --limit. Pass --limit with the machines you mean, or --limit all for every machine."
+            in shown
+        )
+        assert calls(vault) == []
+        assert "reached alpha" not in shown and "reached beta" not in shown
+    else:
+        assert result.returncode == 0, shown
+        for host in expected:
+            assert f"reached {host}" in shown
+        assert sorted(entry["argv"] for entry in calls(vault)) == sorted(
+            ["get", "item", f"keepbreath0 sudo ({host})"] for host in expected
+        )
+        assert all(f"pw-{host}-1" not in shown for host in ("alpha", "beta", "gamma"))
+        for host in ("alpha", "beta", "gamma"):
+            if host not in expected:
+                assert f"reached {host}" not in shown
+
+
+def listed_plays(path):
+    environment = {key: os.environ[key] for key in ("PATH", "HOME")}
+    environment.update(ANSIBLE_CONFIG=str(ANSIBLE / "ansible.cfg"), ANSIBLE_NOCOLOR="1")
+    result = subprocess.run(
+        ["ansible-playbook", str(path), "--list-hosts"],
+        cwd=ANSIBLE,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    plays = []
+    for block in re.split(r"(?=^  play #\d+ )", result.stdout, flags=re.MULTILINE)[1:]:
+        name = re.search(r"^  play #\d+ \([^)]*\): ([^\t\n]+)", block).group(1)
+        count = int(re.search(r"^    hosts \((\d+)\):", block, re.MULTILINE).group(1))
+        hosts = set(re.findall(r"^      (\S+)$", block, re.MULTILINE))
+        assert len(hosts) == count, block
+        plays.append((name, hosts))
+    assert plays, result.stdout
+    return plays
+
+
+def test_real_playbooks_fetch_only_their_play_hosts():
+    paths = sorted((ANSIBLE / "playbooks").glob("*.yml"))
+    assert paths
+    for path in paths:
+        plays = listed_plays(path)
+        fetches = [
+            hosts for name, hosts in plays if name == "Fetch the become password"
+        ]
+        others = [
+            (name, hosts)
+            for name, hosts in plays
+            if name != "Fetch the become password"
+        ]
+        assert fetches, path
+        combined = set().union(*(hosts for _, hosts in others))
+        assert all(hosts == combined for hosts in fetches), path
+        if len(combined) > 1:
+            assert plays[0][0] == "Fetch the become password", path
+        if path.name == "hub.yml":
+            assert all(hosts == {"hub"} for _, hosts in plays)
 
 
 def test_every_vault_read_uses_the_repository_lookup():

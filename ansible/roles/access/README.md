@@ -116,8 +116,8 @@ From the `ansible/` directory, with the vault unlocked:
 ansible-playbook playbooks/access.yml --limit hub
 ```
 
-Always use `--limit`. The playbook says `hosts: all`, so a run without it would touch every
-machine in the inventory.
+Use `--limit` when targeting more than one machine. The playbook's first task refuses a
+multi-machine run without an explicit limit before reading any vault item.
 
 `playbooks/site.yml` runs `baseline` and then this role, for a complete build.
 

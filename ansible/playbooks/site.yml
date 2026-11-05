@@ -1,5 +1,6 @@
 ---
 # Build a machine completely: the baseline, then access.
+# Targets every inventory machine through baseline and access; --limit is required when more than one is reached.
 #   ansible-playbook playbooks/site.yml --limit <host>
 
 - name: Baseline

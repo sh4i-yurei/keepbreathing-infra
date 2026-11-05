@@ -3,10 +3,14 @@
 # group_vars/droplets.yml (Monitoring and alerting step 6, decisions #26, #29 and #32), and on
 # vaultserv over the tailnet with a password (step 9, decision #30). The hub gets node_exporter
 # through hub.yml; almaserv gets it by hand.
+# Targets droplets and vaultserv; --limit is required when more than one is reached.
 #   ansible-playbook playbooks/node-exporter.yml --limit web
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: become-password.yml
+  hosts: droplets:vaultserv
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 - name: Node exporter
   hosts: droplets:vaultserv

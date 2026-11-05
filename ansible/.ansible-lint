@@ -1,6 +1,6 @@
 ---
-# Files copied unchanged from upstream projects. They keep upstream's formatting so they can be
-# compared byte for byte with their pinned source.
+# Files copied unchanged from upstream projects keep their formatting for
+# byte-for-byte comparison.
 exclude_paths:
   - roles/hub/files/node-mixin-rules.yml
   - roles/hub/files/node-mixin-alerts.yml

@@ -1,9 +1,13 @@
 ---
 # Bring a machine to the baseline every machine gets before it gets a job.
+# Targets every inventory machine; --limit is required when more than one is reached.
 #   ansible-playbook playbooks/baseline.yml --limit hub
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: become-password.yml
+  hosts: all
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 - name: Baseline
   hosts: all

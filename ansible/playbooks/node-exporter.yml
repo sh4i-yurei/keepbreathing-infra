@@ -7,9 +7,10 @@
 #   ansible-playbook playbooks/node-exporter.yml --limit web
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: shared/become-password.yml
-  vars:
-    become_password_hosts: droplets:vaultserv
+  hosts: droplets:vaultserv
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 - name: Node exporter
   hosts: droplets:vaultserv

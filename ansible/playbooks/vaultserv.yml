@@ -1,8 +1,9 @@
 ---
 - name: Fetch the become password
-  ansible.builtin.import_playbook: shared/become-password.yml
-  vars:
-    become_password_hosts: vaultserv
+  hosts: vaultserv
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 - name: Back up Vaultwarden
   hosts: vaultserv

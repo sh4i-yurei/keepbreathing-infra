@@ -4,9 +4,10 @@
 #   ansible-playbook playbooks/baseline.yml --limit hub
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: shared/become-password.yml
-  vars:
-    become_password_hosts: all
+  hosts: all
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 - name: Baseline
   hosts: all

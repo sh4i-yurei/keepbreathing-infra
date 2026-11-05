@@ -5,9 +5,10 @@
 #   ansible-playbook playbooks/podman-exporter.yml --check --diff --limit web
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: shared/become-password.yml
-  vars:
-    become_password_hosts: droplets:vaultserv
+  hosts: droplets:vaultserv
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 - name: Podman exporter
   hosts: droplets:vaultserv

@@ -1,8 +1,9 @@
 ---
 - name: Fetch the become password
-  ansible.builtin.import_playbook: shared/become-password.yml
-  vars:
-    become_password_hosts: hub
+  hosts: hub
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 - name: Copy hub backup repositories to B2
   hosts: hub

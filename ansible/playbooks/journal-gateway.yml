@@ -5,9 +5,10 @@
 #   ansible-playbook playbooks/journal-gateway.yml --limit hub,web
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: shared/become-password.yml
-  vars:
-    become_password_hosts: hub:droplets:vaultserv
+  hosts: hub:droplets:vaultserv
+  gather_facts: false
+  become: false
+  roles: [become_password]
 
 # The hub's client certificate must exist before a gateway can trust it.
 - name: Prepare the journal pull client's certificate

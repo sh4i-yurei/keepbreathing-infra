@@ -1,0 +1,34 @@
+---
+- name: Refuse an unbounded run across multiple machines
+  ansible.builtin.fail:
+    msg: >-
+      This run would reach {{ ansible_play_hosts_all | length }} machines
+      ({{ ansible_play_hosts_all | sort | join(', ') }}) without --limit.
+      Pass --limit with the machines you mean, or --limit all for every machine.
+  vars:
+    ansible_become_password: ""
+  when:
+    - ansible_limit is undefined
+    - ansible_play_hosts_all | length > 1
+
+- name: Check the vault and fetch the become password
+  when: ansible_become | default(true) | bool
+  block:
+    - name: Fetch the become password from the controller vault
+      ansible.builtin.set_fact:
+        ansible_become_password: "{{ lookup('vault_secret', 'keepbreath0 sudo (' ~ inventory_hostname ~ ')') }}"
+      no_log: true
+      vars:
+        ansible_become_password: ""
+  rescue:
+    - name: Report the unavailable controller vault item
+      ansible.builtin.fail:
+        msg: "Vault lookup failed for item {{ ('keepbreath0 sudo (' ~ inventory_hostname ~ ')') | to_json }}; run vu."
+      vars:
+        ansible_become_password: ""
+
+- name: Store the become password as a fact
+  ansible.builtin.set_fact:
+    ansible_become_password: "{{ ansible_become_password }}"
+  no_log: true
+  when: ansible_become | default(true) | bool

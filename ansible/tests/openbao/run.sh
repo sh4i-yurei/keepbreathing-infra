@@ -62,7 +62,10 @@ play() {
 }
 recap() {
   local log=$1 expected=$2
-  grep -Eq "localhost[[:space:]]+:.*changed=$expected .*failed=0" "$log" || fail "$log recap must have changed=$expected and failed=0"
+  grep -Eq "localhost[[:space:]]+:.*changed=$expected .*failed=0" "$log" || {
+    tail -60 "$log"
+    fail "$log recap must have changed=$expected and failed=0"
+  }
 }
 changed_task() {
   local log=$1 title=$2
@@ -78,8 +81,11 @@ verify_fails() {
   grep -Fq '"msg": "'"$message"'"' "$log" || { tail -25 "$log"; fail "$label wrong verify failure"; }
 }
 as_user() {
-  HOME="$home" USER="$user" LOGNAME="$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" \
-    XDG_CONFIG_HOME="$home/.config" runuser -u "$user" -- "$@"
+  (
+    cd "$home"
+    HOME="$home" USER="$user" LOGNAME="$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" \
+      XDG_CONFIG_HOME="$home/.config" runuser -u "$user" -- "$@"
+  )
 }
 restart() {
   as_user systemctl --user daemon-reload
@@ -191,7 +197,9 @@ healthy || fail 'first role run must initialize and unseal OpenBao'
 [[ ! -e $first ]] || fail 'first-start file must be removed'
 [[ $(stat -c %s "$seal") == 44 && $(stat -c %a "$seal") == 600 && $(stat -c %U "$seal") == "$user" ]] || fail 'seal key metadata must match'
 [[ $(cat "$seal") == "$TEST_SEAL_KEY" ]] || fail 'seal key contents must match generated key'
-[[ $(as_user podman inspect openbao --format '{{.Image}}') == $(as_user podman image inspect "$image" --format '{{.Id}}') ]] || fail 'running OpenBao image ID must match pin'
+container_image=$(as_user podman inspect openbao --format '{{.Image}}') || fail 'running OpenBao image must be inspectable'
+pinned_image=$(as_user podman image inspect "$image" --format '{{.Id}}') || fail 'pinned OpenBao image must be inspectable'
+[[ -n $container_image && $container_image == "$pinned_image" ]] || fail 'running OpenBao image ID must match pin'
 if [[ ${TEST_FAIL_AFTER_OPENBAO_ROLE:-} == 1 ]]; then fail 'deliberate failure after the openbao role'; fi
 login keepbreath0 TEST_ADMIN_PASSWORD default,keepbreath0
 login ansible TEST_ANSIBLE_PASSWORD ansible,default

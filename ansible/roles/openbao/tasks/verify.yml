@@ -1,0 +1,109 @@
+---
+- name: OpenBao | Read sys/health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
+    method: GET
+    status_code: [200, 429, 472, 473, 501, 503]
+    return_content: true
+  register: openbao_verify_health
+  changed_when: false
+  failed_when: false
+
+- name: OpenBao | Require initialized and unsealed health
+  ansible.builtin.assert:
+    that:
+      - openbao_verify_health.status | default(0) == 200
+      - openbao_verify_health.json.initialized | default(false)
+      - not (openbao_verify_health.json.sealed | default(true))
+    fail_msg: OpenBao must answer sys/health with 200, initialized and unsealed
+    quiet: true
+
+- name: OpenBao | Read the first-start file state
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_user }}/.config/openbao/config/first-start.hcl"
+    get_checksum: false
+  register: openbao_first_start_file
+
+- name: OpenBao | Require first-start file removal
+  ansible.builtin.assert:
+    that: not openbao_first_start_file.stat.exists
+    fail_msg: The first-start file must not exist once OpenBao is initialized
+    quiet: true
+
+- name: OpenBao | Read the seal key file size
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_user }}/.config/openbao/seal/seal.key"
+    get_checksum: false
+  register: openbao_seal_key_file
+  no_log: true
+  diff: false
+
+- name: OpenBao | Require a 44-byte seal key file
+  ansible.builtin.assert:
+    that:
+      - openbao_seal_key_file.stat.exists | default(false)
+      - openbao_seal_key_file.stat.size | default(-1) == 44
+    fail_msg: The seal key file must be exactly 44 bytes
+    quiet: true
+
+- name: OpenBao | Verify ansible login and audit record
+  block:
+    - name: OpenBao | Sign in as ansible for verification
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/userpass/login/ansible"
+        method: POST
+        body_format: json
+        body:
+          password: "{{ openbao_ansible_password }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_verify_login
+      no_log: true
+      diff: false
+
+    - name: OpenBao | Require ansible login success
+      ansible.builtin.assert:
+        that:
+          - openbao_verify_login.status == 200
+          - openbao_verify_login.json.auth.client_token is defined
+        fail_msg: The ansible login must succeed
+        quiet: true
+      no_log: true
+      diff: false
+
+    - name: OpenBao | Read the audit log as the service account
+      ansible.builtin.slurp:
+        src: "/home/{{ openbao_user }}/openbao/logs/audit.log"
+      become: true
+      become_user: "{{ openbao_user }}"
+      register: openbao_audit_log
+      no_log: true
+      diff: false
+
+    - name: OpenBao | Parse audit requests
+      ansible.builtin.set_fact:
+        openbao_audit_requests: >-
+          {{ (openbao_audit_log.content | b64decode).splitlines()
+             | map('from_json')
+             | selectattr('type', 'equalto', 'request')
+             | selectattr('request.path', 'equalto', 'auth/userpass/login/ansible')
+             | list }}
+      no_log: true
+      diff: false
+
+    - name: OpenBao | Require a loopback audit address
+      ansible.builtin.assert:
+        that: openbao_audit_requests | selectattr('request.remote_address', 'equalto', '127.0.0.1') | list | length > 0
+        fail_msg: OpenBao must see a loopback client as 127.0.0.1
+        quiet: true
+  always:
+    - name: OpenBao | Revoke the verification token
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/token/revoke-self"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ openbao_verify_login.json.auth.client_token }}"
+        status_code: [200, 204]
+      when: openbao_verify_login.json.auth.client_token is defined
+      no_log: true
+      diff: false

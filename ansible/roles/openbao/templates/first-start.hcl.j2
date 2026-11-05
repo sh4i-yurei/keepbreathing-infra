@@ -1,0 +1,54 @@
+initialize "authentication" {
+  request "enable-userpass" {
+    operation = "create"
+    path = "sys/auth/userpass"
+    data = { type = "userpass" }
+  }
+
+  request "keepbreath0-policy" {
+    operation = "create"
+    path = "sys/policies/acl/keepbreath0"
+    data = {
+      policy = <<EOP
+path "*" {
+  capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+}
+EOP
+    }
+  }
+
+  request "ansible-policy" {
+    operation = "create"
+    path = "sys/policies/acl/ansible"
+    data = {
+      policy = <<EOP
+path "sys/mounts" { capabilities = ["read"] }
+path "sys/mounts/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "sys/auth" { capabilities = ["read"] }
+path "sys/auth/*" { capabilities = ["create", "read", "update", "delete", "sudo"] }
+path "sys/policies/acl" { capabilities = ["list"] }
+path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "auth/approle/role" { capabilities = ["list"] }
+path "auth/approle/role/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+EOP
+    }
+  }
+
+  request "keepbreath0-user" {
+    operation = "create"
+    path = "auth/userpass/users/keepbreath0"
+    data = {
+      password = {{ openbao_keepbreath0_password | to_json }}
+      token_policies = ["keepbreath0"]
+    }
+  }
+
+  request "ansible-user" {
+    operation = "create"
+    path = "auth/userpass/users/ansible"
+    data = {
+      password = {{ openbao_ansible_password | to_json }}
+      token_policies = ["ansible"]
+    }
+  }
+}

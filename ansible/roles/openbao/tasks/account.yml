@@ -1,0 +1,28 @@
+---
+- name: OpenBao | Create the account
+  ansible.builtin.user:
+    name: "{{ openbao_user }}"
+  register: openbao_account
+
+- name: OpenBao | Read subordinate ID ranges
+  ansible.builtin.command:
+    argv: [grep, -q, "^{{ openbao_user }}:", "{{ item }}"]
+  loop: [/etc/subuid, /etc/subgid]
+  register: openbao_subids
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: openbao_account.uid is defined or not ansible_check_mode
+
+- name: OpenBao | Require subordinate UID and GID ranges
+  ansible.builtin.assert:
+    that: openbao_subids.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: "{{ openbao_user }} needs entries in /etc/subuid and /etc/subgid for rootless Podman."
+    quiet: true
+  when: openbao_account.uid is defined or not ansible_check_mode
+
+- name: OpenBao | Enable lingering
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ openbao_user | quote }}"
+    creates: "/var/lib/systemd/linger/{{ openbao_user }}"
+  when: not ansible_check_mode

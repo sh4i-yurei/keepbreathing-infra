@@ -303,6 +303,68 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_server/run.sh
 
+  openbao:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y podman passt
+      - name: Existing account is preserved
+        run: |
+          sudo useradd -m baotest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao/run.sh > /tmp/openbao-account.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing account was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: baotest already exists' /tmp/openbao-account.log
+          test -d /home/baotest
+          id baotest
+          sudo userdel -r baotest
+      - name: Occupied port is preserved
+        run: |
+          python3 -m http.server 8200 --bind 127.0.0.1 > /tmp/openbao-listener.log 2>&1 &
+          listener=$!
+          trap 'kill "$listener"' EXIT
+          sleep 1
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao/run.sh > /tmp/openbao-port.log 2>&1; then
+            echo 'ASSERTION FAILED: occupied port was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: 127.0.0.1:8200 is already in use' /tmp/openbao-port.log
+          curl -fsS http://127.0.0.1:8200/ > /dev/null
+          if id baotest >/dev/null 2>&1; then echo 'ASSERTION FAILED: occupied-port test created baotest'; exit 1; fi
+      - name: Deliberate role failure cleans up
+        run: |
+          sudo cp -p /etc/environment /tmp/openbao-environment-before
+          sudo systemctl show-environment > /tmp/openbao-manager-before
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AFTER_OPENBAO_ROLE=1 bash tests/openbao/run.sh > /tmp/openbao-failure.log 2>&1; then
+            echo 'ASSERTION FAILED: deliberate driver failure passed'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: deliberate failure after the openbao role' /tmp/openbao-failure.log
+          if grep -q '^CLEANUP FAILED:' /tmp/openbao-failure.log; then echo 'ASSERTION FAILED: driver cleanup failed'; exit 1; fi
+          if id baotest >/dev/null 2>&1; then echo 'ASSERTION FAILED: cleanup left baotest'; exit 1; fi
+          if test -e /home/baotest; then echo 'ASSERTION FAILED: cleanup left home'; exit 1; fi
+          if test -e /var/lib/systemd/linger/baotest; then echo 'ASSERTION FAILED: cleanup left lingering'; exit 1; fi
+          if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8200/ || true)" != 000; then echo 'ASSERTION FAILED: cleanup left listener'; exit 1; fi
+          sudo cmp /tmp/openbao-environment-before /etc/environment
+          sudo systemctl show-environment | cmp /tmp/openbao-manager-before -
+      - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao/run.sh
+      - name: Full driver cleans up
+        run: |
+          if id baotest >/dev/null 2>&1; then echo 'ASSERTION FAILED: full driver left baotest'; exit 1; fi
+          if test -e /home/baotest; then echo 'ASSERTION FAILED: full driver left home'; exit 1; fi
+          if test -e /var/lib/systemd/linger/baotest; then echo 'ASSERTION FAILED: full driver left lingering'; exit 1; fi
+          if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8200/ || true)" != 000; then echo 'ASSERTION FAILED: full driver left listener'; exit 1; fi
+          sudo cmp /tmp/openbao-environment-before /etc/environment
+          sudo systemctl show-environment | cmp /tmp/openbao-manager-before -
+
   hub-backup-disk:
     runs-on: ubuntu-latest
     defaults:

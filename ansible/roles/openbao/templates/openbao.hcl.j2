@@ -1,0 +1,22 @@
+storage "raft" {
+  path = "/openbao/raft"
+  node_id = "hub-1"
+}
+
+cluster_addr = "http://127.0.0.1:8201"
+
+seal "static" {
+  current_key_id = {{ openbao_seal_key_id | to_json }}
+  current_key = "file:///openbao/seal/seal.key"
+}
+
+audit "file" "audit" {
+  options {
+    file_path = "/openbao/logs/audit.log"
+  }
+}
+
+listener "tcp" {
+  address = "0.0.0.0:8200"
+  tls_disable = true
+}

@@ -4,6 +4,12 @@ hub_backup_disk_device: /dev/disk/by-id/ata-VBOX_HARDDISK_VBfb6f4c8a-8d73d857
 hub_backup_mount_point: /srv/backup
 backup_server_mount_point: "{{ hub_backup_mount_point }}"
 backup_server_user: keepbreath6
+openbao_user: keepbreath7
+openbao_port: 8200
+openbao_seal_key_id: hub-1
+openbao_seal_key: "{{ lookup('vault_secret', 'openbao seal (hub)') }}"
+openbao_keepbreath0_password: "{{ lookup('vault_secret', 'openbao keepbreath0 (hub)') }}"
+openbao_ansible_password: "{{ lookup('vault_secret', 'openbao ansible (hub)') }}"
 b2_master_key_id: "{{ lookup('vault_secret', 'Backblaze master key', login='username') }}"
 b2_master_key: "{{ lookup('vault_secret', 'Backblaze master key') }}"
 b2_credentials_user: "{{ backup_server_user }}"

@@ -163,11 +163,15 @@ printf 'PASS scoped rotation, restore, upload refusal and exact sheet\n'
 
 control '{"action":"remove_key","id":"test-key-glass"}'
 failure_case() {
-  local case_name=$1 phrase=$2
+  local case_name=$1 phrase=$2 extra_capabilities=${3:-}
   control '{"action":"remove_key","id":"old-glass-1"}'
   control '{"action":"remove_key","id":"old-glass-2"}'
   add_old_keys
-  control '{"action":"next_key","applicationKeyId":"test-key-glass","applicationKey":"test-glass-secret"}'
+  if [[ -n $extra_capabilities ]]; then
+    control '{"action":"next_key","applicationKeyId":"test-key-glass","applicationKey":"test-glass-secret","extra_capabilities":["writeFiles"]}'
+  else
+    control '{"action":"next_key","applicationKeyId":"test-key-glass","applicationKey":"test-glass-secret"}'
+  fi
   clear_calls
   expect_failure "$case_name" "$phrase"
   assert_calls rolled_back
@@ -184,6 +188,5 @@ restart_weed test-glass-secret Read,List
 TEST_B2_PASSWORD=wrong-repository-password failure_case bad_password "Restore with the sheet's key failed for testhost. restic said: "
 grep -Fq 'wrong password or no key found' "$work/bad_password.log" || fail 'bad_password restic error'
 TEST_B2_PASSWORD=test-b2-password
-restart_weed test-glass-secret Read,List,Write
-failure_case writable "B2 accepted an upload from the sheet's key for b2glass-locked. aws said: "
+failure_case writable "B2 would accept uploads from the sheet's key for b2glass-locked. b2 said: HTTP 200" writeFiles
 printf 'break-glass-sheet driver: all cases passed\n'

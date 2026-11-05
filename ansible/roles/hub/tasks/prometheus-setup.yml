@@ -98,7 +98,7 @@
 # The droplets' node_exporter certificates are public and readable without sudo, so they are read
 # as the login account. Reading them over SSH from each droplet means Prometheus trusts what is on
 # that machine, not whatever answers on the network (decision #29). become is off because
-# become-password.yml stores the hub's sudo password as a fact, which outranks the droplet's own.
+# roles/become_password stores the hub's sudo password as a fact, which outranks the droplet's own.
 - name: prometheus-setup | Read each droplet's node_exporter certificate
   ansible.builtin.slurp:
     src: /etc/node_exporter/node_exporter.crt

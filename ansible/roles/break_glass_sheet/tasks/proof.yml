@@ -14,12 +14,6 @@
       changed_when: false
       no_log: true
 
-    - name: Break-glass sheet | Pull pinned AWS CLI image
-      ansible.builtin.command:
-        argv: [podman, pull, "{{ aws_cli_image }}"]
-      changed_when: false
-      no_log: true
-
     - name: Break-glass sheet | Prove each repository restore
       ansible.builtin.include_tasks: prove-restore.yml
       loop: "{{ b2_buckets }}"
@@ -28,16 +22,9 @@
         label: "{{ break_glass_sheet_target.machine }}"
       no_log: true
 
-    - name: Break-glass sheet | Clear restore output before upload probe
+    - name: Break-glass sheet | Clear restore output before write refusal proof
       ansible.builtin.set_fact:
         break_glass_sheet_proof_tool: ""
-      no_log: true
-
-    - name: Break-glass sheet | Write upload probe file
-      ansible.builtin.copy:
-        dest: "{{ break_glass_sheet_temp.path }}/probe"
-        content: "break-glass write probe\n"
-        mode: "0600"
       no_log: true
 
     - name: Break-glass sheet | Prove upload refusal for each bucket

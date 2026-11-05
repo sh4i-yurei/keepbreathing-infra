@@ -187,6 +187,7 @@ class Handler(BaseHTTPRequestHandler):
                 state.next_key_credentials = {
                     "applicationKeyId": command["applicationKeyId"],
                     "applicationKey": command["applicationKey"],
+                    "extra_capabilities": command.get("extra_capabilities", []),
                 }
             elif action == "duplicate_bucket":
                 state.duplicate_bucket = True
@@ -358,7 +359,12 @@ class Handler(BaseHTTPRequestHandler):
                     if state.next_key_credentials
                     else f"test-hub-secret-{state.next_key}"
                 ),
-                "capabilities": payload["capabilities"],
+                "capabilities": payload["capabilities"]
+                + (
+                    state.next_key_credentials["extra_capabilities"]
+                    if state.next_key_credentials
+                    else []
+                ),
                 "bucketIds": payload["bucketIds"],
                 "keyName": payload["keyName"],
             }

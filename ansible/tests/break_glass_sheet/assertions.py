@@ -38,6 +38,12 @@ create = [call for call in calls if call["name"] == "b2_create_key"]
 delete = [call for call in calls if call["name"] == "b2_delete_key"]
 if case == "no_writes":
     assert not create and not delete, (create, delete)
+    assert not [
+        call
+        for call in calls
+        if call["name"] == "b2_get_upload_url"
+        or (call["name"] == "b2_authorize_account" and call["key"] == "test-key-glass")
+    ], calls
 elif case == "rotated":
     assert len(create) == 1, create
     assert create[0]["request"] == {
@@ -51,6 +57,17 @@ elif case == "rotated":
         "old-glass-2",
     ], delete
     assert calls.index(create[0]) < calls.index(delete[0])
+    upload_checks = [call for call in calls if call["name"] == "b2_get_upload_url"]
+    assert upload_checks == [
+        {
+            "name": "b2_get_upload_url",
+            "key": "test-key-glass",
+            "request": {"bucketId": "bucket-1"},
+            "status": 401,
+            "code": "unauthorized",
+        }
+    ], upload_checks
+    assert calls.index(upload_checks[0]) < calls.index(delete[0])
     assert [
         key["applicationKeyId"]
         for key in state["keys"]

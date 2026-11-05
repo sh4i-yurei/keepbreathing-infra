@@ -20,7 +20,7 @@ Run the Python tests from the repository root inside `dev`:
 
 - `python3 -m pytest ansible/tests`
 
-CI in `.github/workflows/ci.yml` runs these checks on every pull request and every branch push.
+CI in `.github/workflows/ci.yml` runs these checks on every branch push.
 The `main` ruleset requires the lint and syntax jobs by name. Report the
 checks you actually ran, with their output.
 

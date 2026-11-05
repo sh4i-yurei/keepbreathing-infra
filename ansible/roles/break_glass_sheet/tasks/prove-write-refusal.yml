@@ -2,6 +2,7 @@
 - name: Break-glass sheet | Name write-refusal failure
   ansible.builtin.set_fact:
     break_glass_sheet_proof_failure: "B2 accepted an upload from the sheet's key for {{ break_glass_sheet_target.name }}"
+    break_glass_sheet_proof_tool: ""
   no_log: true
 
 - name: Break-glass sheet | Ask S3 to accept an upload
@@ -34,6 +35,22 @@
   register: break_glass_sheet_upload
   failed_when: false
   changed_when: false
+  no_log: true
+
+- name: Break-glass sheet | Scrub upload output for a failed proof
+  ansible.builtin.set_fact:
+    break_glass_sheet_scrubbed_output: >-
+      {{ ((break_glass_sheet_upload.stderr
+            if break_glass_sheet_upload.stderr | length > 0
+            else break_glass_sheet_upload.stdout).splitlines()[-20:] | join(' | '))
+         | replace(break_glass_sheet_new_key.json.applicationKeyId, '<key-id>')
+         | replace(break_glass_sheet_new_key.json.applicationKey, '<key>')
+         | replace(b2_copy_passwords[break_glass_sheet_target.machine].b2, '<password>') }}
+  no_log: true
+
+- name: Break-glass sheet | Identify upload output for a failed proof
+  ansible.builtin.set_fact:
+    break_glass_sheet_proof_tool: aws
   no_log: true
 
 - name: Break-glass sheet | Require AccessDenied

@@ -25,7 +25,7 @@ jobs:
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs skopeo
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs skopeo attr
       - name: Check shared inventory values and pinned restic tag
         run: |
           ansible-inventory --host hub | python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["b2_api_url"] == "https://api.backblazeb2.com/b2api/v4/"; assert data["restic_image_tag"] == "docker.io/restic/restic:0.19.1"'

@@ -26,7 +26,8 @@ if case == "sheet":
         "testhost restore: podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-key-glass "
         "-e AWS_SECRET_ACCESS_KEY=test-glass-secret -e RESTIC_PASSWORD=test-b2-password "
         "-v ./restore:/restore:Z docker.io/restic/restic:0.19.1 "
-        f"-r s3:{endpoint}/b2glass-locked/restic --no-lock restore latest --target /restore --verify",
+        f"-r s3:{endpoint}/b2glass-locked/restic --no-lock restore latest --target /restore "
+        "--exclude-xattr security.selinux --verify",
     ]
     assert value == expected, (value, expected)
     sys.exit(0)

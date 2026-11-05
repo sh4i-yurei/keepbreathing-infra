@@ -1,0 +1,22 @@
+---
+# Ansible's file writers need a real parent directory. Predict their changes
+# explicitly when check mode finds a fresh account and no home directory.
+- name: OpenBao | Write the configuration
+  ansible.builtin.debug:
+    msg: OpenBao configuration would be created
+  changed_when: true
+
+- name: OpenBao | Write the seal key file
+  ansible.builtin.debug:
+    msg: OpenBao seal key file would be created
+  changed_when: true
+
+- name: OpenBao | Write the first-start file
+  ansible.builtin.debug:
+    msg: OpenBao first-start file would be created
+  changed_when: true
+
+- name: OpenBao | Write the Quadlet file
+  ansible.builtin.debug:
+    msg: OpenBao Quadlet file would be created
+  changed_when: true

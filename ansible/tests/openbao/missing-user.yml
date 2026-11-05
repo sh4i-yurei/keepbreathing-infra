@@ -1,0 +1,13 @@
+---
+- name: Reject a missing OpenBao account
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    openbao_port: 8200
+    openbao_seal_key_id: hub-1
+    openbao_seal_key: "{{ lookup('env', 'TEST_SEAL_KEY') }}"
+    openbao_keepbreath0_password: "{{ lookup('env', 'TEST_ADMIN_PASSWORD') }}"
+    openbao_ansible_password: "{{ lookup('env', 'TEST_ANSIBLE_PASSWORD') }}"
+  roles:
+    - openbao

@@ -1,0 +1,161 @@
+---
+- name: Prepare the OpenBao account
+  ansible.builtin.import_tasks: account.yml
+
+- name: OpenBao | Read the Raft database state
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_user }}/openbao/raft/vault.db"
+    get_checksum: false
+  register: openbao_raft_database
+
+- name: OpenBao | Read current health before changing the first-start file
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
+    method: GET
+    status_code: [200, 429, 472, 473, 501, 503]
+    return_content: true
+  register: openbao_prior_health
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: OpenBao | Predict configuration files on a fresh check-mode account
+  ansible.builtin.import_tasks: predict.yml
+  when: ansible_check_mode and openbao_account.uid is not defined
+
+- name: OpenBao | Create the account's private directories
+  ansible.builtin.file:
+    path: "/home/{{ openbao_user }}/{{ item }}"
+    state: directory
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_user }}"
+    mode: '0700'
+  loop:
+    - .config
+    - .config/containers
+    - .config/containers/systemd
+    - .config/openbao
+    - .config/openbao/config
+    - .config/openbao/seal
+    - openbao
+    - openbao/raft
+    - openbao/logs
+  when: openbao_account.uid is defined or not ansible_check_mode
+
+- name: OpenBao | Write the configuration
+  ansible.builtin.template:
+    src: openbao.hcl.j2
+    dest: "/home/{{ openbao_user }}/.config/openbao/config/openbao.hcl"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_user }}"
+    mode: '0600'
+  no_log: true
+  diff: false
+  notify: Restart OpenBao
+  when: openbao_account.uid is defined or not ansible_check_mode
+
+- name: OpenBao | Write the seal key file
+  ansible.builtin.copy:
+    content: "{{ openbao_seal_key }}"
+    dest: "/home/{{ openbao_user }}/.config/openbao/seal/seal.key"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_user }}"
+    mode: '0600'
+  no_log: true
+  diff: false
+  notify: Restart OpenBao
+  when: openbao_account.uid is defined or not ansible_check_mode
+
+- name: OpenBao | Require the first-start administrator password
+  ansible.builtin.assert:
+    that:
+      - openbao_keepbreath0_password is defined
+      - openbao_keepbreath0_password is string
+      - openbao_keepbreath0_password | length > 0
+    fail_msg: openbao_keepbreath0_password is required for OpenBao's first start
+    quiet: true
+  when:
+    - not ansible_check_mode
+    - not openbao_raft_database.stat.exists
+    - not (openbao_prior_health.json.initialized | default(false))
+
+- name: OpenBao | Write the first-start file
+  ansible.builtin.template:
+    src: first-start.hcl.j2
+    dest: "/home/{{ openbao_user }}/.config/openbao/config/first-start.hcl"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_user }}"
+    mode: '0600'
+  no_log: true
+  diff: false
+  notify: Restart OpenBao
+  when:
+    - openbao_account.uid is defined or not ansible_check_mode
+    - not openbao_raft_database.stat.exists
+    - not (openbao_prior_health.json.initialized | default(false))
+
+- name: OpenBao | Write the Quadlet file
+  ansible.builtin.template:
+    src: openbao.container.j2
+    dest: "/home/{{ openbao_user }}/.config/containers/systemd/openbao.container"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_user }}"
+    mode: '0644'
+  notify:
+    - Reload OpenBao user manager
+    - Restart OpenBao
+  when: openbao_account.uid is defined or not ansible_check_mode
+
+- name: OpenBao | Pull the pinned image into the account's storage
+  containers.podman.podman_image:
+    name: "{{ openbao_image }}"
+  become: true
+  become_user: "{{ openbao_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ openbao_account.uid }}"
+  when: not ansible_check_mode
+
+- name: OpenBao | Apply service handlers before starting
+  ansible.builtin.meta: flush_handlers
+
+- name: OpenBao | Start the service
+  ansible.builtin.systemd_service:
+    name: openbao.service
+    state: started
+    scope: user
+  become: true
+  become_user: "{{ openbao_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ openbao_account.uid }}"
+  when: not ansible_check_mode
+
+- name: OpenBao | Wait for initialization and unseal
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
+    method: GET
+    status_code: [200, 429, 472, 473, 501, 503]
+    return_content: true
+  register: openbao_started_health
+  changed_when: false
+  failed_when: false
+  until: >-
+    openbao_started_health.status | default(0) == 200
+    and openbao_started_health.json.initialized | default(false)
+    and not (openbao_started_health.json.sealed | default(true))
+  retries: 60
+  delay: 1
+  when: not ansible_check_mode
+
+- name: OpenBao | Remove the first-start file after initialization
+  ansible.builtin.file:
+    path: "/home/{{ openbao_user }}/.config/openbao/config/first-start.hcl"
+    state: absent
+  no_log: true
+  diff: false
+  when:
+    - not ansible_check_mode
+    - openbao_started_health.json.initialized | default(false)
+
+- name: Verify the running OpenBao server
+  ansible.builtin.import_tasks: verify.yml
+  when: not ansible_check_mode

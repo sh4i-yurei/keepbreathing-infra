@@ -1,0 +1,17 @@
+---
+- name: Verify OpenBao on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    openbao_user: baotest
+    openbao_port: 8200
+    openbao_seal_key_id: hub-1
+    openbao_seal_key: "{{ lookup('env', 'TEST_SEAL_KEY') }}"
+    openbao_keepbreath0_password: "{{ lookup('env', 'TEST_ADMIN_PASSWORD') }}"
+    openbao_ansible_password: "{{ lookup('env', 'TEST_ANSIBLE_PASSWORD') }}"
+  tasks:
+    - name: Verify the OpenBao role alone
+      ansible.builtin.import_role:
+        name: openbao
+        tasks_from: verify

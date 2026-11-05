@@ -1,0 +1,22 @@
+---
+argument_specs:
+  main:
+    short_description: Run OpenBao on the hub
+    options:
+      openbao_user:
+        type: str
+        required: true
+      openbao_port:
+        type: int
+        required: true
+      openbao_seal_key_id:
+        type: str
+        required: true
+      openbao_seal_key:
+        type: str
+        required: true
+        no_log: true
+      openbao_ansible_password:
+        type: str
+        required: true
+        no_log: true

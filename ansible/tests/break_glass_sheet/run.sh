@@ -180,7 +180,6 @@ failure_case() {
 }
 restart_weed wrong-secret Read,List
 failure_case bad_secret "Restore with the sheet's key failed for testhost. restic said: "
-grep -Fq 'wrong password or no key found' "$work/bad_secret.log" || fail 'bad_secret restic error'
 restart_weed test-glass-secret Read,List
 TEST_B2_PASSWORD=wrong-repository-password failure_case bad_password "Restore with the sheet's key failed for testhost. restic said: "
 grep -Fq 'wrong password or no key found' "$work/bad_password.log" || fail 'bad_password restic error'

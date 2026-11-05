@@ -28,6 +28,11 @@
         label: "{{ break_glass_sheet_target.machine }}"
       no_log: true
 
+    - name: Break-glass sheet | Clear restore output before upload probe
+      ansible.builtin.set_fact:
+        break_glass_sheet_proof_tool: ""
+      no_log: true
+
     - name: Break-glass sheet | Write upload probe file
       ansible.builtin.copy:
         dest: "{{ break_glass_sheet_temp.path }}/probe"
@@ -58,9 +63,32 @@
       changed_when: true
       no_log: true
 
+    - name: Break-glass sheet | Select failed proof command result
+      ansible.builtin.set_fact:
+        break_glass_sheet_failed_command: >-
+          {{ break_glass_sheet_restore if break_glass_sheet_proof_tool == 'restic'
+             else break_glass_sheet_upload }}
+      when: break_glass_sheet_proof_tool | default('') | length > 0
+      no_log: true
+
+    - name: Break-glass sheet | Scrub failed proof output
+      ansible.builtin.set_fact:
+        break_glass_sheet_scrubbed_output: >-
+          {{ ((break_glass_sheet_failed_command.stderr
+                if break_glass_sheet_failed_command.stderr | length > 0
+                else break_glass_sheet_failed_command.stdout).splitlines()[-20:] | join(' | '))
+             | replace(break_glass_sheet_new_key.json.applicationKeyId, '<key-id>')
+             | replace(break_glass_sheet_new_key.json.applicationKey, '<key>')
+             | replace(b2_copy_passwords[break_glass_sheet_target.machine].b2, '<password>') }}
+      when: break_glass_sheet_proof_tool | default('') | length > 0
+      no_log: true
+
     - name: Break-glass sheet | Report failed proof
       ansible.builtin.fail:
-        msg: "{{ break_glass_sheet_proof_failure | default('Break-glass sheet proof failed') }}"
+        msg: >-
+          {{ break_glass_sheet_proof_failure | default('Break-glass sheet proof failed') }}{{
+          '. ' ~ break_glass_sheet_proof_tool ~ ' said: ' ~ break_glass_sheet_scrubbed_output
+          if break_glass_sheet_proof_tool | default('') | length > 0 else '' }}
   always:
     - name: Break-glass sheet | Remove private proof folder
       ansible.builtin.file:

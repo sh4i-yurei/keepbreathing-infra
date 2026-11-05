@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/backup_prune). Edits here are overwritten.
+[Unit]
+Description=Prune the hub and B2 repositories for %i
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ backup_prune_timeout }}
+ExecStart=/usr/bin/podman run --rm --network host --security-opt label=disable \
+  --volume {{ backup_prune_repository_root }}/%i:/repo:rw \
+  --volume /home/{{ backup_prune_user }}/.config/b2-copy/%i:/passwords:ro \
+  {{ backup_prune_restic_image }} --repo /repo --password-file /passwords/hub-password \
+  forget --prune --keep-daily {{ backup_prune_keep_daily }} --keep-weekly {{ backup_prune_keep_weekly }} \
+  --keep-monthly {{ backup_prune_keep_monthly }} --retry-lock {{ backup_prune_lock_wait }}
+ExecStart=/usr/bin/podman run --rm --network host --security-opt label=disable \
+  --env-file /home/{{ backup_prune_user }}/.config/b2/%i.env \
+  --volume /home/{{ backup_prune_user }}/.config/b2-copy/%i:/passwords:ro \
+  {{ backup_prune_restic_image }} --password-file /passwords/b2-password \
+  forget --prune --keep-daily {{ backup_prune_keep_daily }} --keep-weekly {{ backup_prune_keep_weekly }} \
+  --keep-monthly {{ backup_prune_keep_monthly }} --retry-lock {{ backup_prune_lock_wait }}

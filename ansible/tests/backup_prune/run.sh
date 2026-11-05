@@ -62,6 +62,22 @@ prune_play() {
   local log=$1; shift
   ansible-playbook -i localhost, tests/backup_prune/prune.yml "$@" >"$log" 2>&1
 }
+assert_failure_message() {
+  python3 - "$1" "$2" <<'PY' || fail 'play failure message must match exactly'
+import json, sys
+messages = []
+for line in open(sys.argv[1]):
+    if ' => {' not in line:
+        continue
+    try:
+        result = json.loads(line.partition(' => ')[2])
+    except json.JSONDecodeError:
+        continue
+    if result.get('failed'):
+        messages.append(result.get('msg'))
+assert sys.argv[2] in messages, messages
+PY
+}
 require_recap() {
   grep -Eq "localhost[[:space:]]+:.*changed=$1.*failed=0" "$2" ||
     { tail -35 "$2" >&2; fail "recap must report changed=$1 failed=0"; }
@@ -192,8 +208,7 @@ assert_snapshot_ids 0 1 2 3
 for path in "$hub_password" "$b2_password" "$cred"; do
   mv "$path" "$work/missing-file"
   if prune_play "$work/missing.log"; then fail "missing $path must fail"; fi
-  grep -Fq "Prune for testhost needs $path; run playbooks/b2-copy.yml first." "$work/missing.log" ||
-    { tail -30 "$work/missing.log" >&2; fail "missing $path must have exact refusal"; }
+  assert_failure_message "$work/missing.log" "Prune for testhost needs $path; run playbooks/b2-copy.yml first."
   for unit in "${units[@]}"; do [[ ! -e $unit ]] || fail 'preflight created a unit'; done
   mv "$work/missing-file" "$path"
 done
@@ -218,6 +233,9 @@ for kind in prune check; do
   timer=backup-$kind@testhost.timer
   [[ $(systemctl show "$timer" -p UnitFileState --value) == enabled ]] || fail "$timer must be enabled"
   [[ $(systemctl show "$timer" -p ActiveState --value) == active ]] || fail "$timer must be active"
+  [[ $(systemctl show "$timer" -p Persistent --value) == yes ]] || fail "$timer must be persistent"
+  grep -Fxq "Unit=backup-$kind@%i.service" "/etc/systemd/system/backup-$kind@.timer" ||
+    fail "$timer must start its matching service"
   value=$(systemctl show "$timer" -p TimersCalendar --value)
   if [[ $kind == prune ]]; then expected='Sun *-*-* 05:00:00'; else expected='Sun *-*-* 05:30:00'; fi
   [[ $value == *"OnCalendar=$expected"* && $value == *'next_elapse=Sun '* ]] ||
@@ -249,6 +267,25 @@ run_output "$cursor" backup-prune-run@testhost.service "$work/prune-output.log"
   fail 'prune must report removing one snapshot on each side'
 snapshots
 assert_snapshot_ids 0 2 3
+for index in 0 2 3; do
+  read -r hub_id b2_id < <(python3 - "$work/initial.json" "$work/b2-now.json" "$index" <<'PY'
+import json, sys
+hub_id = json.load(open(sys.argv[1]))[int(sys.argv[3])]
+b2_id = next(item['id'] for item in json.load(open(sys.argv[2])) if item['original'] == hub_id)
+print(hub_id, b2_id)
+PY
+)
+  restic_hub ls "$hub_id" --json >"$work/hub-files-$index.jsonl"
+  restic_b2 ls "$b2_id" --json >"$work/b2-files-$index.jsonl"
+  python3 - "$work/hub-files-$index.jsonl" "$work/b2-files-$index.jsonl" "$index" <<'PY' || fail "retained snapshot $index must hold exact files on both sides"
+import json, sys
+expected = {0: {'/source/z'}, 2: {'/source/z', '/source/b'},
+            3: {'/source/z', '/source/b', '/source/c'}}[int(sys.argv[3])]
+for path in sys.argv[1:3]:
+    files = {item['path'] for line in open(path) if (item := json.loads(line)).get('type') == 'file'}
+    assert files == expected, (path, files, expected)
+PY
+done
 restic_hub check --read-data >"$work/hub-check.log"
 restic_b2 check --read-data >"$work/b2-check.log"
 aws list-objects-v2 --bucket b2prune-locked --prefix restic/ >"$work/current-objects.json"

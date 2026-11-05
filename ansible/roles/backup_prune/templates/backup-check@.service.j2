@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/backup_prune). Edits here are overwritten.
+[Unit]
+Description=Start and wait for backup checking for %i
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ backup_prune_timeout | int + 300 }}
+ExecStart=/usr/bin/systemctl --user --machine={{ backup_prune_user }}@ start --wait backup-check-run@%i.service

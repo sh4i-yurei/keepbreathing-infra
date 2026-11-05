@@ -1,0 +1,12 @@
+---
+- name: Fetch the become password
+  hosts: hub
+  gather_facts: false
+  become: false
+  roles: [become_password]
+
+- name: Install weekly backup pruning and checking on the hub
+  hosts: hub
+  force_handlers: true
+  roles:
+    - backup_prune

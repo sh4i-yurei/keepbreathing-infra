@@ -18,6 +18,8 @@ b2_buckets:
     name: keepbreathing-vaultserv-backup
 b2_copy_user: "{{ backup_server_user }}"
 b2_copy_repository_root: "{{ backup_server_mount_point }}/restic"
+backup_prune_user: "{{ backup_server_user }}"
+backup_prune_repository_root: "{{ backup_server_mount_point }}/restic"
 b2_copy_passwords:
   vaultserv:
     hub: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='restic') }}"

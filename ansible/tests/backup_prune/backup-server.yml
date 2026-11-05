@@ -1,0 +1,20 @@
+---
+- name: Prepare the local backup server for prune tests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
+    backup_server_user: bptest
+    backup_server_port: 8082
+    backup_server_mount_point: "{{ lookup('ansible.builtin.env', 'TEST_MOUNT') }}"
+    backup_server_logins:
+      - name: testhost
+        bcrypt: "{{ lookup('ansible.builtin.env', 'TEST_BCRYPT') }}"
+      - name: verify
+        bcrypt: "{{ lookup('ansible.builtin.env', 'TEST_VERIFY_BCRYPT') }}"
+    backup_server_verify_password: "{{ lookup('ansible.builtin.env', 'TEST_VERIFY_PASSWORD') }}"
+    backup_server_verify_restic_password: "{{ lookup('ansible.builtin.env', 'TEST_VERIFY_RESTIC_PASSWORD') }}"
+  roles:
+    - backup_server

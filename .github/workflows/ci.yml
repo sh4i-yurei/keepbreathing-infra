@@ -347,7 +347,11 @@ jobs:
           if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AFTER_OPENBAO_ROLE=1 bash tests/openbao/run.sh > /tmp/openbao-failure.log 2>&1; then
             echo 'ASSERTION FAILED: deliberate driver failure passed'; exit 1
           fi
-          grep -Fx 'ASSERTION FAILED: deliberate failure after the openbao role' /tmp/openbao-failure.log
+          grep -Fx 'ASSERTION FAILED: deliberate failure after the openbao role' /tmp/openbao-failure.log || {
+            tail -60 /tmp/openbao-failure.log
+            echo 'ASSERTION FAILED: deliberate failure point was not reached'
+            exit 1
+          }
           if grep -q '^CLEANUP FAILED:' /tmp/openbao-failure.log; then echo 'ASSERTION FAILED: driver cleanup failed'; exit 1; fi
           if id baotest >/dev/null 2>&1; then echo 'ASSERTION FAILED: cleanup left baotest'; exit 1; fi
           if test -e /home/baotest; then echo 'ASSERTION FAILED: cleanup left home'; exit 1; fi

@@ -329,10 +329,10 @@ if systemctl start backup-prune@testhost.service; then fail 'held lock must fail
 run_output "$cursor" backup-prune-run@testhost.service "$work/locked-output.log"
 grep -Fq 'repository is already locked exclusively' "$work/locked-output.log" ||
   fail 'held lock must appear in run unit output'
-snapshots
-assert_snapshot_ids 0 2 3
 undo_lock
 lock_container=
+snapshots
+assert_snapshot_ids 0 2 3
 printf 'PASS exclusive lock fails prune without changing snapshots\n'
 
 cp "$hub_password" "$work/correct-hub-password"

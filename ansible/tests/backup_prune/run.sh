@@ -64,17 +64,15 @@ prune_play() {
 }
 assert_failure_message() {
   python3 - "$1" "$2" <<'PY' || fail 'play failure message must match exactly'
-import json, sys
+import json, pathlib, re, sys
+output = pathlib.Path(sys.argv[1]).read_text()
 messages = []
-for line in open(sys.argv[1]):
-    if ' => {' not in line:
-        continue
+for match in re.finditer(r'=>\s*\{', output):
     try:
-        result = json.loads(line.partition(' => ')[2])
+        result, _ = json.JSONDecoder().raw_decode(output[match.end() - 1:])
     except json.JSONDecodeError:
         continue
-    if result.get('failed'):
-        messages.append(result.get('msg'))
+    messages.append(result.get('msg'))
 assert sys.argv[2] in messages, messages
 PY
 }

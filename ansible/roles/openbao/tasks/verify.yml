@@ -66,6 +66,8 @@
         that:
           - openbao_verify_login.status == 200
           - openbao_verify_login.json.auth.client_token is defined
+          - openbao_verify_login.json.request_id is defined
+          - openbao_verify_login.json.request_id | length > 0
         fail_msg: The ansible login must succeed
         quiet: true
       no_log: true
@@ -87,6 +89,7 @@
              | map('from_json')
              | selectattr('type', 'equalto', 'request')
              | selectattr('request.path', 'equalto', 'auth/userpass/login/ansible')
+             | selectattr('request.id', 'equalto', openbao_verify_login.json.request_id)
              | list }}
       no_log: true
       diff: false

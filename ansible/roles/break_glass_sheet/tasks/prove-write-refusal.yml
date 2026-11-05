@@ -1,7 +1,7 @@
 ---
 - name: Break-glass sheet | Name write-refusal failure
   ansible.builtin.set_fact:
-    break_glass_sheet_proof_failure: "B2 accepted an upload from the sheet's key for {{ break_glass_sheet_target.name }}"
+    break_glass_sheet_proof_failure: "B2 would accept uploads from the sheet's key for {{ break_glass_sheet_target.name }}"
     break_glass_sheet_proof_tool: ""
   no_log: true
 
@@ -42,11 +42,11 @@
   ansible.builtin.set_fact:
     break_glass_sheet_proof_failure: >-
       {{ break_glass_sheet_proof_failure }}. b2 said: {{
-      (['HTTP', (break_glass_sheet_response.status | default('') | string),
-        (break_glass_sheet_response.json.code | default('') | string),
-        (break_glass_sheet_response.json.message | default('') | string)]
-       if break_glass_sheet_response.status is defined
-       else ['HTTP', break_glass_sheet_response.msg | default('')])
+      (['HTTP', (break_glass_sheet_response.status | default('') | string)] +
+       ([(break_glass_sheet_response.json.code | default('') | string),
+         (break_glass_sheet_response.json.message | default('') | string)]
+        if break_glass_sheet_response.status | default(0) | int > 0
+        else [break_glass_sheet_response.msg | default('')]))
       | reject('equalto', '') | join(' ') }}
   vars:
     break_glass_sheet_response: >-

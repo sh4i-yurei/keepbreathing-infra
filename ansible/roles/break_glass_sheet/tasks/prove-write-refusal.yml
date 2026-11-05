@@ -9,9 +9,8 @@
   ansible.builtin.uri:
     url: "{{ b2_api_url }}b2_authorize_account"
     method: GET
-    url_username: "{{ break_glass_sheet_new_key.json.applicationKeyId }}"
-    url_password: "{{ break_glass_sheet_new_key.json.applicationKey }}"
-    force_basic_auth: true
+    headers:
+      Authorization: "Basic {{ (break_glass_sheet_new_key.json.applicationKeyId ~ ':' ~ break_glass_sheet_new_key.json.applicationKey) | b64encode }}"
     return_content: true
   register: break_glass_sheet_new_auth
   delegate_to: localhost

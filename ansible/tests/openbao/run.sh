@@ -168,12 +168,16 @@ assert matches[0].get('request',{}).get('remote_address')==sys.argv[2]
 PY
 }
 health_error() {
-  local forwarded=$1 expected=$2 code
-  if [[ $forwarded == absent ]]; then
-    code=$(curl -sS --max-time 3 -o "$work/health-error.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health)
-  else
-    code=$(curl -sS --max-time 3 -H "X-Forwarded-For: $forwarded" -o "$work/health-error.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health)
-  fi
+  local forwarded=$1 expected=$2 code=000 attempt
+  for ((attempt=0; attempt<60; attempt++)); do
+    if [[ $forwarded == absent ]]; then
+      code=$(curl -sS --max-time 3 -o "$work/health-error.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health 2>/dev/null) || code=000
+    else
+      code=$(curl -sS --max-time 3 -H "X-Forwarded-For: $forwarded" -o "$work/health-error.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health 2>/dev/null) || code=000
+    fi
+    [[ $code == 000 ]] || break
+    sleep 1
+  done
   [[ $code == 400 ]] || fail 'health rejection must answer 400'
   python3 - "$work/health-error.json" "$expected" <<'PY' || fail 'health rejection errors must match exactly'
 import json,sys

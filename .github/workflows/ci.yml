@@ -1,10 +1,9 @@
-# Runs the repository checks on every pull request and every branch push.
+# Runs the repository checks on every branch push.
 # The job names are what the ruleset on main requires by name, so renaming a job means
 # updating the ruleset in the same change.
 name: CI
 
 on:
-  pull_request:
   push: {}
 
 permissions:
@@ -321,7 +320,7 @@ jobs:
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_backup_disk/run.sh
 
   python:
-    uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@8d1ea0f42d357f6639eda1ac9359b9b1420d8789
+    uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@6fa70095587800bf834d27d1cf2313a7b8dbb168
     with:
       coverage_floor: 100
       caller_workflow: .github/workflows/ci.yml

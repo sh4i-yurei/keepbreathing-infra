@@ -63,6 +63,7 @@ play() {
 recap() {
   local log=$1 expected=$2
   grep -Eq "localhost[[:space:]]+:.*changed=$expected .*failed=0" "$log" || {
+    grep -B1 -F 'changed: [localhost]' "$log" || true
     tail -60 "$log"
     fail "$log recap must have changed=$expected and failed=0"
   }

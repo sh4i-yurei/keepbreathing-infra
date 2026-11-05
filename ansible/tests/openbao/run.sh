@@ -221,6 +221,18 @@ TEST_POISON_ADMIN=1 play role
 recap "$last_play_log" 0
 play role --check --diff
 recap "$last_play_log" 0
+as_user systemctl --user stop openbao.service
+TEST_POISON_ADMIN=1 play role
+recap "$last_play_log" '[0-9]+'
+python3 - "$last_play_log" <<'PY' || fail 'initialized stopped service must not write the first-start file'
+import pathlib, re, sys
+log = pathlib.Path(sys.argv[1]).read_text()
+title = r'TASK \[openbao : OpenBao \| Write the first-start file\]'
+assert re.search(title, log)
+assert not re.search(title + r'[^\n]*\nchanged: \[localhost\]', log)
+PY
+[[ ! -e $first ]] || fail 'initialized stopped service left a first-start file'
+healthy || fail 'role must restart initialized OpenBao without the administrator password'
 restart
 for ((second=0; second<60; second++)); do
   if healthy; then break; fi

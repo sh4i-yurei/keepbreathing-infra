@@ -98,6 +98,16 @@ seed_restic() {
 }
 seed_restic init >"$work/restic-init.log"
 seed_restic backup /source >"$work/restic-backup.log"
+mkdir "$work/unfiltered"
+if podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver \
+  -e AWS_SECRET_ACCESS_KEY=test-driver-secret -e RESTIC_PASSWORD=test-b2-password \
+  -v "$work/unfiltered:/restore:Z" "$restic_image" \
+  -r "s3:$endpoint/b2glass-locked/restic" --no-lock restore latest --target /restore --verify \
+  >"$work/unfiltered.log" 2>&1; then
+  fail 'restore without the SELinux exclusion unexpectedly passed'
+fi
+grep -F 'security.selinux' "$work/unfiltered.log" ||
+  fail 'restore without the SELinux exclusion did not report security.selinux'
 
 play() {
   local case_name=$1

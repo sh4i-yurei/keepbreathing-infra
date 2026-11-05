@@ -28,6 +28,11 @@
         label: "{{ break_glass_sheet_target.machine }}"
       no_log: true
 
+    - name: Break-glass sheet | Clear restore output before upload probe
+      ansible.builtin.set_fact:
+        break_glass_sheet_proof_tool: ""
+      no_log: true
+
     - name: Break-glass sheet | Write upload probe file
       ansible.builtin.copy:
         dest: "{{ break_glass_sheet_temp.path }}/probe"
@@ -60,7 +65,10 @@
 
     - name: Break-glass sheet | Report failed proof
       ansible.builtin.fail:
-        msg: "{{ break_glass_sheet_proof_failure | default('Break-glass sheet proof failed') }}"
+        msg: >-
+          {{ break_glass_sheet_proof_failure | default('Break-glass sheet proof failed') }}{{
+          '. ' ~ break_glass_sheet_proof_tool ~ ' said: ' ~ break_glass_sheet_scrubbed_output
+          if break_glass_sheet_proof_tool | default('') | length > 0 else '' }}
   always:
     - name: Break-glass sheet | Remove private proof folder
       ansible.builtin.file:

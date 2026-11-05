@@ -1,10 +1,9 @@
-# Runs the repository checks on every pull request and every branch push.
+# Runs the repository checks on every branch push.
 # The job names are what the ruleset on main requires by name, so renaming a job means
 # updating the ruleset in the same change.
 name: CI
 
 on:
-  pull_request:
   push: {}
 
 permissions:
@@ -25,7 +24,7 @@ jobs:
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs skopeo
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs skopeo attr
       - name: Check shared inventory values and pinned restic tag
         run: |
           ansible-inventory --host hub | python3 -c 'import json,sys; data=json.load(sys.stdin); assert data["b2_api_url"] == "https://api.backblazeb2.com/b2api/v4/"; assert data["restic_image_tag"] == "docker.io/restic/restic:0.19.1"'
@@ -400,7 +399,7 @@ jobs:
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_backup_disk/run.sh
 
   python:
-    uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@8d1ea0f42d357f6639eda1ac9359b9b1420d8789
+    uses: sh4i-yurei/ci-workflows/.github/workflows/python.yml@6fa70095587800bf834d27d1cf2313a7b8dbb168
     with:
       coverage_floor: 100
       caller_workflow: .github/workflows/ci.yml

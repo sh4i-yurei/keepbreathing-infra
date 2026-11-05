@@ -2,6 +2,7 @@
 - name: Break-glass sheet | Name restore failure
   ansible.builtin.set_fact:
     break_glass_sheet_proof_failure: "Restore with the sheet's key failed for {{ break_glass_sheet_target.machine }}"
+    break_glass_sheet_proof_tool: ""
   no_log: true
 
 - name: Break-glass sheet | Make target folder
@@ -35,10 +36,28 @@
       - latest
       - --target
       - /restore
+      - --exclude-xattr
+      - security.selinux
       - --verify
   register: break_glass_sheet_restore
   failed_when: false
   changed_when: false
+  no_log: true
+
+- name: Break-glass sheet | Scrub restore output for a failed proof
+  ansible.builtin.set_fact:
+    break_glass_sheet_scrubbed_output: >-
+      {{ ((break_glass_sheet_restore.stderr
+            if break_glass_sheet_restore.stderr | length > 0
+            else break_glass_sheet_restore.stdout).splitlines()[-20:] | join(' | '))
+         | replace(break_glass_sheet_new_key.json.applicationKeyId, '<key-id>')
+         | replace(break_glass_sheet_new_key.json.applicationKey, '<key>')
+         | replace(b2_copy_passwords[break_glass_sheet_target.machine].b2, '<password>') }}
+  no_log: true
+
+- name: Break-glass sheet | Identify restore output for a failed proof
+  ansible.builtin.set_fact:
+    break_glass_sheet_proof_tool: restic
   no_log: true
 
 - name: Break-glass sheet | Find restored regular file

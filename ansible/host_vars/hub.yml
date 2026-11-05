@@ -6,6 +6,7 @@ backup_server_mount_point: "{{ hub_backup_mount_point }}"
 backup_server_user: keepbreath6
 openbao_user: keepbreath7
 openbao_port: 8200
+openbao_self_address: "100.95.89.6"
 openbao_seal_key_id: hub-1
 openbao_seal_key: "{{ lookup('vault_secret', 'openbao seal (hub)') }}"
 openbao_keepbreath0_password: "{{ lookup('vault_secret', 'openbao keepbreath0 (hub)') }}"

@@ -3,11 +3,22 @@
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
     method: GET
-    status_code: [200, 429, 472, 473, 501, 503]
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+    status_code: [200, 400, 429, 472, 473, 501, 503]
     return_content: true
   register: openbao_verify_health
   changed_when: false
   failed_when: false
+
+- name: OpenBao | Require a loopback proxy connection
+  ansible.builtin.assert:
+    that: >-
+      openbao_verify_health.status | default(0) != 400
+      or 'client address not authorized for x-forwarded-for and configured to reject connection'
+         not in (openbao_verify_health.json.errors | default([]))
+    fail_msg: OpenBao must see a loopback client as 127.0.0.1
+    quiet: true
 
 - name: OpenBao | Require initialized and unsealed health
   ansible.builtin.assert:
@@ -52,6 +63,8 @@
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/userpass/login/ansible"
         method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
         body_format: json
         body:
           password: "{{ openbao_ansible_password }}"
@@ -94,10 +107,10 @@
       no_log: true
       diff: false
 
-    - name: OpenBao | Require a loopback audit address
+    - name: OpenBao | Require a forwarded audit address
       ansible.builtin.assert:
-        that: openbao_audit_requests | selectattr('request.remote_address', 'equalto', '127.0.0.1') | list | length > 0
-        fail_msg: OpenBao must see a loopback client as 127.0.0.1
+        that: openbao_audit_requests | selectattr('request.remote_address', 'equalto', openbao_self_address) | list | length > 0
+        fail_msg: OpenBao must record the forwarded client address
         quiet: true
   always:
     - name: OpenBao | Revoke the verification token
@@ -106,6 +119,7 @@
         method: POST
         headers:
           X-Vault-Token: "{{ openbao_verify_login.json.auth.client_token }}"
+          X-Forwarded-For: "{{ openbao_self_address }}"
         status_code: [200, 204]
       when: openbao_verify_login.json.auth.client_token is defined
       no_log: true

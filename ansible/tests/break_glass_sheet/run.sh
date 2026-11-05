@@ -89,6 +89,8 @@ aws() {
 }
 aws create-bucket --bucket b2glass-locked --object-lock-enabled-for-bucket >"$work/bucket.json"
 printf 'one restored file\n' >"$work/source"
+setfattr -n security.selinux -v system_u:object_r:var_lib_t:s0 "$work/source" ||
+  fail 'fixture must carry security.selinux'
 seed_restic() {
   podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
     -e RESTIC_PASSWORD=test-b2-password -v "$work/source:/source:ro" "$restic_image" \
@@ -159,15 +161,20 @@ failure_case() {
   clear_calls
   expect_failure "$case_name" "$phrase"
   assert_calls rolled_back
+  if grep -Eq 'test-glass-secret|wrong-repository-password|test-key-glass' "$work/$case_name.log"; then
+    fail "$case_name printed a credential"
+  fi
   if grep -Fq 'BREAK-GLASS SHEET' "$work/$case_name.log"; then fail "$case_name printed sheet"; fi
   no_temp
   printf 'PASS %s rolls back new key and keeps old keys\n' "$case_name"
 }
 restart_weed wrong-secret Read,List
-failure_case bad_secret "Restore with the sheet's key failed for testhost"
+failure_case bad_secret "Restore with the sheet's key failed for testhost. restic said: "
+grep -Fq 'wrong password or no key found' "$work/bad_secret.log" || fail 'bad_secret restic error'
 restart_weed test-glass-secret Read,List
-TEST_B2_PASSWORD=wrong-repository-password failure_case bad_password "Restore with the sheet's key failed for testhost"
+TEST_B2_PASSWORD=wrong-repository-password failure_case bad_password "Restore with the sheet's key failed for testhost. restic said: "
+grep -Fq 'wrong password or no key found' "$work/bad_password.log" || fail 'bad_password restic error'
 TEST_B2_PASSWORD=test-b2-password
 restart_weed test-glass-secret Read,List,Write
-failure_case writable "B2 accepted an upload from the sheet's key for b2glass-locked"
+failure_case writable "B2 accepted an upload from the sheet's key for b2glass-locked. aws said: "
 printf 'break-glass-sheet driver: all cases passed\n'

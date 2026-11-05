@@ -168,7 +168,7 @@ failure_case() {
   control '{"action":"remove_key","id":"old-glass-2"}'
   add_old_keys
   if [[ -n $extra_capabilities ]]; then
-    control '{"action":"next_key","applicationKeyId":"test-key-glass","applicationKey":"test-glass-secret","extra_capabilities":["writeFiles"]}'
+    control "$(python3 -c 'import json, sys; print(json.dumps({"action": "next_key", "applicationKeyId": "test-key-glass", "applicationKey": "test-glass-secret", "extra_capabilities": [sys.argv[1]]}))' "$extra_capabilities")"
   else
     control '{"action":"next_key","applicationKeyId":"test-key-glass","applicationKey":"test-glass-secret"}'
   fi

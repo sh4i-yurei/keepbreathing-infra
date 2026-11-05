@@ -361,7 +361,18 @@ jobs:
           if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8200/ || true)" != 000; then echo 'ASSERTION FAILED: cleanup left listener'; exit 1; fi
           sudo cmp /tmp/openbao-environment-before /etc/environment
           sudo systemctl show-environment | cmp /tmp/openbao-manager-before -
-      - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao/run.sh
+      - name: OpenBao role integration cases
+        run: |
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao/run.sh > /tmp/openbao-full.log 2>&1; then
+            cat /tmp/openbao-full.log
+          else
+            tail -80 /tmp/openbao-full.log
+            exit 1
+          fi
+          if test "$(tail -1 /tmp/openbao-full.log)" != 'openbao driver: all cases passed'; then
+            echo 'ASSERTION FAILED: OpenBao driver success message was not its last line'
+            exit 1
+          fi
       - name: Full driver cleans up
         run: |
           if id baotest >/dev/null 2>&1; then echo 'ASSERTION FAILED: full driver left baotest'; exit 1; fi

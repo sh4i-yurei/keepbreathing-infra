@@ -29,7 +29,16 @@ undo_work() { rm -rf -- "$work"; }
 undo_install
 runner_save_environment
 undo_add 'remove driver-created baotest' runner_remove_account
-runner_remove_account() { runner_undo_account "$user"; }
+runner_remove_account() {
+  if ! runner_undo_account "$user" >"$work/account-cleanup.log" 2>&1; then
+    cat "$work/account-cleanup.log" >&2
+    return 1
+  fi
+  if grep -vFx 'userdel: baotest mail spool (/var/mail/baotest) not found' "$work/account-cleanup.log" >"$work/unexpected-cleanup.log"; then
+    cat "$work/unexpected-cleanup.log" >&2
+    return 1
+  fi
+}
 
 printf 'pasta version: %s\n' "$(pasta --version | head -1)"
 printf 'podman version: %s\n' "$(podman --version | head -1)"

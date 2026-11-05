@@ -49,6 +49,10 @@ play() {
     return 0
   fi
   tail -35 "$log"
+  if [[ $name == role ]] && id -u "$user" >/dev/null 2>&1; then
+    as_user systemctl --user status openbao.service --no-pager --lines=20 || true
+    as_user podman logs --tail 25 openbao || true
+  fi
   fail "$name play must pass"
 }
 recap() {

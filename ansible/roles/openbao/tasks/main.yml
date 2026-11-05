@@ -17,7 +17,7 @@
   register: openbao_prior_health
   changed_when: false
   failed_when: false
-  when: not ansible_check_mode
+  check_mode: false
 
 - name: OpenBao | Predict configuration files on a fresh check-mode account
   ansible.builtin.import_tasks: predict.yml
@@ -92,7 +92,7 @@
   when:
     - openbao_account.uid is defined or not ansible_check_mode
     - not openbao_raft_database.stat.exists
-    - ansible_check_mode or not (openbao_prior_health.json.initialized | default(false))
+    - not (openbao_prior_health.json.initialized | default(false))
 
 - name: OpenBao | Write the Quadlet file
   ansible.builtin.template:

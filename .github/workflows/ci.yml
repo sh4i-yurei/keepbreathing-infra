@@ -348,6 +348,8 @@ jobs:
             echo 'ASSERTION FAILED: deliberate driver failure passed'; exit 1
           fi
           grep -Fx 'ASSERTION FAILED: deliberate failure after the openbao role' /tmp/openbao-failure.log || {
+            grep -Fx 'OpenBao unit status:' /tmp/openbao-failure.log || { echo 'ASSERTION FAILED: role failure omitted unit status'; exit 1; }
+            grep -Fx 'OpenBao user journal:' /tmp/openbao-failure.log || { echo 'ASSERTION FAILED: role failure omitted user journal'; exit 1; }
             tail -60 /tmp/openbao-failure.log
             echo 'ASSERTION FAILED: deliberate failure point was not reached'
             exit 1

@@ -48,11 +48,16 @@ play() {
   if ansible-playbook -i localhost, "tests/openbao/$name.yml" "$@" >"$log" 2>&1; then
     return 0
   fi
-  tail -35 "$log"
   if [[ $name == role ]] && id -u "$user" >/dev/null 2>&1; then
-    as_user systemctl --user status openbao.service --no-pager --lines=20 || true
-    as_user podman logs --tail 25 openbao || true
+    systemctl --user --machine="${user}@" status openbao.service --no-pager >"$work/unit-status.log" 2>&1 || true
+    journalctl --no-pager -o short-iso -n 200 "_UID=$(id -u "$user")" >"$work/user-journal.log" 2>&1 || true
+    logs_clean
+    printf 'OpenBao unit status:\n'
+    cat "$work/unit-status.log"
+    printf 'OpenBao user journal:\n'
+    cat "$work/user-journal.log"
   fi
+  tail -35 "$log"
   fail "$name play must pass"
 }
 recap() {

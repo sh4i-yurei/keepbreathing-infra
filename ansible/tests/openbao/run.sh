@@ -198,6 +198,7 @@ if id -u "$user" >/dev/null 2>&1; then fail 'missing user run created baotest'; 
 if ansible-playbook -i localhost, tests/openbao/missing-self-address.yml >"$work/missing-self-address.log" 2>&1; then fail 'missing openbao_self_address must fail'; fi
 grep -Fq 'missing required arguments: openbao_self_address' "$work/missing-self-address.log" || fail 'missing self address must fail argument validation'
 if id -u "$user" >/dev/null 2>&1; then fail 'missing self address run created baotest'; fi
+[[ ! -e $home ]] || fail 'missing self address run created a home'
 
 play role --check --diff
 recap "$last_play_log" '[0-9]+'

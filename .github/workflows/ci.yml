@@ -326,7 +326,7 @@ jobs:
       coverage_floor: 100
       caller_workflow: .github/workflows/ci.yml
       caller_job: python
-      install_command: sudo apt-get update && sudo apt-get install -y podman && python -m pip install -r requirements.txt pytest==9.1.1 pytest-cov==7.1.0
+      install_command: sudo apt-get update && sudo apt-get install -y podman && python -m pip install -r requirements.txt pytest==9.1.1 pytest-cov==7.1.0 && ansible-galaxy collection install -r ansible/collections/requirements.yml
 
   ansible-lint:
     runs-on: ubuntu-latest

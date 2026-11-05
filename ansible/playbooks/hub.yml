@@ -2,6 +2,7 @@
 # Build the hub: its container account, then the generic build, then its services. The
 # account has to exist before baseline runs, because baseline checks the account rather
 # than creating it (Notification service decision #13).
+# Targets hub only; --limit is optional for a single hub but recommended for rehearsal.
 #   ansible-playbook playbooks/hub.yml --limit hub
 
 # Open the droplet SSH connections before hub work; ControlPersist=30m keeps them open for later tasks.
@@ -16,7 +17,9 @@
       become: false
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: become-password.yml
+  ansible.builtin.import_playbook: shared/become-password.yml
+  vars:
+    become_password_hosts: hub
 
 - name: Hub container account
   hosts: hub
@@ -27,10 +30,16 @@
         tasks_from: account
 
 - name: Baseline
-  ansible.builtin.import_playbook: baseline.yml
+  hosts: hub
+  force_handlers: true
+  roles:
+    - baseline
 
 - name: Access
-  ansible.builtin.import_playbook: access.yml
+  hosts: hub
+  force_handlers: true
+  roles:
+    - access
 
 - name: Hub services
   hosts: hub

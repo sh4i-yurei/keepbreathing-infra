@@ -1,7 +1,9 @@
 ---
-# Files copied unchanged from upstream projects. They keep upstream's formatting so they can be
-# compared byte for byte with their pinned source.
+# Imported plays that require caller variables, and files copied unchanged from upstream
+# projects. The upstream files keep their formatting for byte-for-byte comparison.
 exclude_paths:
+  # This imported play requires become_password_hosts from its caller; lint the importing playbooks.
+  - playbooks/shared/become-password.yml
   - roles/hub/files/node-mixin-rules.yml
   - roles/hub/files/node-mixin-alerts.yml
   - roles/hub/files/prometheus-mixin-alerts.yml

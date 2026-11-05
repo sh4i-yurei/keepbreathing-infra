@@ -1,10 +1,13 @@
 ---
-# Runs on the hub and the gateways. The limit has to include the hub, whose play below makes the
+# Targets the hub and every gateway; --limit is required when more than one is reached.
+# The limit has to include the hub, whose play below makes the
 # client certificate every gateway trusts:
 #   ansible-playbook playbooks/journal-gateway.yml --limit hub,web
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: become-password.yml
+  ansible.builtin.import_playbook: shared/become-password.yml
+  vars:
+    become_password_hosts: hub:droplets:vaultserv
 
 # The hub's client certificate must exist before a gateway can trust it.
 - name: Prepare the journal pull client's certificate

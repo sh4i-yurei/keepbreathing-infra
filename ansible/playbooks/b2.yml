@@ -1,6 +1,8 @@
 ---
 - name: Fetch the become password
-  ansible.builtin.import_playbook: become-password.yml
+  ansible.builtin.import_playbook: shared/become-password.yml
+  vars:
+    become_password_hosts: hub
 
 - name: Manage the hub's B2 buckets and scoped keys
   hosts: hub

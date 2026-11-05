@@ -1,10 +1,13 @@
 ---
 # Set up who can log in to a machine and how: the admin account, its key, sudo and the
 # sshd hardening. These are the tasks that can make a machine unreachable (decision #36).
+# Targets every inventory machine; --limit is required when more than one is reached.
 #   ansible-playbook playbooks/access.yml --limit hub
 
 - name: Fetch the become password
-  ansible.builtin.import_playbook: become-password.yml
+  ansible.builtin.import_playbook: shared/become-password.yml
+  vars:
+    become_password_hosts: all
 
 - name: Access
   hosts: all

@@ -1,16 +1,44 @@
-# Runs the repository checks on every branch push.
+# Runs the repository checks on every branch push and pull request.
 # The job names are what the ruleset on main requires by name, so renaming a job means
 # updating the ruleset in the same change.
 name: CI
 
 on:
   push: {}
+  pull_request: {}
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.select.outputs.full }}
+      b2_bucket: ${{ steps.select.outputs.b2_bucket }}
+      b2_copy: ${{ steps.select.outputs.b2_copy }}
+      backup_server: ${{ steps.select.outputs.backup_server }}
+      break_glass_sheet: ${{ steps.select.outputs.break_glass_sheet }}
+      hub_backup_disk: ${{ steps.select.outputs.hub_backup_disk }}
+      openbao: ${{ steps.select.outputs.openbao }}
+      vaultwarden_backup: ${{ steps.select.outputs.vaultwarden_backup }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install PyYAML==6.0.3
+      - id: select
+        run: python ci/select_jobs.py "$EVENT_NAME" "$EVENT_REF"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+
   break-glass-sheet:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.break_glass_sheet == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -71,6 +99,8 @@ jobs:
           ! grep -E '^CLEANUP FAILED:' driver.log
 
   b2-copy:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.b2_copy == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -158,6 +188,8 @@ jobs:
           test "$manager_before" = "$(systemctl show-environment)"
 
   vaultwarden-backup:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.vaultwarden_backup == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -258,6 +290,8 @@ jobs:
           test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded'; exit 1; }
 
   b2-bucket:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.b2_bucket == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -286,6 +320,8 @@ jobs:
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_bucket/run.sh
 
   backup-server:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.backup_server == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -303,6 +339,8 @@ jobs:
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_server/run.sh
 
   openbao:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.openbao == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -382,6 +420,8 @@ jobs:
           sudo systemctl show-environment | cmp /tmp/openbao-manager-before -
 
   hub-backup-disk:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.hub_backup_disk == 'true') }}
     runs-on: ubuntu-latest
     defaults:
       run:

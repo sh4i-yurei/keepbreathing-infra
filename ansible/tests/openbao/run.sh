@@ -257,6 +257,12 @@ TEST_POISON_ADMIN=1 play role
 recap "$last_play_log" 0
 play role --check --diff
 recap "$last_play_log" 0
+# A stopped user manager with lingering still on: the lingering task is skipped by its
+# creates: guard, so the role must start the manager itself before any user-scope call (#139).
+systemctl stop "user@$(id -u "$user").service"
+play role
+changed_task "$last_play_log" "OpenBao | Start the account's user manager"
+healthy || fail 'role must bring OpenBao back after starting a stopped user manager'
 as_user systemctl --user stop openbao.service
 TEST_POISON_ADMIN=1 play role
 recap "$last_play_log" '[0-9]+'

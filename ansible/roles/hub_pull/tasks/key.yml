@@ -1,0 +1,53 @@
+---
+# Runs first, before any droplet changes, so the droplet's play can install the public key.
+- name: Hub pull | Check account lingering
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ hub_pull_user }}"
+  register: hub_pull_linger
+
+- name: Hub pull | Require account lingering
+  ansible.builtin.assert:
+    that: hub_pull_linger.stat.exists
+    fail_msg: "Account lingering is required; run the backup_server role first."
+    quiet: true
+
+- name: Hub pull | Check the pull key for the rehearsal
+  ansible.builtin.stat:
+    path: "/home/{{ hub_pull_user }}/.ssh/hub-pull"
+  register: hub_pull_key_file
+
+- name: Hub pull | Report the pull key the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ hub_pull_user }}/.ssh/hub-pull"
+  when:
+    - ansible_check_mode
+    - not hub_pull_key_file.stat.exists
+
+- name: Hub pull | Check the account's SSH folder
+  ansible.builtin.stat:
+    path: "/home/{{ hub_pull_user }}/.ssh"
+  register: hub_pull_ssh_folder
+
+- name: Hub pull | Create the account's SSH folder
+  ansible.builtin.file:
+    path: "/home/{{ hub_pull_user }}/.ssh"
+    state: directory
+    owner: "{{ hub_pull_user }}"
+    group: "{{ hub_pull_user }}"
+    mode: "0700"
+
+- name: Hub pull | Make the pull key once, on the hub
+  community.crypto.openssh_keypair:
+    path: "/home/{{ hub_pull_user }}/.ssh/hub-pull"
+    type: ed25519
+    comment: "hub-pull@{{ inventory_hostname }}"
+    owner: "{{ hub_pull_user }}"
+    group: "{{ hub_pull_user }}"
+    mode: "0600"
+  register: hub_pull_key
+  # A fresh rehearsal has no folder to put the key in; the report above stands in for it.
+  when: not ansible_check_mode or hub_pull_ssh_folder.stat.exists
+
+- name: Hub pull | Keep the public key for the droplets' play
+  ansible.builtin.set_fact:
+    hub_pull_public_key: "{{ hub_pull_key.public_key | default('', true) }}"

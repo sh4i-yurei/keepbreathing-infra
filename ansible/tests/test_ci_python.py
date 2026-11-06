@@ -16,6 +16,7 @@ COLLECTION_JOBS = (
     "backup-server",
     "break-glass-sheet",
     "hub-backup-disk",
+    "hub-pull",
     "openbao",
     "ticket-band",
     "vaultwarden-backup",
@@ -80,7 +81,7 @@ def test_architecture_describes_collection_cache_and_python_exception():
         if line.startswith("| `.github/workflows/ci.yml` |")
     )
     assert (
-        "eleven jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
+        "twelve jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
         in row
     )
     assert (

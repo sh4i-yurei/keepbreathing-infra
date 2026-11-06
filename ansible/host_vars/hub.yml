@@ -18,6 +18,8 @@ b2_credentials_user: "{{ backup_server_user }}"
 b2_buckets:
   - machine: vaultserv
     name: keepbreathing-vaultserv-backup
+  - machine: web
+    name: keepbreathing-web-backup
 b2_copy_user: "{{ backup_server_user }}"
 b2_copy_repository_root: "{{ backup_server_mount_point }}/restic"
 backup_prune_user: "{{ backup_server_user }}"
@@ -26,12 +28,27 @@ b2_copy_passwords:
   vaultserv:
     hub: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='restic') }}"
     b2: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='b2_restic') }}"
+  web:
+    hub: "{{ lookup('vault_secret', 'rclone web (hub)', field='restic') }}"
+    b2: "{{ lookup('vault_secret', 'rclone web (hub)', field='b2_restic') }}"
 backup_server_port: 8082
 backup_server_logins:
   - name: verify
     bcrypt: "{{ lookup('vault_secret', 'rclone verify (hub)', field='bcrypt') }}"
   - name: vaultserv
     bcrypt: "{{ lookup('vault_secret', 'rclone vaultserv (hub)', field='bcrypt') }}"
+  - name: web
+    bcrypt: "{{ lookup('vault_secret', 'rclone web (hub)', field='bcrypt') }}"
+# The hub pulls each droplet's export nightly through its forced-command account (Backups
+# decisions 64 to 66). Each droplet's host key comes from its own file, read by playbooks/hub-pull.yml.
+hub_pull_user: "{{ backup_server_user }}"
+hub_pull_machines:
+  - machine: web
+    host: web
+    address: 10.128.0.3
+    stream: web-redis.rdb
+hub_pull_logins:
+  web: "{{ lookup('vault_secret', 'rclone web (hub)') }}"
 backup_server_verify_password: "{{ lookup('vault_secret', 'rclone verify (hub)') }}"
 backup_server_verify_restic_password: "{{ lookup('vault_secret', 'rclone verify (hub)', field='restic') }}"
 

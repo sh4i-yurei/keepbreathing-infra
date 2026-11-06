@@ -1,0 +1,20 @@
+---
+argument_specs:
+  main:
+    short_description: Give a droplet the forced-command account the hub pulls its export through
+    options:
+      hub_export_kind:
+        type: str
+        choices: [redis]
+      hub_export_container_user:
+        type: str
+        required: true
+      hub_export_container:
+        type: str
+        required: true
+      hub_export_from:
+        type: str
+        required: true
+      hub_export_hub_key:
+        type: str
+        required: true

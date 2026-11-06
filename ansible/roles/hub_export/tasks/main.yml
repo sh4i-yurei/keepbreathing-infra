@@ -1,0 +1,102 @@
+---
+- name: Hub export | Read the container account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ hub_export_container_user }}"
+    fail_key: false
+  register: hub_export_container_account
+
+- name: Hub export | Check the container account's lingering
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ hub_export_container_user }}"
+  register: hub_export_linger
+
+- name: Hub export | Require the container account to exist and linger
+  ansible.builtin.assert:
+    that:
+      - hub_export_container_account.ansible_facts.getent_passwd[hub_export_container_user] is not none
+      - hub_export_linger.stat.exists
+    fail_msg: "Hub export needs {{ hub_export_container_user }} to exist and linger; run the baseline and site roles first."
+    quiet: true
+
+- name: Hub export | Keep the container account's UID
+  ansible.builtin.set_fact:
+    hub_export_container_uid: "{{ hub_export_container_account.ansible_facts.getent_passwd[hub_export_container_user][1] }}"
+
+- name: Hub export | Make the export account, with no subordinate IDs and no password
+  ansible.builtin.user:
+    name: hubexport
+    system: true
+    create_home: true
+    home: /home/hubexport
+    shell: /bin/bash
+    password_lock: true
+  register: hub_export_account
+
+- name: Hub export | Report the key entry the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would write /home/hubexport/.ssh/authorized_keys"
+  when:
+    - ansible_check_mode
+    - hub_export_account is changed
+
+- name: Hub export | Write the one key entry
+  when: not ansible_check_mode or hub_export_account is not changed
+  block:
+    - name: Hub export | Create the export account's SSH folder
+      ansible.builtin.file:
+        path: /home/hubexport/.ssh
+        state: directory
+        owner: hubexport
+        group: hubexport
+        mode: "0700"
+
+    - name: Hub export | Allow only the hub's key, from one address, for one command
+      ansible.builtin.copy:
+        content: |
+          from="{{ hub_export_from }}",restrict,command="sudo -n /usr/local/libexec/hub-export" {{ hub_export_hub_key }}
+        dest: /home/hubexport/.ssh/authorized_keys
+        owner: hubexport
+        group: hubexport
+        mode: "0600"
+      when: hub_export_hub_key | length > 0
+
+- name: Hub export | Write the export script
+  ansible.builtin.template:
+    src: hub-export.j2
+    dest: /usr/local/libexec/hub-export
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Hub export | Allow the export account that script and nothing else
+  ansible.builtin.copy:
+    content: |
+      hubexport ALL=(root) NOPASSWD: /usr/local/libexec/hub-export ""
+    dest: /etc/sudoers.d/hub-export
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+
+- name: Hub export | Verify the sudo rule refuses anything but the bare script
+  when: not ansible_check_mode
+  block:
+    - name: Hub export | Ask sudo to run the script with an argument
+      ansible.builtin.command:
+        argv: [runuser, -u, hubexport, --, sudo, -n, /usr/local/libexec/hub-export, x]
+      register: hub_export_refused
+      changed_when: false
+      failed_when: >-
+        hub_export_refused.rc != 1
+        or 'sudo: a password is required' not in hub_export_refused.stderr
+
+    - name: Hub export | List what sudo allows the export account
+      ansible.builtin.command:
+        argv: [runuser, -u, hubexport, --, sudo, -n, -l]
+      register: hub_export_allowed
+      changed_when: false
+      failed_when: >-
+        hub_export_allowed.rc != 0
+        or (hub_export_allowed.stdout_lines | select('search', '/usr/local/libexec/hub-export') | list | length) != 1
+        or (hub_export_allowed.stdout_lines | select('search', '^\s+\(') | list | length) != 1

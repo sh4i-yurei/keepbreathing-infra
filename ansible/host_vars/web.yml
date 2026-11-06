@@ -31,3 +31,10 @@ podman_exporter_expected_containers:
   - keepbreath
   - keepbreath-redis
   - podman-exporter
+
+# The account the hub pulls the Redis queue through, limited to one command from control's VPC
+# address (Backups decisions 64 and 65).
+hub_export_kind: redis
+hub_export_container_user: "{{ baseline_container_user }}"
+hub_export_container: keepbreath-redis
+hub_export_from: 10.128.0.5

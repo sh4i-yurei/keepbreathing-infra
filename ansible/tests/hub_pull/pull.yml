@@ -1,0 +1,74 @@
+---
+# The same plays as playbooks/hub-pull.yml, with localhost as both the hub and the droplet.
+- name: Make the hub's pull key before any droplet changes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars: &hub_pull_test_vars
+    restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
+    backup_server_port: 8082
+    hub_pull_user: hptest
+    hub_pull_machines:
+      - machine: testweb
+        host: localhost
+        address: 127.0.0.1
+        stream: web-redis.rdb
+    hub_pull_logins:
+      testweb: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
+    b2_copy_passwords:
+      testweb:
+        hub: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"
+    hub_pull_lock_wait: 5s
+    hub_pull_timeout: 60
+  tasks:
+    - name: Make or read the hub's pull key
+      ansible.builtin.include_role:
+        name: hub_pull
+        tasks_from: key
+
+- name: Give the stand-in droplet its forced-command export account
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  vars:
+    hub_export_kind: redis
+    hub_export_container_user: kbtest
+    hub_export_container: keepbreath-redis
+    hub_export_from: 127.0.0.1
+    hub_export_hub_key: "{{ hub_pull_public_key | default('') }}"
+  roles:
+    - hub_export
+
+- name: Read the stand-in droplet's own host key for the hub to pin
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read the droplet's ed25519 host key
+      ansible.builtin.slurp:
+        src: /etc/ssh/ssh_host_ed25519_key.pub
+      register: hub_export_host_key_file
+
+    - name: Keep the key's type and value for the hub
+      ansible.builtin.set_fact:
+        hub_export_host_key: "{{ (hub_export_host_key_file.content | b64decode).split()[:2] | join(' ') }}"
+
+- name: Install the hub's nightly pulls
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  force_handlers: true
+  vars: *hub_pull_test_vars
+  roles:
+    - hub_pull
+  tasks:
+    - name: Fail after the hub pull role for driver cleanup proof
+      ansible.builtin.fail:
+        msg: Deliberate failure after hub pull
+      when:
+        - lookup('ansible.builtin.env', 'TEST_FAIL_AFTER_HUB_PULL_ROLE') == '1'
+        - lookup('ansible.builtin.env', 'TEST_POST_RUN_FAILURE_ARMED') == '1'

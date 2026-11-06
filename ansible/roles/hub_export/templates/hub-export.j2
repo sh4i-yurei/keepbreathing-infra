@@ -1,0 +1,6 @@
+#!/bin/sh
+# Managed by Ansible (roles/hub_export). Edits here are overwritten.
+# The one command the hub's key may run, through sudo, with no arguments (Backups decision 64).
+{% if hub_export_kind == 'redis' %}
+cd / && exec runuser -u {{ hub_export_container_user }} -- env XDG_RUNTIME_DIR=/run/user/{{ hub_export_container_uid }} podman exec {{ hub_export_container }} redis-cli --rdb -
+{% endif %}

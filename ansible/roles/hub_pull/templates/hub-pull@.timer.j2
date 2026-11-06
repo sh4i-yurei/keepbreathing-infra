@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/hub_pull). Edits here are overwritten.
+[Unit]
+Description=Nightly pull of %i into the hub's backups
+
+[Timer]
+OnCalendar={{ hub_pull_schedule }}
+Persistent=true
+Unit=hub-pull@%i.service
+
+[Install]
+WantedBy=timers.target

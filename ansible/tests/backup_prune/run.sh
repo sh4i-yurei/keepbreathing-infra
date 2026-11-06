@@ -7,7 +7,7 @@ units=(/home/bptest/.config/systemd/user/backup-prune-run@.service
   /home/bptest/.config/systemd/user/backup-check-run@.service
   /etc/systemd/system/backup-prune@.service /etc/systemd/system/backup-prune@.timer
   /etc/systemd/system/backup-check@.service /etc/systemd/system/backup-check@.timer)
-for unit in "${units[@]}"; do
+for unit in "${units[@]}" /etc/systemd/system/b2-copy@.service /etc/systemd/system/b2-copy@.timer; do
   [[ ! -e $unit ]] || fail 'backup prune units already exist'
 done
 if grep -Eq '(^|[[:space:]])s3\.us-east-1\.seaweedfs\.test([[:space:]]|$)' /etc/hosts; then
@@ -236,7 +236,8 @@ for kind in prune check; do
     fail "$timer must start its matching service"
   value=$(systemctl show "$timer" -p TimersCalendar --value)
   if [[ $kind == prune ]]; then expected='Sun *-*-* 05:00:00'; else expected='Sun *-*-* 05:30:00'; fi
-  [[ $value == *"OnCalendar=$expected"* && $value == *'next_elapse=Sun '* ]] ||
+  [[ $(grep -o 'OnCalendar=' <<<"$value" | wc -l) -eq 1 ]] &&
+    grep -Eq "OnCalendar=Sun \\*-\\*-\\* ${expected##* } ; next_elapse=Sun [0-9]{4}-[0-9]{2}-[0-9]{2} ${expected##* } " <<<"$value" ||
     fail "$timer calendar or next Sunday is wrong: $value"
 done
 snapshots
@@ -257,12 +258,26 @@ require_recap 0 "$work/check-existing.log"
 ! grep -Fq 'Would write ' "$work/check-existing.log" || fail 'existing check mode planned a unit'
 printf 'PASS second play and check mode report no changes\n'
 
+prune_play "$work/check-diff.log" --check --diff -e backup_prune_keep_daily=8 ||
+  { tail -35 "$work/check-diff.log" >&2; fail 'changed keep count rehearsal must pass'; }
+grep -Eq 'localhost[[:space:]]+:.*changed=[1-9][0-9]*.*failed=0' "$work/check-diff.log" ||
+  fail 'changed keep count rehearsal must report a would-be change'
+grep -Fq -- '--keep-daily 8' "$work/check-diff.log" ||
+  fail 'changed keep count rehearsal must show the diff'
+grep -Fq -- '--keep-daily 7' /home/bptest/.config/systemd/user/backup-prune-run@.service ||
+  fail 'check mode must leave the installed prune unit unchanged'
+printf 'PASS changed keep count rehearsal shows diff without writing units\n'
+
 aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-before.json"
 cursor=$(run_cursor)
 systemctl start backup-prune@testhost.service || fail 'prune system service must succeed'
 run_output "$cursor" backup-prune-run@testhost.service "$work/prune-output.log"
 [[ $(grep -Fc 'remove 1 snapshots:' "$work/prune-output.log") == 2 ]] ||
   fail 'prune must report removing one snapshot on each side'
+[[ $(grep -Fc '1 snapshots have been removed, running prune' "$work/prune-output.log") == 2 ]] ||
+  fail 'both repositories must run prune after forget'
+[[ $(grep -c '^to delete:' "$work/prune-output.log") == 2 ]] ||
+  fail 'both prunes must report data to delete'
 snapshots
 assert_snapshot_ids 0 2 3
 for index in 0 2 3; do
@@ -309,6 +324,8 @@ systemctl start backup-check@testhost.service || fail 'check system service must
 run_output "$cursor" backup-check-run@testhost.service "$work/check-output.log"
 [[ $(grep -Fc 'no errors were found' "$work/check-output.log") == 2 ]] ||
   fail 'check must report no errors on each side'
+[[ $(grep -Fc 'read all data' "$work/check-output.log") == 2 ]] ||
+  fail 'both checks must read all data'
 printf 'PASS check reads every repository without errors\n'
 
 lock_container=backup-prune-held-lock
@@ -324,11 +341,19 @@ done
 find "$point/restic/testhost/locks" -maxdepth 1 -type f -regextype posix-extended \
   -regex '.*/[0-9a-f]{64}' | grep -q . || fail 'exclusive lock must exist'
 as_bp podman pause "$lock_container" >"$work/pause.log"
+aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-before-lock.json"
 cursor=$(run_cursor)
+lock_start=$SECONDS
 if systemctl start backup-prune@testhost.service; then fail 'held lock must fail prune'; fi
+(( SECONDS - lock_start >= 5 )) || fail 'prune must wait at least five seconds for the lock'
 run_output "$cursor" backup-prune-run@testhost.service "$work/locked-output.log"
 grep -Fq 'repository is already locked exclusively' "$work/locked-output.log" ||
   fail 'held lock must appear in run unit output'
+! grep -Fq 'Applying Policy:' "$work/locked-output.log" ||
+  fail 'held hub lock must prevent B2 forget'
+aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-after-lock.json"
+cmp -s "$work/versions-before-lock.json" "$work/versions-after-lock.json" ||
+  fail 'held hub lock changed B2 object versions'
 undo_lock
 lock_container=
 snapshots
@@ -344,11 +369,17 @@ grep -Fq 'Read-only prune preview failed for testhost on the hub: ' "$work/wrong
   fail 'preview must name hub failure'
 grep -Fq 'wrong password or no key found' "$work/wrong-password-play.log" ||
   fail 'preview must show wrong password'
+aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-before-wrong.json"
 cursor=$(run_cursor)
 if systemctl start backup-prune@testhost.service; then fail 'wrong password system service must fail'; fi
 run_output "$cursor" backup-prune-run@testhost.service "$work/wrong-password-output.log"
 grep -Fq 'wrong password or no key found' "$work/wrong-password-output.log" ||
   fail 'wrong password must appear in run unit output'
+! grep -Fq 'Applying Policy:' "$work/wrong-password-output.log" ||
+  fail 'wrong hub password must prevent B2 forget'
+aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-after-wrong.json"
+cmp -s "$work/versions-before-wrong.json" "$work/versions-after-wrong.json" ||
+  fail 'wrong hub password changed B2 object versions'
 restic_b2 snapshots --json >"$work/b2-after-wrong.json"
 python3 - "$work/b2-after-wrong.json" "$work/initial.json" <<'PY' || fail 'wrong hub password changed B2 snapshots'
 import json, sys

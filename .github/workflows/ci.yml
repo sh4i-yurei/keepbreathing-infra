@@ -95,12 +95,16 @@ jobs:
           manager_before=$(systemctl show-environment)
           sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_prune/run.sh | tee driver.log
           grep -Fx 'backup-prune driver: all cases passed' driver.log
-          test "$(grep -c '^PASS ' driver.log)" -eq 9
+          test "$(grep -c '^PASS ' driver.log)" -eq 10
           for unit in backup-prune backup-check b2-copy; do
             test -z "$(systemctl list-units --all --no-legend "$unit*")"
           done
           test ! -e /etc/systemd/system/backup-prune@.timer
           test ! -e /etc/systemd/system/backup-check@.timer
+          test ! -e /etc/systemd/system/backup-prune@.service
+          test ! -e /etc/systemd/system/backup-check@.service
+          test ! -e /etc/systemd/system/b2-copy@.service
+          test ! -e /etc/systemd/system/b2-copy@.timer
           ! id bptest
           ! sudo losetup --list | grep -F backup.img
           ! sudo podman container exists backup-prune-weed
@@ -129,7 +133,12 @@ jobs:
           ! grep -E '^CLEANUP FAILED:' /tmp/backup-prune-failure.log
           test ! -e /etc/systemd/system/backup-prune@.timer
           test ! -e /etc/systemd/system/backup-check@.timer
+          test ! -e /etc/systemd/system/backup-prune@.service
+          test ! -e /etc/systemd/system/backup-check@.service
+          test ! -e /etc/systemd/system/b2-copy@.service
+          test ! -e /etc/systemd/system/b2-copy@.timer
           test -z "$(systemctl list-units --all --no-legend 'backup-*')"
+          test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
           ! id bptest
           ! sudo losetup --list | grep -F backup.img
           ! sudo podman container exists backup-prune-weed

@@ -1,6 +1,7 @@
 """The local driver runner runs a CI driver job's own steps in a disposable container."""
 
 import json
+import os
 import runpy
 import subprocess
 import sys
@@ -20,20 +21,25 @@ import json, os, sys
 argv = sys.argv[1:]
 data = sys.stdin.buffer.read() if "-i" in argv else b""
 log = os.environ["FAKE_LOG"]
+count = sum(1 for _ in open(log)) if os.path.exists(log) else 0
 entry = {"argv": argv}
 if data:
-    path = f"{log}.stdin{sum(1 for _ in open(log)) if os.path.exists(log) else 0}"
+    path = f"{log}.stdin{count}"
     open(path, "wb").write(data)
     entry["stdin"] = path
 with open(log, "a") as stream:
     stream.write(json.dumps(entry) + "\n")
 fail = os.environ.get("FAKE_FAIL", "")
 if fail and fail in " ".join(argv):
-    print(f"fake failure for {fail}")
+    print(f"fake failure for {fail}", file=sys.stderr)
     sys.exit(int(os.environ.get("FAKE_RC", "3")))
 if "is-system-running" in argv:
-    print(os.environ.get("FAKE_STATE", "degraded"))
-    sys.exit(0 if os.environ.get("FAKE_STATE", "degraded") in {"running", "degraded"} else 1)
+    boots = sum(1 for line in open(log) if "is-system-running" in line)
+    state = "starting" if boots <= int(os.environ.get("FAKE_BOOT_AFTER", "0")) else os.environ.get("FAKE_STATE", "degraded")
+    print(state)
+    sys.exit(0 if state in {"running", "degraded"} else 1)
+if argv[:1] == ["rm"]:
+    print(argv[-1])
 if argv[:1] == ["exec"] and argv[-1].startswith("/opt/steps/"):
     print(f"ran {argv[-1]}")
 """
@@ -175,7 +181,7 @@ def test_no_job_name_is_a_usage_error(capsys):
         main([])
 
     assert exit_.value.code == 2
-    assert "name a job, or use --list" in capsys.readouterr().err
+    assert capsys.readouterr().err.endswith("error: name a job, or use --list\n")
 
 
 def test_list_prints_the_local_jobs(capsys):
@@ -189,26 +195,59 @@ def test_openbao_runs_every_step_as_runner_and_removes_its_container(fake, capfd
 
     assert main(["openbao"], podman=podman, root=ROOT) == 0
 
+    name = f"kbi-driver-openbao-{os.getpid()}"
     argvs = [c["argv"] for c in calls()]
-    assert argvs[0][:2] == ["build", "-t"]
-    assert argvs[0][-1] == str(ROOT / "ci" / "driver-image")
-    run = argvs[1]
-    assert run[:2] == ["run", "-d"]
-    assert {"--privileged", "--systemd=always"} <= set(run)
-    name = run[run.index("--name") + 1]
-    steps = step_calls(calls)
-    assert [s[-1] for s in steps] == [f"/opt/steps/{n:02d}.sh" for n in range(1, 9)]
-    for argv in steps:
-        assert argv[argv.index("-u") + 1] == "runner"
-        assert argv[argv.index("-w") + 1] == "/opt/src/ansible"
-        assert "HOME=/home/runner" in argv
-        assert argv[-3:-1] == ["bash", "-e"]
-        assert name in argv
-    assert argvs[-1] == ["rm", "-f", "-t", "10", name]
-    out = capfd.readouterr().out
-    assert "=== step 1/8: pip install -r ../requirements.txt" in out
-    assert "ran /opt/steps/08.sh" in out
-    assert out.endswith("=== openbao: all 8 steps passed\n")
+    assert argvs[0] == [
+        "build",
+        "-t",
+        "localhost/kbi-driver-runner",
+        str(ROOT / "ci" / "driver-image"),
+    ]
+    assert argvs[1] == [
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--privileged",
+        "--systemd=always",
+        "--tmpfs",
+        "/home:rw,exec,size=6g",
+        "--tmpfs",
+        "/var/lib/containers:rw,exec,size=3g",
+        "localhost/kbi-driver-runner",
+    ]
+    assert argvs[2] == ["exec", name, "systemctl", "is-system-running"]
+    assert argvs[3] == [
+        "exec",
+        name,
+        "bash",
+        "-c",
+        "mkdir -p /home/runner /opt && chown runner:runner /home/runner /opt",
+    ]
+    assert argvs[4] == ["exec", "-i", "-u", "runner", name, "tar", "-x", "-C", "/opt"]
+    assert argvs[5:13] == [
+        [
+            "exec",
+            "-u",
+            "runner",
+            "-w",
+            "/opt/src/ansible",
+            "-e",
+            "HOME=/home/runner",
+            name,
+            "bash",
+            "-e",
+            f"/opt/steps/{n:02d}.sh",
+        ]
+        for n in range(1, 9)
+    ]
+    assert argvs[13:] == [["rm", "-f", "-t", "10", name]]
+    names = [s.name for s in job_steps(WORKFLOW, "openbao")]
+    expected = []
+    for n, step_name in enumerate(names, 1):
+        expected += [f"=== step {n}/8: {step_name}", f"ran /opt/steps/{n:02d}.sh"]
+    expected.append("=== openbao: all 8 steps passed")
+    assert capfd.readouterr().out.splitlines() == expected
 
 
 def test_a_failing_step_stops_the_job_and_still_removes_the_container(
@@ -237,6 +276,7 @@ def test_the_copy_holds_the_working_tree_and_the_step_scripts(fake, tmp_path):
     (repo / ".github" / "workflows" / "ci.yml").write_text(WORKFLOW.read_text())
     (repo / "ansible" / "tracked.txt").write_text("committed\n")
     (repo / ".gitignore").write_text("ignored.txt\n")
+    (repo / "ansible" / "link.txt").symlink_to("tracked.txt")
     git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t"]
     subprocess.run([*git, "init", "-q"], check=True)
     subprocess.run([*git, "add", "."], check=True)
@@ -257,6 +297,8 @@ def test_the_copy_holds_the_working_tree_and_the_step_scripts(fake, tmp_path):
         names = set(archive.getnames())
         tracked = archive.extractfile("src/ansible/tracked.txt").read()
         step = archive.extractfile("steps/05.sh").read().decode()
+        link = archive.getmember("src/ansible/link.txt")
+    assert link.issym() and link.linkname == "tracked.txt"
     assert {
         "src/ansible/tracked.txt",
         "src/ansible/new.txt",
@@ -315,7 +357,9 @@ def test_a_container_that_cannot_start_is_not_removed_twice(fake, monkeypatch, c
     assert main(["openbao"], podman=podman, root=ROOT) == 125
 
     assert [c["argv"][0] for c in calls()] == ["build", "run"]
-    assert "could not start" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        f"could not start kbi-driver-openbao-{os.getpid()}: fake failure for --systemd=always\n"
+    )
 
 
 def test_a_container_left_behind_is_reported_and_fails_the_run(
@@ -331,7 +375,11 @@ def test_a_container_left_behind_is_reported_and_fails_the_run(
 
 
 def test_podman_runs_directly_on_the_host_and_through_distrobox_inside_dev(monkeypatch):
-    monkeypatch.setattr(run_driver.shutil, "which", lambda name: "/usr/bin/podman")
+    monkeypatch.setattr(
+        run_driver.shutil,
+        "which",
+        lambda name: "/usr/bin/podman" if name == "podman" else None,
+    )
     assert podman_command() == ["podman"]
     monkeypatch.setattr(run_driver.shutil, "which", lambda name: None)
     assert podman_command() == ["distrobox-host-exec", "podman"]
@@ -345,3 +393,143 @@ def test_the_script_entry_point_lists_the_local_jobs(monkeypatch, capsys):
 
     assert exit_.value.code == 0
     assert capsys.readouterr().out == "b2-bucket\nopenbao\n"
+
+
+@pytest.mark.parametrize("state", ["running", "degraded"])
+def test_the_runner_waits_for_systemd_to_finish_booting(fake, monkeypatch, state):
+    podman, calls = fake
+    monkeypatch.setenv("FAKE_BOOT_AFTER", "2")
+    monkeypatch.setenv("FAKE_STATE", state)
+    monkeypatch.setattr(run_driver, "BOOT_POLL", 0.01)
+
+    assert main(["openbao"], podman=podman, root=ROOT) == 0
+
+    boots = [c for c in calls() if "is-system-running" in c["argv"]]
+    assert len(boots) == 3
+    assert len(step_calls(calls)) == 8
+
+
+def test_a_failed_preparation_copies_nothing_and_removes_the_container(
+    fake, monkeypatch, capsys
+):
+    podman, calls = fake
+    monkeypatch.setenv("FAKE_FAIL", "mkdir -p")
+    monkeypatch.setenv("FAKE_RC", "1")
+
+    assert main(["openbao"], podman=podman, root=ROOT) == 1
+
+    assert not [c for c in calls() if "tar" in c["argv"]]
+    assert calls()[-1]["argv"][:2] == ["rm", "-f"]
+    assert capsys.readouterr().err == (
+        f"could not prepare /home/runner and /opt in kbi-driver-openbao-{os.getpid()}\n"
+    )
+
+
+def test_a_tree_git_cannot_list_runs_no_step(fake, tmp_path, monkeypatch, capsys):
+    podman, calls = fake
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(WORKFLOW.read_text())
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+
+    assert main(["openbao"], podman=podman, root=tmp_path) == 1
+
+    assert step_calls(calls) == []
+    assert calls()[-1]["argv"][:2] == ["rm", "-f"]
+    assert capsys.readouterr().err.startswith(
+        f"git could not list the working tree in {tmp_path}: fatal: not a git repository"
+    )
+
+
+def test_a_job_without_a_working_directory_runs_from_the_tree_root(fake, tmp_path):
+    podman, calls = fake
+    repo = tmp_path / "repo"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text(
+        json.dumps({"jobs": {"openbao": {"steps": [{"run": "bash tests/x/run.sh"}]}}})
+    )
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+
+    assert main(["openbao"], podman=podman, root=repo) == 0
+
+    (step,) = step_calls(calls)
+    assert step[step.index("-w") + 1] == "/opt/src"
+
+
+@pytest.mark.parametrize(
+    ("job", "driver"),
+    [
+        ("real", True),
+        ("tests-only", False),
+        ("flat-run", False),
+        ("reusable", False),
+        ("absent", False),
+    ],
+)
+def test_only_a_job_running_a_test_folders_run_sh_counts_as_a_driver(
+    fake, tmp_path, capsys, job, driver
+):
+    podman, calls = fake
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        json.dumps(
+            {
+                "jobs": {
+                    "real": {
+                        "steps": [
+                            {"uses": "actions/checkout@v7"},
+                            {"run": "sudo bash tests/x/run.sh"},
+                        ]
+                    },
+                    "tests-only": {
+                        "steps": [{"run": "python3 -m pytest ansible/tests/"}]
+                    },
+                    "flat-run": {"steps": [{"run": "bash tests/run.sh"}]},
+                    "reusable": {
+                        "uses": "sh4i-yurei/ci-workflows/.github/workflows/python.yml@v1"
+                    },
+                }
+            }
+        )
+    )
+
+    assert main([job], podman=podman, root=tmp_path) == 2
+
+    err = capsys.readouterr().err
+    assert err.startswith(f"{job} needs root") is driver
+    assert err.startswith(f"{job} is not a driver job") is not driver
+    assert calls() == []
+
+
+def test_help_names_the_runner_and_its_options(capsys):
+    with pytest.raises(SystemExit):
+        main(["--help"])
+
+    out = " ".join(capsys.readouterr().out.split())
+    assert (
+        "Run one CI driver job's own steps on the laptop, in a disposable privileged container."
+        in out
+    )
+    assert "job a driver job from .github/workflows/ci.yml" in out
+    assert "--list print the jobs that run locally" in out
+
+
+def test_step_lines_come_before_each_steps_output_when_stdout_is_buffered(
+    fake, monkeypatch, capfd
+):
+    podman, _calls = fake
+    # A pipe or a file makes Python's stdout block-buffered, while each step writes
+    # straight to the same file descriptor.
+    with open(1, "w", buffering=65536, closefd=False) as buffered:
+        monkeypatch.setattr(sys, "stdout", buffered)
+        status = main(["openbao"], podman=podman, root=ROOT)
+        buffered.flush()
+
+    assert status == 0
+    lines = capfd.readouterr().out.splitlines()
+    assert lines[:4] == [
+        "=== step 1/8: pip install -r ../requirements.txt",
+        "ran /opt/steps/01.sh",
+        "=== step 2/8: ansible-galaxy collection install -r collections/requirements.yml",
+        "ran /opt/steps/02.sh",
+    ]
+    assert lines[-1] == "=== openbao: all 8 steps passed"

@@ -1,8 +1,5 @@
 """Repository CI must exercise Python tests on every branch push."""
 
-import hashlib
-import json
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -33,40 +30,45 @@ def workflow():
     )
 
 
-@pytest.mark.parametrize("job", COLLECTION_JOBS)
-def test_collection_install_has_immediately_preceding_cache(job):
-    steps = workflow()["jobs"][job]["steps"]
-    installs = [index for index, step in enumerate(steps) if step.get("run") == INSTALL]
-    assert len(installs) == 1
-    install_index = installs[0]
-    assert steps[install_index] == {"run": INSTALL}
-    assert steps[install_index - 1] == {
-        "uses": "actions/cache@v6",
-        "with": {
-            "path": "~/.ansible/collections",
-            "key": CACHE_KEY,
-        },
+def test_collection_install_has_immediately_preceding_cache():
+    jobs = workflow()["jobs"]
+    collection_jobs = {
+        name
+        for name, job in jobs.items()
+        if any(step.get("run") == INSTALL for step in job.get("steps", []))
     }
+    assert collection_jobs == set(COLLECTION_JOBS)
+    for name in sorted(collection_jobs):
+        steps = jobs[name]["steps"]
+        installs = [
+            index for index, step in enumerate(steps) if step.get("run") == INSTALL
+        ]
+        assert len(installs) == 1, name
+        install_index = installs[0]
+        assert steps[install_index] == {"run": INSTALL}, name
+        assert steps[install_index - 1] == {
+            "uses": "actions/cache@v6",
+            "with": {
+                "path": "~/.ansible/collections",
+                "key": CACHE_KEY,
+            },
+        }, name
 
 
-@pytest.mark.parametrize(
-    ("job", "expected_digest"),
-    [
-        (
-            "openbao",
-            "aa5f4ce904b9d407c33220753ef8de291395e5d3ff904cff21f734c04996f4cf",
-        ),
-        (
-            "b2-bucket",
-            "eb8c64a127e9dd54f7797369fad67e579971e9fce43cdb06d3d856d8da7de97d",
-        ),
-    ],
-)
-def test_local_runner_run_steps_match_main(job, expected_digest):
-    steps = job_steps(ROOT / ".github/workflows/ci.yml", job)
-    encoded = json.dumps([asdict(step) for step in steps], sort_keys=True).encode()
-    digest = hashlib.sha256(encoded).hexdigest()
-    assert digest == expected_digest
+@pytest.mark.parametrize("job", ("openbao", "b2-bucket"))
+def test_local_runner_run_steps_match_main(job, tmp_path):
+    source = ROOT / ".github/workflows/ci.yml"
+    data = workflow()
+    for spec in data["jobs"].values():
+        if "steps" in spec:
+            spec["steps"] = [
+                step
+                for step in spec["steps"]
+                if not step.get("uses", "").startswith("actions/cache@")
+            ]
+    without_cache = tmp_path / "ci.yml"
+    without_cache.write_text(yaml.safe_dump(data))
+    assert job_steps(source, job) == job_steps(without_cache, job)
 
 
 def test_architecture_describes_collection_cache_and_python_exception():

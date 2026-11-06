@@ -287,7 +287,7 @@ def git_repo(tmp_path):
     ],
 )
 def test_main_outputs(
-    git_repo, tmp_path, monkeypatch, event, ref, remove_base, expected_full
+    git_repo, tmp_path, monkeypatch, capsys, event, ref, remove_base, expected_full
 ):
     if remove_base:
         git(git_repo, "update-ref", "-d", "refs/remotes/origin/main")
@@ -295,6 +295,7 @@ def test_main_outputs(
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     main(event, ref, git_repo)
     lines = output.read_text().splitlines()
+    assert capsys.readouterr().out == output.read_text()
     if expected_full:
         assert lines == ["full=true"] + [
             f"{job.replace('-', '_')}=true" for job in sorted(JOBS)
@@ -304,6 +305,37 @@ def test_main_outputs(
             f"{job.replace('-', '_')}={'true' if job == 'openbao' else 'false'}"
             for job in sorted(JOBS)
         ]
+
+
+def test_main_selects_readers_of_both_rename_paths(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    workflow = repo / ".github/workflows"
+    workflow.mkdir(parents=True)
+    shutil.copy2(ROOT / ".github/workflows/ci.yml", workflow / "ci.yml")
+    for folder in (ROOT / "ansible/tests").iterdir():
+        if folder.is_dir() and ((folder / "run.sh").exists() or folder.name == "lib"):
+            shutil.copytree(folder, repo / "ansible/tests" / folder.name)
+    for role in (ROOT / "ansible/roles").iterdir():
+        if role.is_dir():
+            shutil.copytree(role, repo / "ansible/roles" / role.name)
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "base")
+    git(repo, "branch", "-M", "main")
+    git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    git(repo, "checkout", "-qb", "feature")
+    git(repo, "mv", "ansible/tests/lib/undo.sh", "ansible/tests/openbao/undo.sh")
+    git(repo, "commit", "-qm", "move shared helper")
+
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    main("push", "refs/heads/feature", repo)
+    assert output.read_text().splitlines() == ["full=false"] + [
+        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'break-glass-sheet', 'openbao', 'vaultwarden-backup'} else 'false'}"
+        for job in sorted(JOBS)
+    ]
+    assert capsys.readouterr().out == output.read_text()
 
 
 def test_main_fails_open_when_selector_raises(git_repo, tmp_path, monkeypatch):

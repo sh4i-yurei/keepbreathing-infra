@@ -166,10 +166,10 @@ def main(event_name=None, ref=None, root=None):
             full, jobs = True, set(drivers)
         else:
             base = _git(root, "merge-base", "HEAD", "origin/main")
-            paths = _git(root, "diff", "--name-only", base, "HEAD").splitlines()
+            paths = _git(
+                root, "diff", "--no-renames", "--name-only", base, "HEAD"
+            ).splitlines()
             full, jobs = select_jobs(paths, root)
-            if full:
-                jobs = set(drivers)
     except Exception:
         full = True
         try:
@@ -181,8 +181,10 @@ def main(event_name=None, ref=None, root=None):
     lines.extend(
         f"{job.replace('-', '_')}={str(job in jobs).lower()}" for job in sorted(drivers)
     )
+    rendered = "\n".join(lines) + "\n"
     with output.open("a") as stream:
-        stream.write("\n".join(lines) + "\n")
+        stream.write(rendered)
+    print(rendered, end="")
 
 
 if __name__ == "__main__":

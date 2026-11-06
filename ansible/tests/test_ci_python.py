@@ -10,7 +10,7 @@ def test_python_job_and_all_branch_push_trigger() -> None:
     workflow = yaml.load(
         (root / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader
     )
-    assert workflow["on"] == {"push": {}}
+    assert workflow["on"] == {"push": {}, "pull_request": {}}
     assert workflow["jobs"]["python"]["uses"] == (
         "sh4i-yurei/ci-workflows/.github/workflows/python.yml"
         "@6fa70095587800bf834d27d1cf2313a7b8dbb168"

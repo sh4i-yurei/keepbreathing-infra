@@ -50,6 +50,7 @@
     - hub
     - backup_server
     - openbao
+    - ticket_band
     - role: tailscale_service
       tailscale_service_name: backup
       tailscale_service_port: "{{ backup_server_port }}"

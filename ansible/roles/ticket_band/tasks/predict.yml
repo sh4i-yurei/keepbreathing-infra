@@ -1,0 +1,10 @@
+---
+- name: Ticket band | Write transient storage configuration
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ ticket_band_user }}/.config/containers/storage.conf"
+  changed_when: true
+
+- name: Ticket band | Write boot cleanup unit
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ ticket_band_user }}/.config/systemd/user/podman-boot-cleanup.service"
+  changed_when: true

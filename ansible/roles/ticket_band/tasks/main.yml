@@ -1,0 +1,94 @@
+---
+- name: Ticket band | Create the account
+  ansible.builtin.user:
+    name: "{{ ticket_band_user }}"
+  register: ticket_band_account
+
+- name: Ticket band | Read subordinate ID ranges
+  ansible.builtin.command:
+    argv: [grep, -q, "^{{ ticket_band_user }}:", "{{ item }}"]
+  loop: [/etc/subuid, /etc/subgid]
+  register: ticket_band_subids
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: ticket_band_account.uid is defined or not ansible_check_mode
+
+- name: Ticket band | Require subordinate UID and GID ranges
+  ansible.builtin.assert:
+    that: ticket_band_subids.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: "{{ ticket_band_user }} needs entries in /etc/subuid and /etc/subgid for rootless Podman."
+    quiet: true
+  when: ticket_band_account.uid is defined or not ansible_check_mode
+
+- name: Ticket band | Enable lingering
+  ansible.builtin.command:
+    cmd: "loginctl enable-linger {{ ticket_band_user | quote }}"
+    creates: "/var/lib/systemd/linger/{{ ticket_band_user }}"
+  when: not ansible_check_mode
+
+- name: Ticket band | Predict configuration on a fresh check-mode account
+  ansible.builtin.import_tasks: predict.yml
+  when: ansible_check_mode and ticket_band_account.uid is not defined
+
+- name: Ticket band | Create private configuration directories
+  ansible.builtin.file:
+    path: "/home/{{ ticket_band_user }}/{{ item }}"
+    state: directory
+    owner: "{{ ticket_band_user }}"
+    group: "{{ ticket_band_user }}"
+    mode: '0700'
+  loop:
+    - .config
+    - .config/containers
+    - .config/systemd
+    - .config/systemd/user
+  when: ticket_band_account.uid is defined or not ansible_check_mode
+
+- name: Ticket band | Write transient storage configuration
+  ansible.builtin.copy:
+    content: |
+      [storage]
+      driver = "overlay"
+      transient_store = true
+    dest: "/home/{{ ticket_band_user }}/.config/containers/storage.conf"
+    owner: "{{ ticket_band_user }}"
+    group: "{{ ticket_band_user }}"
+    mode: '0600'
+  when: ticket_band_account.uid is defined or not ansible_check_mode
+
+- name: Ticket band | Write boot cleanup unit
+  ansible.builtin.copy:
+    content: |
+      [Unit]
+      Description=Clear rootless Podman storage left by a reboot
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/podman system prune --external
+      TimeoutStartSec=300
+
+      [Install]
+      WantedBy=default.target
+    dest: "/home/{{ ticket_band_user }}/.config/systemd/user/podman-boot-cleanup.service"
+    owner: "{{ ticket_band_user }}"
+    group: "{{ ticket_band_user }}"
+    mode: '0644'
+  register: ticket_band_cleanup_unit
+  when: ticket_band_account.uid is defined or not ansible_check_mode
+
+- name: Ticket band | Enable boot cleanup
+  ansible.builtin.systemd_service:
+    name: podman-boot-cleanup.service
+    scope: user
+    daemon_reload: "{{ ticket_band_cleanup_unit.changed }}"
+    enabled: true
+  become: true
+  become_user: "{{ ticket_band_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ticket_band_account.uid }}"
+  when: not ansible_check_mode
+
+- name: Verify the ticket band account
+  ansible.builtin.import_tasks: verify.yml
+  when: not ansible_check_mode

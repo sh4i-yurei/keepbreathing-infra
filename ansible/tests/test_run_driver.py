@@ -30,7 +30,7 @@ if data:
 with open(log, "a") as stream:
     stream.write(json.dumps(entry) + "\n")
 fail = os.environ.get("FAKE_FAIL", "")
-if fail and fail in " ".join(argv):
+if fail and any(part in " ".join(argv) for part in fail.split("|")):
     print(f"fake failure for {fail}", file=sys.stderr)
     sys.exit(int(os.environ.get("FAKE_RC", "3")))
 if "is-system-running" in argv:
@@ -533,3 +533,35 @@ def test_step_lines_come_before_each_steps_output_when_stdout_is_buffered(
         "ran /opt/steps/02.sh",
     ]
     assert lines[-1] == "=== openbao: all 8 steps passed"
+
+
+@pytest.mark.parametrize(
+    ("fail", "last_line"),
+    [
+        ("rm -f", "=== openbao: all 8 steps passed"),
+        (
+            "rm -f|/opt/steps/06.sh",
+            "=== openbao: failed at step 6/8 (Deliberate role failure cleans up), exit 3",
+        ),
+    ],
+)
+def test_the_last_line_comes_before_a_removal_failure_in_one_log(
+    fake, monkeypatch, capfd, fail, last_line
+):
+    podman, _calls = fake
+    monkeypatch.setenv("FAKE_FAIL", fail)
+    # Both streams into one log, as with 2>&1 into a file: stdout block-buffered,
+    # stderr written straight through.
+    with (
+        open(1, "w", buffering=65536, closefd=False) as out,
+        open(1, "w", buffering=1, closefd=False) as err,
+    ):
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+        main(["openbao"], podman=podman, root=ROOT)
+        out.flush()
+
+    lines = capfd.readouterr().out.splitlines()
+    name = f"kbi-driver-openbao-{os.getpid()}"
+    removal = f"{name} was not removed; remove it with podman rm -f {name}"
+    assert lines.index(last_line) < lines.index(removal)

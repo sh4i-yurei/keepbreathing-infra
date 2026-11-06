@@ -53,3 +53,6 @@
     - role: tailscale_service
       tailscale_service_name: backup
       tailscale_service_port: "{{ backup_server_port }}"
+    - role: tailscale_service
+      tailscale_service_name: openbao
+      tailscale_service_port: "{{ openbao_port }}"

@@ -141,7 +141,7 @@ jobs:
           fi
           grep -Fx 'ASSERTION FAILED: b2-copy units already exist' /tmp/b2-copy-existing-unit.log
           test -e /etc/systemd/system/b2-copy@.timer
-          ! id bstest
+          if id bstest; then echo 'ASSERTION FAILED: bstest survived unit refusal'; exit 1; fi
           sudo rm /etc/systemd/system/b2-copy@.timer
           sudo cp -p /etc/hosts /tmp/b2-copy-hosts
           printf '127.0.0.1 s3.us-east-1.seaweedfs.test\n' | sudo tee -a /etc/hosts
@@ -169,13 +169,13 @@ jobs:
           failure = next(i for i, line in enumerate(lines) if 'Deliberate failure after B2 copy' in line)
           assert first < failure, 'deliberate failure must follow the first real role run'
           PY
-          ! grep -E '^CLEANUP FAILED:' /tmp/b2-copy-failure.log
+          if grep -E '^CLEANUP FAILED:' /tmp/b2-copy-failure.log; then echo 'ASSERTION FAILED: B2 copy cleanup failed'; exit 1; fi
           test ! -e /etc/systemd/system/b2-copy@.timer
           test ! -e /etc/systemd/system/b2-copy@.service
           test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
-          ! id bstest
-          ! sudo losetup --list | grep -F backup.img
-          ! sudo podman container exists b2-copy-weed
+          if id bstest; then echo 'ASSERTION FAILED: bstest survived cleanup'; exit 1; fi
+          if sudo losetup --list | grep -F backup.img; then echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; fi
+          if sudo podman container exists b2-copy-weed; then echo 'ASSERTION FAILED: SeaweedFS container survived cleanup'; exit 1; fi
           test "$hosts_before" = "$(sudo sha256sum /etc/hosts | cut -d' ' -f1)"
           test "$environment_before" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)"
           test "$manager_before" = "$(systemctl show-environment)"
@@ -188,9 +188,9 @@ jobs:
           test ! -e /etc/systemd/system/b2-copy@.timer
           test ! -e /etc/systemd/system/b2-copy@.service
           test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
-          ! id bstest
-          ! sudo losetup --list | grep -F backup.img
-          ! sudo podman container exists b2-copy-weed
+          if id bstest; then echo 'ASSERTION FAILED: bstest survived cleanup'; exit 1; fi
+          if sudo losetup --list | grep -F backup.img; then echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; fi
+          if sudo podman container exists b2-copy-weed; then echo 'ASSERTION FAILED: SeaweedFS container survived cleanup'; exit 1; fi
           test "$hosts_before" = "$(sudo sha256sum /etc/hosts | cut -d' ' -f1)"
           test "$environment_before" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)"
           test "$manager_before" = "$(systemctl show-environment)"
@@ -238,7 +238,7 @@ jobs:
             fi
             grep -Fx 'ASSERTION FAILED: vaultwarden-backup units already exist' "/tmp/$unit-existing.log" || { echo "ASSERTION FAILED: $unit refusal message missing"; exit 1; }
             test -e "/etc/systemd/system/$unit" || { echo "ASSERTION FAILED: $unit was removed"; exit 1; }
-            ! id bstest && ! id vwtest || { echo "ASSERTION FAILED: $unit refusal created an account"; exit 1; }
+            if id bstest || id vwtest; then echo "ASSERTION FAILED: $unit refusal created an account"; exit 1; fi
             sudo rm "/etc/systemd/system/$unit"
           done
       - name: Backup server failure leaves no driver state
@@ -252,7 +252,7 @@ jobs:
           if id bstest; then echo 'ASSERTION FAILED: bstest survived cleanup'; exit 1; fi
           test ! -e /home/bstest || { echo 'ASSERTION FAILED: bstest home survived cleanup'; exit 1; }
           test ! -e /var/lib/systemd/linger/bstest || { echo 'ASSERTION FAILED: bstest lingering survived cleanup'; exit 1; }
-          ! sudo losetup --list | grep -F 'backup.img' || { echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; }
+          if sudo losetup --list | grep -F 'backup.img'; then echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; fi
           test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
           test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
       - name: Busy mount reports cleanup failure and restores environment
@@ -280,11 +280,11 @@ jobs:
           fi
           grep -F 'TASK [vaultwarden_backup : Vaultwarden backup | Pull the pinned restic image]' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull task was not reached'; tail -30 /tmp/vw-image-pull-failure.log; exit 1; }
           grep -F 'ASSERTION FAILED: Vaultwarden backup role play must pass' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull failure was not reported'; tail -30 /tmp/vw-image-pull-failure.log; exit 1; }
-          ! grep -E '^CLEANUP FAILED:' /tmp/vw-image-pull-failure.log || { echo 'ASSERTION FAILED: image pull cleanup failed'; exit 1; }
+          if grep -E '^CLEANUP FAILED:' /tmp/vw-image-pull-failure.log; then echo 'ASSERTION FAILED: image pull cleanup failed'; exit 1; fi
           test ! -e /etc/systemd/system/vaultwarden-backup.timer || { echo 'ASSERTION FAILED: Vaultwarden timer file survived image pull cleanup'; exit 1; }
           test ! -e /etc/systemd/system/vaultwarden-backup.service || { echo 'ASSERTION FAILED: Vaultwarden service file survived image pull cleanup'; exit 1; }
           test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded after image pull failure'; exit 1; }
-          ! id vwtest && ! id bstest || { echo 'ASSERTION FAILED: test account survived image pull cleanup'; exit 1; }
+          if id vwtest || id bstest; then echo 'ASSERTION FAILED: test account survived image pull cleanup'; exit 1; fi
           test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
           test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
       - name: Vaultwarden driver restores the runner environment
@@ -409,6 +409,7 @@ jobs:
             echo 'ASSERTION FAILED: deliberate driver failure passed'; exit 1
           fi
           grep -Fx 'ASSERTION FAILED: deliberate failure after the openbao role' /tmp/openbao-failure.log || {
+            tail -60 /tmp/openbao-failure.log
             grep -Fx 'OpenBao unit status:' /tmp/openbao-failure.log || { echo 'ASSERTION FAILED: role failure omitted unit status'; exit 1; }
             grep -Fx 'OpenBao user journal:' /tmp/openbao-failure.log || { echo 'ASSERTION FAILED: role failure omitted user journal'; exit 1; }
             tail -60 /tmp/openbao-failure.log

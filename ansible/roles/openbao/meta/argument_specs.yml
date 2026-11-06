@@ -9,6 +9,9 @@ argument_specs:
       openbao_port:
         type: int
         required: true
+      openbao_self_address:
+        type: str
+        required: true
       openbao_seal_key_id:
         type: str
         required: true

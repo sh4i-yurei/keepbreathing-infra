@@ -12,6 +12,8 @@
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
     method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
     status_code: [200, 429, 472, 473, 501, 503]
     return_content: true
   register: openbao_prior_health
@@ -133,6 +135,8 @@
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
     method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
     status_code: [200, 429, 472, 473, 501, 503]
     return_content: true
   register: openbao_started_health

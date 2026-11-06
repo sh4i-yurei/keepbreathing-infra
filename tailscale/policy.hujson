@@ -52,6 +52,13 @@
 			"ip":  ["443"],
 		},
 
+		// OpenBao: the hub itself, for the services that run on it. OpenBao on the hub decision #16.
+		{
+			"src": ["tag:hub"],
+			"dst": ["svc:openbao"],
+			"ip":  ["443"],
+		},
+
 		// node_exporter: the hub scrapes port 9100 on every machine with host metrics.
 		// Monitoring and alerting decisions #26 and #30.
 		{
@@ -154,6 +161,7 @@
 			"svc:grafana": ["tag:hub"],
 			"svc:ntfy":    ["tag:hub"],
 			"svc:backup":  ["tag:hub"],
+			"svc:openbao": ["tag:hub"],
 		},
 	},
 

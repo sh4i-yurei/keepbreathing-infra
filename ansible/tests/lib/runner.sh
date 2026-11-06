@@ -15,6 +15,14 @@ runner_undo_account() {
     printf 'Processes remain for %s\n' "$account" >&2
     return 1
   fi
+  for ((attempt=0; attempt<120; attempt++)); do
+    if ! loginctl show-user "$uid" >/dev/null 2>&1; then break; fi
+    sleep 0.25
+  done
+  if loginctl show-user "$uid" >/dev/null 2>&1; then
+    printf 'logind still holds %s\n' "$account" >&2
+    return 1
+  fi
   userdel -r "$account"
 }
 

@@ -3,7 +3,7 @@ source_paths = ["ansible/filter_plugins", "ansible/lookup_plugins", "ansible/rol
 also_copy = ["ansible", ".github"]
 cache_invalidation_files = ["ansible/tests/*.py", "ansible/tests/**/*.py"]
 on_dependency_change = "rerun"
-pytest_add_cli_args_test_selection = ["ansible/tests/test_durations.py", "ansible/tests/test_node_exporter_firewall.py", "ansible/tests/test_b2_bucket.py", "ansible/tests/test_b2_verify.py", "ansible/tests/test_sudo_nopasswd_check.py", "ansible/tests/test_repo_gpgcheck_check.py", "ansible/tests/test_journal_pull.py", "ansible/tests/test_journal_pull_edges.py", "ansible/tests/test_journal_resume.py", "ansible/tests/test_vault_secret.py", "ansible/tests/test_vaultwarden_backup_verify.py", "ansible/tests/test_select_jobs.py", "-k", "not test_gap_marker_imports_before_source_entry_with_almalinux_10"]
+pytest_add_cli_args_test_selection = ["ansible/tests/test_durations.py", "ansible/tests/test_node_exporter_firewall.py", "ansible/tests/test_b2_bucket.py", "ansible/tests/test_b2_verify.py", "ansible/tests/test_sudo_nopasswd_check.py", "ansible/tests/test_repo_gpgcheck_check.py", "ansible/tests/test_journal_pull.py", "ansible/tests/test_journal_pull_edges.py", "ansible/tests/test_journal_resume.py", "ansible/tests/test_vault_secret.py", "ansible/tests/test_vaultwarden_backup_verify.py", "ansible/tests/test_select_jobs.py", "ansible/tests/test_run_driver.py", "-k", "not test_gap_marker_imports_before_source_entry_with_almalinux_10"]
 
 [tool.pytest.ini_options]
 testpaths = ["ansible/tests"]

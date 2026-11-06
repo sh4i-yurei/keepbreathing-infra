@@ -2,7 +2,7 @@
 
 import json
 import os
-import runpy
+import signal
 import subprocess
 import sys
 import tarfile
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from ci import run_driver
-from ci.run_driver import LOCAL_JOBS, job_steps, main, podman_command
+from ci.run_driver import job_steps, main, podman_command
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
@@ -30,6 +30,11 @@ if data:
 with open(log, "a") as stream:
     stream.write(json.dumps(entry) + "\n")
 fail = os.environ.get("FAKE_FAIL", "")
+signal_at = os.environ.get("FAKE_SIGNAL_AT", "")
+if signal_at and signal_at in " ".join(argv):
+    import signal, time
+    os.kill(os.getppid(), signal.SIGTERM)
+    time.sleep(5)
 if fail and any(part in " ".join(argv) for part in fail.split("|")):
     print(f"fake failure for {fail}", file=sys.stderr)
     sys.exit(int(os.environ.get("FAKE_RC", "3")))
@@ -98,9 +103,13 @@ def test_named_bash_shell_runs_with_githubs_bash_flags():
     ("step", "message"),
     [
         ({"run": "echo ${{ matrix.os }}"}, "uses a GitHub expression"),
+        ({"run": "echo hi", "name": "${{ matrix.os }}"}, "uses a GitHub expression"),
+        ({"run": "echo cleanup", "if": "${{ failure() }}"}, "sets if"),
+        ({"run": "echo cleanup", "if": "failure()"}, "sets if"),
+        ({"run": "false", "continue-on-error": "true"}, "sets continue-on-error"),
         ({"run": "print(1)", "shell": "python"}, "uses shell python"),
-        ({"run": "ls", "working-directory": "roles"}, "sets its own working-directory"),
-        ({"run": "ls", "env": {"A": "1"}}, "sets its own env"),
+        ({"run": "ls", "working-directory": "roles"}, "sets working-directory"),
+        ({"run": "ls", "env": {"A": "1"}}, "sets env"),
     ],
 )
 def test_step_shapes_the_runner_cannot_reproduce_are_refused(tmp_path, step, message):
@@ -115,9 +124,8 @@ def test_step_shapes_the_runner_cannot_reproduce_are_refused(tmp_path, step, mes
     with pytest.raises(ValueError) as error:
         job_steps(workflow, "demo")
 
-    assert (
-        str(error.value)
-        == f"demo step 1 (odd step) {message}, which the local runner cannot reproduce"
+    assert str(error.value) == (
+        f"demo step 1 ({step['name']}) {message}, which the local runner cannot reproduce"
     )
 
 
@@ -134,10 +142,6 @@ def test_job_without_working_directory_runs_from_the_repository_root(tmp_path):
 
     assert job_steps(workflow, "demo")[0].working_directory == ""
     assert job_steps(workflow, "demo")[0].name == "ls"
-
-
-def test_local_jobs_are_exactly_the_two_proven_on_2026_11_05():
-    assert LOCAL_JOBS == ("b2-bucket", "openbao")
 
 
 @pytest.mark.parametrize(
@@ -204,8 +208,7 @@ def test_openbao_runs_every_step_as_runner_and_removes_its_container(fake, capfd
         str(ROOT / "ci" / "driver-image"),
     ]
     assert argvs[1] == [
-        "run",
-        "-d",
+        "create",
         "--name",
         name,
         "--privileged",
@@ -216,16 +219,17 @@ def test_openbao_runs_every_step_as_runner_and_removes_its_container(fake, capfd
         "/var/lib/containers:rw,exec,size=3g",
         "localhost/kbi-driver-runner",
     ]
-    assert argvs[2] == ["exec", name, "systemctl", "is-system-running"]
-    assert argvs[3] == [
+    assert argvs[2] == ["start", name]
+    assert argvs[3] == ["exec", name, "systemctl", "is-system-running"]
+    assert argvs[4] == [
         "exec",
         name,
         "bash",
         "-c",
         "mkdir -p /home/runner /opt && chown runner:runner /home/runner /opt",
     ]
-    assert argvs[4] == ["exec", "-i", "-u", "runner", name, "tar", "-x", "-C", "/opt"]
-    assert argvs[5:13] == [
+    assert argvs[5] == ["exec", "-i", "-u", "runner", name, "tar", "-x", "-C", "/opt"]
+    assert argvs[6:14] == [
         [
             "exec",
             "-u",
@@ -241,7 +245,7 @@ def test_openbao_runs_every_step_as_runner_and_removes_its_container(fake, capfd
         ]
         for n in range(1, 9)
     ]
-    assert argvs[13:] == [["rm", "-f", "-t", "10", name]]
+    assert argvs[14:] == [["rm", "-f", "-t", "10", name]]
     names = [s.name for s in job_steps(WORKFLOW, "openbao")]
     expected = []
     for n, step_name in enumerate(names, 1):
@@ -349,16 +353,31 @@ def test_a_failed_image_build_starts_no_container(fake, monkeypatch, capsys):
     assert "could not build" in capsys.readouterr().err
 
 
-def test_a_container_that_cannot_start_is_not_removed_twice(fake, monkeypatch, capsys):
+def test_a_container_that_cannot_be_created_is_not_removed(fake, monkeypatch, capsys):
     podman, calls = fake
     monkeypatch.setenv("FAKE_FAIL", "--systemd=always")
     monkeypatch.setenv("FAKE_RC", "125")
 
     assert main(["openbao"], podman=podman, root=ROOT) == 125
 
-    assert [c["argv"][0] for c in calls()] == ["build", "run"]
+    assert [c["argv"][0] for c in calls()] == ["build", "create"]
     assert capsys.readouterr().err == (
-        f"could not start kbi-driver-openbao-{os.getpid()}: fake failure for --systemd=always\n"
+        f"could not create kbi-driver-openbao-{os.getpid()}: fake failure for --systemd=always\n"
+    )
+
+
+def test_a_created_container_that_fails_to_start_is_removed(fake, monkeypatch, capsys):
+    podman, calls = fake
+    name = f"kbi-driver-openbao-{os.getpid()}"
+    monkeypatch.setenv("FAKE_FAIL", f"start {name}")
+    monkeypatch.setenv("FAKE_RC", "126")
+
+    assert main(["openbao"], podman=podman, root=ROOT) == 126
+
+    assert [c["argv"][0] for c in calls()] == ["build", "create", "start", "rm"]
+    assert (
+        capsys.readouterr().err
+        == f"could not start {name}: fake failure for start {name}\n"
     )
 
 
@@ -371,7 +390,11 @@ def test_a_container_left_behind_is_reported_and_fails_the_run(
 
     assert main(["openbao"], podman=podman, root=ROOT) == 1
 
-    assert "was not removed; remove it with podman rm -f" in capsys.readouterr().err
+    name = f"kbi-driver-openbao-{os.getpid()}"
+    command = " ".join([*podman, "rm", "-f", "-t", "10", name])
+    assert (
+        capsys.readouterr().err == f"{name} was not removed; remove it with {command}\n"
+    )
 
 
 def test_podman_runs_directly_on_the_host_and_through_distrobox_inside_dev(monkeypatch):
@@ -385,14 +408,17 @@ def test_podman_runs_directly_on_the_host_and_through_distrobox_inside_dev(monke
     assert podman_command() == ["distrobox-host-exec", "podman"]
 
 
-def test_the_script_entry_point_lists_the_local_jobs(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["run_driver.py", "--list"])
+def test_the_module_command_lists_the_local_jobs():
+    result = subprocess.run(
+        [sys.executable, "-m", "ci.run_driver", "--list"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-    with pytest.raises(SystemExit) as exit_:
-        runpy.run_path(str(ROOT / "ci" / "run_driver.py"), run_name="__main__")
-
-    assert exit_.value.code == 0
-    assert capsys.readouterr().out == "b2-bucket\nopenbao\n"
+    assert result.returncode == 0
+    assert result.stdout == "b2-bucket\nopenbao\n"
 
 
 @pytest.mark.parametrize("state", ["running", "degraded"])
@@ -461,6 +487,7 @@ def test_a_job_without_a_working_directory_runs_from_the_tree_root(fake, tmp_pat
         ("real", True),
         ("tests-only", False),
         ("flat-run", False),
+        ("no-such-folder", False),
         ("reusable", False),
         ("absent", False),
     ],
@@ -470,10 +497,12 @@ def test_only_a_job_running_a_test_folders_run_sh_counts_as_a_driver(
 ):
     podman, calls = fake
     (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / "ansible" / "tests" / "x").mkdir(parents=True)
     (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
         json.dumps(
             {
                 "jobs": {
+                    "no-such-folder": {"steps": [{"run": "bash tests/nosuch/run.sh"}]},
                     "real": {
                         "steps": [
                             {"uses": "actions/checkout@v7"},
@@ -563,5 +592,139 @@ def test_the_last_line_comes_before_a_removal_failure_in_one_log(
 
     lines = capfd.readouterr().out.splitlines()
     name = f"kbi-driver-openbao-{os.getpid()}"
-    removal = f"{name} was not removed; remove it with podman rm -f {name}"
+    command = " ".join([*podman, "rm", "-f", "-t", "10", name])
+    removal = f"{name} was not removed; remove it with {command}"
     assert lines.index(last_line) < lines.index(removal)
+
+
+@pytest.mark.parametrize(
+    ("workflow", "message"),
+    [
+        ({"env": {"A": "1"}}, ".github/workflows/ci.yml sets env"),
+        (
+            {"defaults": {"run": {"shell": "bash"}}},
+            ".github/workflows/ci.yml sets defaults",
+        ),
+        ({"job": {"env": {"A": "1"}}}, "openbao sets env"),
+        ({"job": {"strategy": {"matrix": {"os": ["a"]}}}}, "openbao sets strategy"),
+        (
+            {"job": {"defaults": {"run": {"shell": "bash"}}}},
+            "openbao sets defaults.run.shell",
+        ),
+        ({"job": {"defaults": {"other": {}}}}, "openbao sets defaults.other"),
+    ],
+)
+def test_workflow_and_job_settings_the_runner_cannot_reproduce_are_refused(
+    fake, tmp_path, capsys, workflow, message
+):
+    podman, calls = fake
+    job = {"runs-on": "ubuntu-latest", "steps": [{"run": "bash tests/x/run.sh"}]}
+    workflow = dict(workflow)
+    job.update(workflow.pop("job", {}))
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        json.dumps({"name": "CI", "on": "push", **workflow, "jobs": {"openbao": job}})
+    )
+
+    assert main(["openbao"], podman=podman, root=tmp_path) == 2
+
+    assert (
+        capsys.readouterr().err
+        == f"{message}, which the local runner cannot reproduce\n"
+    )
+    assert calls() == []
+
+
+def test_the_settings_ci_yml_uses_are_all_accepted():
+    for job in ("openbao", "b2-bucket"):
+        assert len(job_steps(WORKFLOW, job)) > 0
+
+
+def test_a_run_without_a_root_uses_the_repository_the_runner_lives_in(fake):
+    podman, calls = fake
+
+    assert main(["openbao"], podman=podman) == 0
+
+    context = Path(run_driver.__file__).resolve().parent / "driver-image"
+    assert calls()[0]["argv"] == [
+        "build",
+        "-t",
+        "localhost/kbi-driver-runner",
+        str(context),
+    ]
+
+
+def test_a_terminating_signal_still_removes_the_container(fake, monkeypatch):
+    podman, calls = fake
+    monkeypatch.setenv("FAKE_SIGNAL_AT", "/opt/steps/03.sh")
+    before = signal.getsignal(signal.SIGTERM)
+
+    with pytest.raises(SystemExit) as exit_:
+        main(["openbao"], podman=podman, root=ROOT)
+
+    assert exit_.value.code == 128 + signal.SIGTERM
+    assert [s[-1] for s in step_calls(calls)] == [
+        "/opt/steps/01.sh",
+        "/opt/steps/02.sh",
+        "/opt/steps/03.sh",
+    ]
+    assert calls()[-1]["argv"][:2] == ["rm", "-f"]
+    assert signal.getsignal(signal.SIGTERM) == before
+
+
+def test_a_file_name_that_is_not_utf8_is_copied(fake, tmp_path):
+    podman, calls = fake
+    repo = tmp_path / "repo"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text(WORKFLOW.read_text())
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    with open(os.path.join(os.fsencode(repo), b"caf\xe9.txt"), "w") as stream:
+        stream.write("latin-1 name\n")
+
+    assert main(["openbao"], podman=podman, root=repo) == 0
+
+    (copy,) = [c for c in calls() if "tar" in c["argv"]]
+    with tarfile.open(copy["stdin"]) as archive:
+        names = {name.encode("utf-8", "surrogateescape") for name in archive.getnames()}
+    assert b"src/caf\xe9.txt" in names
+
+
+def test_an_unreadable_file_runs_no_step_and_says_so(fake, tmp_path, capsys):
+    podman, calls = fake
+    repo = tmp_path / "repo"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text(WORKFLOW.read_text())
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    secret = repo / "locked.txt"
+    secret.write_text("x")
+    secret.chmod(0)
+
+    try:
+        assert main(["openbao"], podman=podman, root=repo) == 1
+    finally:
+        secret.chmod(0o644)
+
+    assert step_calls(calls) == []
+    assert calls()[-1]["argv"][:2] == ["rm", "-f"]
+    assert capsys.readouterr().err == (
+        f"could not read the working tree in {repo}: [Errno 13] Permission denied: '{secret}'\n"
+    )
+
+
+def test_an_unsupported_step_is_a_one_line_refusal_not_a_traceback(
+    fake, tmp_path, capsys
+):
+    podman, calls = fake
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text(
+        json.dumps(
+            {"jobs": {"openbao": {"steps": [{"run": "echo", "if": "failure()"}]}}}
+        )
+    )
+
+    assert main(["openbao"], podman=podman, root=tmp_path) == 2
+
+    assert capsys.readouterr().err == (
+        "openbao step 1 (echo) sets if, which the local runner cannot reproduce\n"
+    )
+    assert calls() == []

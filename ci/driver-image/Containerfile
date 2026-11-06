@@ -1,8 +1,9 @@
 # The image ci/run_driver.py runs a driver job in. It stands in for GitHub's ubuntu-26.04 runner.
-# It differs from that runner in two named ways, both because the container is rootless and
-# only 65,536 user IDs exist inside it:
-#   - new accounts get 31,000 subordinate IDs between 2000 and 65000, not 65,536 from 100000;
-#   - network-online.target is reached at boot, as on the runner, so rootless Quadlet units start.
+# Two settings make it behave like that runner inside a rootless container:
+#   - only 65,536 user IDs exist inside the container, so new accounts get 31,000 subordinate
+#     IDs between 2000 and 65000 instead of 65,536 from 100000;
+#   - nothing in this image pulls in network-online.target, so it is wanted at boot here, and
+#     rootless Quadlet units that wait for it start as they do on the runner.
 FROM docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -58,7 +58,8 @@ def _role_names(value):
             yield from _role_names(child)
 
 
-def _driver_jobs(root):
+def driver_jobs(root):
+    """Driver jobs from ci.yml: each job that runs tests/<folder>/run.sh for a real folder."""
     tests = root / "ansible/tests"
     folders = {path.name for path in tests.iterdir() if path.is_dir()}
     workflow = _yaml(root / ".github/workflows/ci.yml")
@@ -115,7 +116,7 @@ def _dependencies(root, own_folders, test_folders):
 def select_jobs(changed_paths, root):
     """Return whether all drivers run and the selected job IDs."""
     root = Path(root)
-    drivers, test_folders = _driver_jobs(root)
+    drivers, test_folders = driver_jobs(root)
     dependencies = {
         job: _dependencies(root, own, test_folders) for job, own in drivers.items()
     }
@@ -161,7 +162,7 @@ def main(event_name=None, ref=None, root=None):
     root = Path(root) if root is not None else Path(__file__).resolve().parents[1]
     output = Path(os.environ["GITHUB_OUTPUT"])
     try:
-        drivers, _ = _driver_jobs(root)
+        drivers, _ = driver_jobs(root)
         if event_name != "push" or ref == "refs/heads/main":
             full, jobs = True, set(drivers)
         else:
@@ -173,7 +174,7 @@ def main(event_name=None, ref=None, root=None):
     except Exception:
         full = True
         try:
-            drivers, _ = _driver_jobs(root)
+            drivers, _ = driver_jobs(root)
         except Exception:
             drivers = {}
         jobs = set(drivers)

@@ -51,6 +51,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs skopeo attr
       - name: Check shared inventory values and pinned restic tag
@@ -113,6 +117,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
       - name: Seed system manager XDG setting for restoration checks
@@ -202,6 +210,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
       - name: Seed system manager XDG setting for restoration checks
@@ -304,6 +316,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
       - name: Existing B2 test account survives driver refusal
@@ -334,6 +350,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_server/run.sh
@@ -353,6 +373,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman passt
       - name: Existing account is preserved
@@ -434,6 +458,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y xfsprogs
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_backup_disk/run.sh
@@ -461,6 +489,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: ansible-lint
 
@@ -477,6 +509,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
       # Every playbook, so a new one is checked without editing this file. The secrets in
       # group_vars come from bw lookups, which a syntax check never evaluates.

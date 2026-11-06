@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/backup_prune). Edits here are overwritten.
+[Unit]
+Description=Weekly backup checking for %i
+
+[Timer]
+OnCalendar={{ backup_prune_check_schedule }}
+Persistent=true
+Unit=backup-check@%i.service
+
+[Install]
+WantedBy=timers.target

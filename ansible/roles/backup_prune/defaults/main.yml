@@ -1,0 +1,9 @@
+---
+backup_prune_restic_image: "{{ restic_image }}"
+backup_prune_schedule: "Sun *-*-* 05:00:00"
+backup_prune_check_schedule: "Sun *-*-* 05:30:00"
+backup_prune_keep_daily: 7
+backup_prune_keep_weekly: 4
+backup_prune_keep_monthly: 12
+backup_prune_lock_wait: 10m
+backup_prune_timeout: 1800

@@ -17,6 +17,7 @@ jobs:
       full: ${{ steps.select.outputs.full }}
       b2_bucket: ${{ steps.select.outputs.b2_bucket }}
       b2_copy: ${{ steps.select.outputs.b2_copy }}
+      backup_prune: ${{ steps.select.outputs.backup_prune }}
       backup_server: ${{ steps.select.outputs.backup_server }}
       break_glass_sheet: ${{ steps.select.outputs.break_glass_sheet }}
       hub_backup_disk: ${{ steps.select.outputs.hub_backup_disk }}
@@ -36,6 +37,115 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_REF: ${{ github.ref }}
+
+  backup-prune:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.backup_prune == 'true') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils xfsprogs
+      - name: Seed system manager XDG setting for restoration checks
+        run: sudo systemctl set-environment "XDG_RUNTIME_DIR=/run/user/$(id -u)"
+      - name: Refuse existing backup prune test resources
+        shell: bash
+        run: |
+          sudo useradd -m bptest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_prune/run.sh > /tmp/backup-prune-existing-account.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted bptest'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: bptest already exists' /tmp/backup-prune-existing-account.log
+          id bptest
+          test -d /home/bptest
+          sudo userdel -r bptest
+          sudo touch /etc/systemd/system/backup-prune@.timer
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_prune/run.sh > /tmp/backup-prune-existing-unit.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted unit'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: backup prune units already exist' /tmp/backup-prune-existing-unit.log
+          test -e /etc/systemd/system/backup-prune@.timer
+          ! id bptest
+          sudo rm /etc/systemd/system/backup-prune@.timer
+          sudo cp -p /etc/hosts /tmp/backup-prune-hosts
+          printf '127.0.0.1 s3.us-east-1.seaweedfs.test\n' | sudo tee -a /etc/hosts
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_prune/run.sh > /tmp/backup-prune-existing-host.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted hosts entry'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: s3.us-east-1.seaweedfs.test is already in /etc/hosts' /tmp/backup-prune-existing-host.log
+          sudo cp -p /tmp/backup-prune-hosts /etc/hosts
+          sudo cmp /tmp/backup-prune-hosts /etc/hosts
+      - name: Backup prune role integration cases and cleanup
+        shell: bash
+        run: |
+          hosts_before=$(sudo sha256sum /etc/hosts | cut -d' ' -f1)
+          environment_before=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          manager_before=$(systemctl show-environment)
+          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_prune/run.sh | tee driver.log
+          grep -Fx 'backup-prune driver: all cases passed' driver.log
+          test "$(grep -c '^PASS ' driver.log)" -eq 10
+          for unit in backup-prune backup-check b2-copy; do
+            test -z "$(systemctl list-units --all --no-legend "$unit*")"
+          done
+          test ! -e /etc/systemd/system/backup-prune@.timer
+          test ! -e /etc/systemd/system/backup-check@.timer
+          test ! -e /etc/systemd/system/backup-prune@.service
+          test ! -e /etc/systemd/system/backup-check@.service
+          test ! -e /etc/systemd/system/b2-copy@.service
+          test ! -e /etc/systemd/system/b2-copy@.timer
+          ! id bptest
+          ! sudo losetup --list | grep -F backup.img
+          ! sudo podman container exists backup-prune-weed
+          test "$hosts_before" = "$(sudo sha256sum /etc/hosts | cut -d' ' -f1)"
+          test "$environment_before" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)"
+          test "$manager_before" = "$(systemctl show-environment)"
+          ! grep -E '^CLEANUP FAILED:' driver.log
+      - name: Failure after role cleans up all test resources
+        shell: bash
+        run: |
+          hosts_before=$(sudo sha256sum /etc/hosts | cut -d' ' -f1)
+          environment_before=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
+          manager_before=$(systemctl show-environment)
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AFTER_PRUNE_ROLE=1 bash tests/backup_prune/run.sh > /tmp/backup-prune-failure.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted deliberate failure'; exit 1
+          fi
+          grep -F 'ASSERTION FAILED: deliberate failure after backup prune' /tmp/backup-prune-failure.log || { tail -35 /tmp/backup-prune-failure.log; exit 1; }
+          grep -F 'Deliberate failure after backup prune' /tmp/backup-prune-failure.log || { tail -35 /tmp/backup-prune-failure.log; exit 1; }
+          python3 - /tmp/backup-prune-failure.log <<'PY'
+          import pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+          first = lines.index('PASS first play installs timers and leaves snapshots unchanged')
+          failure = next(i for i, line in enumerate(lines) if 'Deliberate failure after backup prune' in line)
+          assert first < failure
+          PY
+          ! grep -E '^CLEANUP FAILED:' /tmp/backup-prune-failure.log
+          test ! -e /etc/systemd/system/backup-prune@.timer
+          test ! -e /etc/systemd/system/backup-check@.timer
+          test ! -e /etc/systemd/system/backup-prune@.service
+          test ! -e /etc/systemd/system/backup-check@.service
+          test ! -e /etc/systemd/system/b2-copy@.service
+          test ! -e /etc/systemd/system/b2-copy@.timer
+          test -z "$(systemctl list-units --all --no-legend 'backup-*')"
+          test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
+          ! id bptest
+          ! sudo losetup --list | grep -F backup.img
+          ! sudo podman container exists backup-prune-weed
+          test "$hosts_before" = "$(sudo sha256sum /etc/hosts | cut -d' ' -f1)"
+          test "$environment_before" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)"
+          test "$manager_before" = "$(systemctl show-environment)"
 
   break-glass-sheet:
     needs: changes

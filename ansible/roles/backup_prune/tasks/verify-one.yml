@@ -1,0 +1,126 @@
+---
+- name: "Backup prune verify | Preview hub retention for {{ backup_prune_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --volume
+      - "{{ backup_prune_repository_root }}/{{ backup_prune_target.machine }}:/repo:rw"
+      - --volume
+      - "/home/{{ backup_prune_user }}/.config/b2-copy/{{ backup_prune_target.machine }}:/passwords:ro"
+      - "{{ backup_prune_restic_image }}"
+      - --repo
+      - /repo
+      - --password-file
+      - /passwords/hub-password
+      - forget
+      - --dry-run
+      - --no-lock
+      - --prune
+      - --keep-daily
+      - "{{ backup_prune_keep_daily | string }}"
+      - --keep-weekly
+      - "{{ backup_prune_keep_weekly | string }}"
+      - --keep-monthly
+      - "{{ backup_prune_keep_monthly | string }}"
+  become: true
+  become_user: "{{ backup_prune_user }}"
+  environment: &backup_prune_user_environment
+    XDG_RUNTIME_DIR: "/run/user/{{ backup_prune_uid.stdout }}"
+  register: backup_prune_hub_preview
+  changed_when: false
+  failed_when: false
+
+- name: "Backup prune verify | Require hub preview for {{ backup_prune_target.machine }}"
+  ansible.builtin.assert:
+    that: backup_prune_hub_preview.rc == 0
+    fail_msg: >-
+      Read-only prune preview failed for {{ backup_prune_target.machine }} on the hub:
+      {{ backup_prune_hub_preview.stderr.splitlines() | last | default('') }}
+    quiet: true
+
+- name: "Backup prune verify | Preview B2 retention for {{ backup_prune_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ backup_prune_user }}/.config/b2/{{ backup_prune_target.machine }}.env"
+      - --volume
+      - "/home/{{ backup_prune_user }}/.config/b2-copy/{{ backup_prune_target.machine }}:/passwords:ro"
+      - "{{ backup_prune_restic_image }}"
+      - --password-file
+      - /passwords/b2-password
+      - forget
+      - --dry-run
+      - --no-lock
+      - --prune
+      - --keep-daily
+      - "{{ backup_prune_keep_daily | string }}"
+      - --keep-weekly
+      - "{{ backup_prune_keep_weekly | string }}"
+      - --keep-monthly
+      - "{{ backup_prune_keep_monthly | string }}"
+  become: true
+  become_user: "{{ backup_prune_user }}"
+  environment: *backup_prune_user_environment
+  register: backup_prune_b2_preview
+  changed_when: false
+  failed_when: false
+
+- name: "Backup prune verify | Require B2 preview for {{ backup_prune_target.machine }}"
+  ansible.builtin.assert:
+    that: backup_prune_b2_preview.rc == 0
+    fail_msg: >-
+      Read-only prune preview failed for {{ backup_prune_target.machine }} on B2:
+      {{ backup_prune_b2_preview.stderr.splitlines() | last | default('') }}
+    quiet: true
+
+- name: "Backup prune | Enable and start timers for {{ backup_prune_target.machine }}"
+  ansible.builtin.systemd_service:
+    name: "backup-{{ item }}@{{ backup_prune_target.machine }}.timer"
+    enabled: true
+    state: started
+  loop:
+    - prune
+    - check
+
+- name: "Backup prune verify | Inspect timers for {{ backup_prune_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - show
+      - "backup-{{ item }}@{{ backup_prune_target.machine }}.timer"
+      - -p
+      - UnitFileState
+      - -p
+      - ActiveState
+      - -p
+      - TimersCalendar
+  loop:
+    - prune
+    - check
+  register: backup_prune_timers
+  changed_when: false
+
+- name: "Backup prune verify | Require scheduled timers for {{ backup_prune_target.machine }}"
+  ansible.builtin.assert:
+    that:
+      - "'UnitFileState=enabled' in item.stdout_lines"
+      - "'ActiveState=active' in item.stdout_lines"
+      - "'next_elapse=Sun ' in item.stdout"
+    fail_msg: "Backup {{ item.item }} timer for {{ backup_prune_target.machine }} is not enabled with a next run scheduled."
+    quiet: true
+  loop: "{{ backup_prune_timers.results }}"
+  loop_control:
+    label: "backup-{{ item.item }}@{{ backup_prune_target.machine }}.timer"

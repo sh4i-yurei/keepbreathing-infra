@@ -1,0 +1,18 @@
+---
+- name: "Backup prune | Check inputs for {{ backup_prune_target.machine }}"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "/home/{{ backup_prune_user }}/.config/b2-copy/{{ backup_prune_target.machine }}/hub-password"
+    - "/home/{{ backup_prune_user }}/.config/b2-copy/{{ backup_prune_target.machine }}/b2-password"
+    - "/home/{{ backup_prune_user }}/.config/b2/{{ backup_prune_target.machine }}.env"
+  register: backup_prune_input_files
+
+- name: "Backup prune | Require inputs for {{ backup_prune_target.machine }}"
+  ansible.builtin.assert:
+    that: item.stat.exists
+    fail_msg: "Prune for {{ backup_prune_target.machine }} needs {{ item.item }}; run playbooks/b2-copy.yml first."
+    quiet: true
+  loop: "{{ backup_prune_input_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"

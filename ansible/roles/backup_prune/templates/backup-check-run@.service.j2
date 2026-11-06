@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/backup_prune). Edits here are overwritten.
+[Unit]
+Description=Read all hub and B2 backup data for %i
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ backup_prune_timeout }}
+ExecStart=/usr/bin/podman run --rm --network host --security-opt label=disable \
+  --volume {{ backup_prune_repository_root }}/%i:/repo:rw \
+  --volume /home/{{ backup_prune_user }}/.config/b2-copy/%i:/passwords:ro \
+  {{ backup_prune_restic_image }} --repo /repo --password-file /passwords/hub-password \
+  check --read-data --retry-lock {{ backup_prune_lock_wait }}
+ExecStart=/usr/bin/podman run --rm --network host --security-opt label=disable \
+  --env-file /home/{{ backup_prune_user }}/.config/b2/%i.env \
+  --volume /home/{{ backup_prune_user }}/.config/b2-copy/%i:/passwords:ro \
+  {{ backup_prune_restic_image }} --password-file /passwords/b2-password \
+  check --read-data --retry-lock {{ backup_prune_lock_wait }}

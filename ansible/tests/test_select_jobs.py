@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 JOBS = {
     "b2-bucket",
     "b2-copy",
+    "backup-prune",
     "backup-server",
     "break-glass-sheet",
     "hub-backup-disk",
@@ -73,6 +74,7 @@ DIFF_111 = [
             False,
             {
                 "b2-copy",
+                "backup-prune",
                 "break-glass-sheet",
                 "openbao",
                 "ticket-band",
@@ -82,7 +84,7 @@ DIFF_111 = [
         (
             ["ansible/roles/backup_server/tasks/main.yml"],
             False,
-            {"b2-copy", "backup-server", "vaultwarden-backup"},
+            {"b2-copy", "backup-prune", "backup-server", "vaultwarden-backup"},
         ),
         (["ansible/roles/tailscale_service/tasks/main.yml"], False, {"backup-server"}),
         (["ansible/roles/hub/tasks/main.yml"], False, {"hub-backup-disk"}),
@@ -104,7 +106,7 @@ DIFF_111 = [
         (
             ["ansible/roles/backup_server/README.md"],
             False,
-            {"b2-copy", "backup-server", "vaultwarden-backup"},
+            {"b2-copy", "backup-prune", "backup-server", "vaultwarden-backup"},
         ),
         (["ansible/roles/README.md"], True, JOBS),
         (["docs/a/b/c.txt"], True, JOBS),
@@ -354,7 +356,7 @@ def test_main_selects_readers_of_both_rename_paths(tmp_path, monkeypatch, capsys
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     main("push", "refs/heads/feature", repo)
     assert output.read_text().splitlines() == ["full=false"] + [
-        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'break-glass-sheet', 'openbao', 'ticket-band', 'vaultwarden-backup'} else 'false'}"
+        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'backup-prune', 'break-glass-sheet', 'openbao', 'ticket-band', 'vaultwarden-backup'} else 'false'}"
         for job in sorted(JOBS)
     ]
     assert capsys.readouterr().out == output.read_text()

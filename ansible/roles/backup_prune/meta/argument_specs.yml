@@ -1,0 +1,15 @@
+---
+argument_specs:
+  main:
+    short_description: Install weekly pruning and checking for hub and B2 repositories
+    options:
+      b2_buckets:
+        type: list
+        elements: dict
+        required: true
+      backup_prune_user:
+        type: str
+        required: true
+      backup_prune_repository_root:
+        type: path
+        required: true

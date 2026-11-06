@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 COLLECTION_JOBS = (
     "b2-bucket",
     "b2-copy",
+    "backup-prune",
     "backup-server",
     "break-glass-sheet",
     "hub-backup-disk",
@@ -79,7 +80,7 @@ def test_architecture_describes_collection_cache_and_python_exception():
         if line.startswith("| `.github/workflows/ci.yml` |")
     )
     assert (
-        "ten jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
+        "eleven jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
         in row
     )
     assert (

@@ -1,0 +1,8 @@
+---
+argument_specs:
+  main:
+    short_description: Prepare the ticket band's rootless Podman account
+    options:
+      ticket_band_user:
+        type: str
+        required: true

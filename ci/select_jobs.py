@@ -1,4 +1,4 @@
-"""Select CI driver jobs from paths changed on a branch."""
+"""Select CI driver jobs from paths changed on a branch or pull request."""
 
 import os
 import subprocess
@@ -141,6 +141,8 @@ def select_jobs(changed_paths, root):
                 and parts[:2] == ("ansible", "tests")
                 and path.endswith(".py")
             )
+            or path == "ci/run_driver.py"
+            or parts[:2] == ("ci", "driver-image")
             or parts[:1] in {("workstation",), ("tailscale",)}
             or parts[:2] == ("ansible", "playbooks")
             or (path.endswith(".md") and parts[:2] != ("ansible", "roles"))
@@ -163,7 +165,7 @@ def main(event_name=None, ref=None, root=None):
     output = Path(os.environ["GITHUB_OUTPUT"])
     try:
         drivers, _ = driver_jobs(root)
-        if event_name != "push" or ref == "refs/heads/main":
+        if event_name not in {"push", "pull_request"} or ref == "refs/heads/main":
             full, jobs = True, set(drivers)
         else:
             base = _git(root, "merge-base", "HEAD", "origin/main")

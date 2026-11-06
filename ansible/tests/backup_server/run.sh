@@ -135,6 +135,13 @@ grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/server.log" || fail 'second 
 [[ $(snapshot_count) == 2 ]] || fail 'second verified run must create a second snapshot'
 printf 'PASS second role run changed=0 and two snapshots\n'
 
+# A stopped user manager with lingering still on: the role must start it itself (#139).
+systemctl stop "user@$uid.service"
+play server
+grep -Pzoq "TASK \\[backup_server : Backup server \\| Start the account's user manager\\][^\\n]*\\nchanged: \\[localhost\\]" "$work/server.log" || fail 'the role must report starting the stopped user manager'
+as_user systemctl --user is-active --quiet backup-server.service || fail 'backup-server.service must be active after the user manager restarts'
+printf 'PASS role starts a stopped user manager\n'
+
 cp "$quadlet" "$work/original.container"
 before=$(snapshot_count)
 sed -i 's/ --append-only//' "$quadlet"

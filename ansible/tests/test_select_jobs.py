@@ -81,6 +81,19 @@ DIFF_111 = [
         (["ansible/roles/hub/tasks/main.yml"], False, {"hub-backup-disk"}),
         (["ansible/roles/baseline/tasks/main.yml"], False, set()),
         (["ansible/tests/test_ci_python.py", "README.md"], False, set()),
+        (["ansible/tests/test_run_driver.py", "ci/run_driver.py"], False, set()),
+        (
+            [
+                "ARCHITECTURE.md",
+                "ansible/tests/test_run_driver.py",
+                "ci/driver-image/Containerfile",
+                "ci/run_driver.py",
+                "ci/select_jobs.py",
+            ],
+            True,
+            JOBS,
+        ),
+        (["ci/driver-image/Containerfile"], False, set()),
         (
             ["ansible/roles/backup_server/README.md"],
             False,
@@ -281,7 +294,9 @@ def git_repo(tmp_path):
     ("event", "ref", "remove_base", "expected_full"),
     [
         ("push", "refs/heads/main", False, True),
-        ("pull_request", "refs/heads/feature", False, True),
+        ("pull_request", "refs/pull/1/merge", False, False),
+        ("pull_request", "refs/pull/1/merge", True, True),
+        ("workflow_dispatch", "refs/heads/feature", False, True),
         ("push", "refs/heads/feature", False, False),
         ("push", "refs/heads/feature", True, True),
     ],
@@ -336,6 +351,56 @@ def test_main_selects_readers_of_both_rename_paths(tmp_path, monkeypatch, capsys
         for job in sorted(JOBS)
     ]
     assert capsys.readouterr().out == output.read_text()
+
+
+@pytest.mark.parametrize(
+    ("event", "ref", "changed_path", "selected"),
+    [
+        (
+            "pull_request",
+            "refs/pull/1/merge",
+            "ansible/roles/openbao/tasks/verify.yml",
+            {"openbao"},
+        ),
+        ("pull_request", "refs/pull/1/merge", "ci/run_driver.py", set()),
+        ("push", "refs/heads/feature", "ci/driver-image/Containerfile", set()),
+    ],
+)
+def test_main_selects_only_changed_driver_dependencies(
+    git_repo, tmp_path, monkeypatch, capsys, event, ref, changed_path, selected
+):
+    git(git_repo, "add", ".")
+    git(git_repo, "commit", "-qm", "baseline dependencies")
+    git(git_repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    changed_file = git_repo / changed_path
+    changed_file.parent.mkdir(parents=True, exist_ok=True)
+    changed_file.write_text("changed\n")
+    git(git_repo, "add", changed_path)
+    git(git_repo, "commit", "-qm", "selected change")
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+
+    main(event, ref, git_repo)
+
+    assert output.read_text().splitlines() == ["full=false"] + [
+        f"{job.replace('-', '_')}={str(job in selected).lower()}"
+        for job in sorted(JOBS)
+    ]
+    assert capsys.readouterr().out == output.read_text()
+
+
+def test_architecture_describes_branch_and_pull_request_selection():
+    architecture = ROOT / "ARCHITECTURE.md"
+    if ROOT.name == "mutants":
+        architecture = ROOT.parent / "ARCHITECTURE.md"
+    row = next(
+        line
+        for line in architecture.read_text().splitlines()
+        if line.startswith("| `ci/select_jobs.py` |")
+    )
+    assert "branch pushes and pull requests" in row
+    assert "Main runs all drivers" in row
+    assert "pull request runs select all drivers" not in row
 
 
 def test_main_fails_open_when_selector_raises(git_repo, tmp_path, monkeypatch):

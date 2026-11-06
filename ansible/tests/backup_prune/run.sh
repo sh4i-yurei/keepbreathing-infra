@@ -246,6 +246,7 @@ printf 'PASS first play installs timers and leaves snapshots unchanged\n'
 
 if [[ ${TEST_FAIL_AFTER_PRUNE_ROLE:-} == 1 ]]; then
   if TEST_POST_RUN_FAILURE_ARMED=1 prune_play "$work/post-run-failure.log"; then fail 'deliberate post-role failure must fail'; fi
+  tail -35 "$work/post-run-failure.log"
   grep -Fq 'Deliberate failure after backup prune' "$work/post-run-failure.log" ||
     fail 'deliberate failure must follow role'
   fail 'deliberate failure after backup prune'

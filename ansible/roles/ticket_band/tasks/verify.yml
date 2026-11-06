@@ -1,0 +1,42 @@
+---
+- name: Ticket band | Read account UID
+  ansible.builtin.command:
+    argv: [id, -u, "{{ ticket_band_user }}"]
+  register: ticket_band_verify_uid
+  changed_when: false
+
+- name: Ticket band | Read Podman storage information
+  ansible.builtin.command:
+    argv: [podman, info, --format, json]
+  become: true
+  become_user: "{{ ticket_band_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ticket_band_verify_uid.stdout }}"
+  register: ticket_band_podman_info
+  changed_when: false
+  failed_when: false
+
+- name: Ticket band | Require transient Podman storage
+  ansible.builtin.assert:
+    that:
+      - ticket_band_podman_info.rc == 0
+      - (ticket_band_podman_info.stdout | from_json).store.transientStore | bool
+      - (ticket_band_podman_info.stdout | from_json).store.graphDriverName == 'overlay'
+    fail_msg: The band's account must run Podman with the transient store
+    quiet: true
+
+- name: Ticket band | Read boot cleanup enablement
+  ansible.builtin.command:
+    argv: [systemctl, --user, is-enabled, podman-boot-cleanup.service]
+  become: true
+  become_user: "{{ ticket_band_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ticket_band_verify_uid.stdout }}"
+  register: ticket_band_cleanup_enabled
+  changed_when: false
+
+- name: Ticket band | Require enabled boot cleanup
+  ansible.builtin.assert:
+    that: ticket_band_cleanup_enabled.stdout == 'enabled'
+    fail_msg: The band's boot cleanup must be enabled
+    quiet: true

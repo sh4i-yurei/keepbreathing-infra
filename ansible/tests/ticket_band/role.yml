@@ -1,0 +1,9 @@
+---
+- name: Exercise ticket band on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ticket_band_user: tbtest
+  roles:
+    - ticket_band

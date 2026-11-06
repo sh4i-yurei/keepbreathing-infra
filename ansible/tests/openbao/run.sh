@@ -102,7 +102,7 @@ restart() {
   as_user systemctl --user restart openbao.service
 }
 health() {
-  curl -sS --max-time 3 -o "$work/health.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health
+  curl -sS --max-time 3 -H 'X-Forwarded-For: 192.0.2.10' -o "$work/health.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health
 }
 healthy() {
   local code
@@ -114,8 +114,8 @@ d=json.load(open(sys.argv[1])); assert d.get('initialized') is True and d.get('s
 PY
 }
 login() {
-  local who=$1 variable=$2 expected=$3 response body status
-  response=$(python3 - "$variable" <<'PY' | curl -sS --max-time 10 -w '\n%{http_code}' -H 'Content-Type: application/json' --data-binary @- "http://127.0.0.1:8200/v1/auth/userpass/login/$who"
+  local who=$1 variable=$2 expected=$3 forwarded=${4:-192.0.2.10} response body status
+  response=$(python3 - "$variable" <<'PY' | curl -sS --max-time 10 -w '\n%{http_code}' -H 'Content-Type: application/json' -H "X-Forwarded-For: $forwarded" --data-binary @- "http://127.0.0.1:8200/v1/auth/userpass/login/$who"
 import json, os, sys
 print(json.dumps({'password': os.environ[sys.argv[1]]}))
 PY
@@ -133,7 +133,7 @@ PY
 capabilities() {
   local who=$1 token response variable=login_response_$1
   token=$(LOGIN_RESPONSE="${!variable}" python3 -c 'import json,os; print(json.loads(os.environ["LOGIN_RESPONSE"])["auth"]["client_token"])')
-  response=$(printf 'silent\nshow-error\nrequest = "POST"\nurl = "http://127.0.0.1:8200/v1/sys/capabilities-self"\nheader = "X-Vault-Token: %s"\nheader = "Content-Type: application/json"\ndata = "{\\"paths\\":[\\"sys/policies/acl/example\\",\\"auth/approle/role/example\\",\\"sys/auth/example\\",\\"secret/data/example\\"]}"\n' "$token" | curl --config -)
+  response=$(printf 'silent\nshow-error\nrequest = "POST"\nurl = "http://127.0.0.1:8200/v1/sys/capabilities-self"\nheader = "X-Vault-Token: %s"\nheader = "X-Forwarded-For: 192.0.2.10"\nheader = "Content-Type: application/json"\ndata = "{\\"paths\\":[\\"sys/policies/acl/example\\",\\"auth/approle/role/example\\",\\"sys/auth/example\\",\\"secret/data/example\\"]}"\n' "$token" | curl --config -)
   CAP_RESPONSE="$response" python3 - "$who" <<'PY' || fail "$who capabilities must match"
 import json,os,sys
 d=json.loads(os.environ['CAP_RESPONSE']); who=sys.argv[1]
@@ -146,14 +146,42 @@ assert all(set(d.get(path,[]))==want for path,want in zip(paths,expected))
 PY
 }
 audit_check() {
-  python3 - "$audit" <<'PY' || fail 'audit log must record the ansible loopback login and hide secrets'
+  python3 - "$audit" <<'PY' || fail 'audit log must record the forwarded ansible login and hide secrets'
 import json,os,sys
 lines=open(sys.argv[1]).read().splitlines()
-assert any((lambda d: d.get('type')=='request' and d.get('request',{}).get('path')=='auth/userpass/login/ansible' and d.get('request',{}).get('remote_address')=='127.0.0.1')(json.loads(line)) for line in lines)
+assert any((lambda d: d.get('type')=='request' and d.get('request',{}).get('path')=='auth/userpass/login/ansible' and d.get('request',{}).get('remote_address')=='192.0.2.10')(json.loads(line)) for line in lines)
 for name in ('TEST_SEAL_KEY','TEST_ADMIN_PASSWORD','TEST_ANSIBLE_PASSWORD'):
     assert all(os.environ[name] not in line for line in lines)
 found=any(json.loads(line).get('request',{}).get('path')=='sys/auth/userpass' for line in lines)
 print('self-init requests audited: '+('yes' if found else 'no'))
+PY
+}
+audit_request_address() {
+  local response=$1 expected=$2
+  LOGIN_RESPONSE="$response" python3 - "$audit" "$expected" <<'PY' || fail 'audit request must record the rightmost forwarded address'
+import json,os,sys
+request_id=json.loads(os.environ['LOGIN_RESPONSE'])['request_id']
+matches=[d for line in open(sys.argv[1]) if (d:=json.loads(line)).get('type')=='request' and d.get('request',{}).get('id')==request_id]
+assert len(matches)==1
+assert matches[0].get('request',{}).get('path')=='auth/userpass/login/ansible'
+assert matches[0].get('request',{}).get('remote_address')==sys.argv[2]
+PY
+}
+health_error() {
+  local forwarded=$1 expected=$2 code=000 attempt
+  for ((attempt=0; attempt<60; attempt++)); do
+    if [[ $forwarded == absent ]]; then
+      code=$(curl -sS --max-time 3 -o "$work/health-error.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health 2>/dev/null) || code=000
+    else
+      code=$(curl -sS --max-time 3 -H "X-Forwarded-For: $forwarded" -o "$work/health-error.json" -w '%{http_code}' http://127.0.0.1:8200/v1/sys/health 2>/dev/null) || code=000
+    fi
+    [[ $code == 000 ]] || break
+    sleep 1
+  done
+  [[ $code == 400 ]] || fail 'health rejection must answer 400'
+  python3 - "$work/health-error.json" "$expected" <<'PY' || fail 'health rejection errors must match exactly'
+import json,sys
+assert json.load(open(sys.argv[1]))['errors']==[sys.argv[2]]
 PY
 }
 logs_clean() {
@@ -171,6 +199,10 @@ grep -Fq 'missing required arguments: openbao_user' "$work/missing.log" || fail 
 if id -u "$user" >/dev/null 2>&1; then fail 'missing user run created baotest'; fi
 [[ ! -e $home ]] || fail 'missing user run created a home'
 [[ -z $(find /home -path '*/openbao.container' -print -quit) ]] || fail 'missing user run created a Quadlet'
+if ansible-playbook -i localhost, tests/openbao/missing-self-address.yml >"$work/missing-self-address.log" 2>&1; then fail 'missing openbao_self_address must fail'; fi
+grep -Fq 'missing required arguments: openbao_self_address' "$work/missing-self-address.log" || fail 'missing self address must fail argument validation'
+if id -u "$user" >/dev/null 2>&1; then fail 'missing self address run created baotest'; fi
+[[ ! -e $home ]] || fail 'missing self address run created a home'
 
 play role --check --diff
 recap "$last_play_log" '[0-9]+'
@@ -204,6 +236,7 @@ done
 play role
 recap "$last_play_log" '[0-9]+'
 healthy || fail 'first role run must initialize and unseal OpenBao'
+health_error absent 'missing x-forwarded-for header and configured to reject when not present'
 [[ ! -e $first ]] || fail 'first-start file must be removed'
 [[ $(stat -c %s "$seal") == 44 && $(stat -c %a "$seal") == 600 && $(stat -c %U "$seal") == "$user" ]] || fail 'seal key metadata must match'
 [[ $(cat "$seal") == "$TEST_SEAL_KEY" ]] || fail 'seal key contents must match generated key'
@@ -213,6 +246,9 @@ pinned_image=$(as_user podman image inspect "$image" --format '{{.Id}}') || fail
 if [[ ${TEST_FAIL_AFTER_OPENBAO_ROLE:-} == 1 ]]; then fail 'deliberate failure after the openbao role'; fi
 login keepbreath0 TEST_ADMIN_PASSWORD default,keepbreath0
 login ansible TEST_ANSIBLE_PASSWORD ansible,default
+audit_request_address "$login_response_ansible" 192.0.2.10
+login ansible TEST_ANSIBLE_PASSWORD ansible,default '203.0.113.5, 192.0.2.10'
+audit_request_address "$login_response_ansible" 192.0.2.10
 capabilities keepbreath0
 capabilities ansible
 audit_check
@@ -264,9 +300,17 @@ play role
 cp "$quadlet" "$work/quadlet.original"
 sed -i 's/pasta:--host-lo-to-ns-lo/pasta/' "$quadlet"
 restart
+health_error 192.0.2.10 'client address not authorized for x-forwarded-for and configured to reject connection'
 verify_fails loopback 'OpenBao must see a loopback client as 127.0.0.1'
 cp "$work/quadlet.original" "$quadlet"
 restart
+play verify
+sed -i '/x_forwarded_for_/d' "$config/openbao.hcl"
+restart
+verify_fails forwarded-address 'OpenBao must record the forwarded client address'
+play role
+changed_task "$last_play_log" 'OpenBao | Write the configuration'
+recap "$last_play_log" '[0-9]+'
 play verify
 logs_clean
 printf 'openbao driver: all cases passed\n'

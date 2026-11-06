@@ -1,0 +1,7 @@
+---
+- name: Reject a missing ticket band account
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - ticket_band

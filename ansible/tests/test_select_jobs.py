@@ -20,6 +20,7 @@ JOBS = {
     "break-glass-sheet",
     "hub-backup-disk",
     "openbao",
+    "ticket-band",
     "vaultwarden-backup",
 }
 
@@ -76,6 +77,7 @@ DIFF_111 = [
                 "backup-prune",
                 "break-glass-sheet",
                 "openbao",
+                "ticket-band",
                 "vaultwarden-backup",
             },
         ),
@@ -354,7 +356,7 @@ def test_main_selects_readers_of_both_rename_paths(tmp_path, monkeypatch, capsys
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     main("push", "refs/heads/feature", repo)
     assert output.read_text().splitlines() == ["full=false"] + [
-        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'backup-prune', 'break-glass-sheet', 'openbao', 'vaultwarden-backup'} else 'false'}"
+        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'backup-prune', 'break-glass-sheet', 'openbao', 'ticket-band', 'vaultwarden-backup'} else 'false'}"
         for job in sorted(JOBS)
     ]
     assert capsys.readouterr().out == output.read_text()

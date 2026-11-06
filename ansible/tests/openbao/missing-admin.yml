@@ -6,6 +6,7 @@
   vars:
     openbao_user: baotest
     openbao_port: 8200
+    openbao_self_address: "192.0.2.10"
     openbao_seal_key_id: hub-1
     openbao_seal_key: "{{ lookup('env', 'TEST_SEAL_KEY') }}"
     openbao_ansible_password: "{{ lookup('env', 'TEST_ANSIBLE_PASSWORD') }}"

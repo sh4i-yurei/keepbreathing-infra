@@ -226,7 +226,7 @@ cat >"$work/status.json" <<'JSON'
 }
 JSON
 export TEST_STUB_DIR="$work/bin" TEST_STATUS="$work/status.json" TEST_CALLS="$work/calls"
-for pair in grafana:3000 backup:8082 ntfy:8090; do
+for pair in grafana:3000 backup:8082 ntfy:8090 openbao:8200; do
   export TEST_SERVICE_NAME=${pair%%:*} TEST_SERVICE_PORT=${pair##*:}
   : >"$TEST_CALLS"
   play tailscale

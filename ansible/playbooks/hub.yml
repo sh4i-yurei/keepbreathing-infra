@@ -50,6 +50,7 @@
     - hub
     - backup_server
     - openbao
+    - openbao_config
     - ticket_band
     - role: tailscale_service
       tailscale_service_name: backup

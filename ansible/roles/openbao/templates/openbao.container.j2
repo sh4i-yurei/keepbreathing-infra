@@ -4,6 +4,7 @@ Description=OpenBao secret store
 
 [Container]
 ContainerName=openbao
+LogDriver=journald
 Image={{ openbao_image }}
 UserNS=keep-id:uid=100,gid=1000
 Network=pasta:--host-lo-to-ns-lo
@@ -12,7 +13,6 @@ PublishPort=127.0.0.1:{{ openbao_port }}:8200
 Volume=/home/{{ openbao_user }}/.config/openbao/config:/openbao/config:ro,Z
 Volume=/home/{{ openbao_user }}/.config/openbao/seal/seal.key:/openbao/seal/seal.key:ro,Z
 Volume=/home/{{ openbao_user }}/openbao/raft:/openbao/raft:Z
-Volume=/home/{{ openbao_user }}/openbao/logs:/openbao/logs:Z
 
 [Service]
 Restart=always

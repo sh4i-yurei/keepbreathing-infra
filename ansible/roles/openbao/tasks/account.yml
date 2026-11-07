@@ -26,3 +26,12 @@
     cmd: "loginctl enable-linger {{ openbao_user | quote }}"
     creates: "/var/lib/systemd/linger/{{ openbao_user }}"
   when: not ansible_check_mode
+
+# loginctl enable-linger starts the user manager in the background and returns at once, and a
+# stopped manager stays stopped while lingering is on. Starting user@<uid>.service waits until
+# the manager reports ready, because the unit is Type=notify-reload (#139).
+- name: OpenBao | Start the account's user manager
+  ansible.builtin.systemd_service:
+    name: "user@{{ openbao_account.uid }}.service"
+    state: started
+  when: not ansible_check_mode

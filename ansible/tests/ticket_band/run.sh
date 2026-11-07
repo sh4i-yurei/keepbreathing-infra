@@ -134,6 +134,11 @@ sed -i '/^transient_store = true$/d' "$config"
 verify_fails
 play role
 play verify
+# A stopped user manager with lingering still on: the role must start it itself (#139).
+systemctl stop "user@$(id -u "$user").service"
+play role
+changed_task "$work/role.log" "Ticket band | Start the account's user manager"
+test "$(as_user systemctl --user is-enabled podman-boot-cleanup.service)" = enabled || fail 'boot cleanup must stay enabled after the user manager restarts'
 play role
 recap "$work/role.log" 0
 play role --check --diff

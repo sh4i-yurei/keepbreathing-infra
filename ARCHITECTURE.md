@@ -102,8 +102,14 @@ flowchart TB
 ## Rules every piece follows
 
 - **No secrets in the repository.** Not encrypted, not in an example, not in a reverted commit.
-  They are read at run time. Today `vault_secret` uses `bw`; machine secrets move to OpenBao on
-  the hub once it exists, and the vault lookups in the inventory are what it replaces.
+  They are read at run time. Today `vault_secret` uses `bw`. OpenBao on the hub now holds machine
+  secrets, and the vault lookups in the inventory move to it, with two exceptions that stay where
+  they are. The secrets that restore OpenBao never move into it: the seal key, the restic
+  repository passwords, the backup server logins and the B2 keys stay in Vaultwarden, private
+  files on the hub and the printed sheet, because a restore locked inside OpenBao could not run
+  (OpenBao on the hub decision 9). The paging path never takes a secret from OpenBao, so
+  Prometheus, Alertmanager, ntfy and Gatus keep their secrets where they are, because whatever has
+  to notice that OpenBao is broken cannot depend on it (OpenBao on the hub decision 19).
 - **Every role proves what it claims.** Its setup tasks are followed by verify tasks that read
   the live state, and a second run of the same playbook must report `changed=0`.
 - **Rehearse before a live run.** Run with `--check --diff` against one `--limit` host first.

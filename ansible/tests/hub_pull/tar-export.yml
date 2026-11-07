@@ -1,0 +1,7 @@
+---
+# The tar kind's own settings, read by pull.yml's export play with -e hub_export_test_vars=tar-export.yml.
+# It defines no container setting, which is mail's real shape (Backups decision 70).
+hub_export_kind: tar
+hub_export_tar_paths:
+  - etc/hub-export-test
+  - root/.hub-export-test

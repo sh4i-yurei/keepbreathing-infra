@@ -32,10 +32,11 @@
   connection: local
   gather_facts: false
   become: true
+  # The kind's own settings come from one file: redis-export.yml unless hub_export_test_vars names
+  # another, such as tar-export.yml.
+  vars_files:
+    - "{{ hub_export_test_vars | default('redis-export.yml') }}"
   vars:
-    hub_export_kind: redis
-    hub_export_container_user: kbtest
-    hub_export_container: keepbreath-redis
     hub_export_from: 127.0.0.1
     hub_export_hub_key: "{{ hub_pull_public_key | default('') }}"
   roles:

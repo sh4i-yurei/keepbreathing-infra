@@ -1,27 +1,47 @@
 ---
-- name: Hub export | Read the container account
-  ansible.builtin.getent:
-    database: passwd
-    key: "{{ hub_export_container_user }}"
-    fail_key: false
-  register: hub_export_container_account
-
-- name: Hub export | Check the container account's lingering
-  ansible.builtin.stat:
-    path: "/var/lib/systemd/linger/{{ hub_export_container_user }}"
-  register: hub_export_linger
-
-- name: Hub export | Require the container account to exist and linger
+# Each kind's own settings are checked before any change (Backups decision 70).
+- name: Hub export | Require the tar kind's paths
   ansible.builtin.assert:
     that:
-      - hub_export_container_account.ansible_facts.getent_passwd[hub_export_container_user] is not none
-      - hub_export_linger.stat.exists
-    fail_msg: "Hub export needs {{ hub_export_container_user }} to exist and linger; run the baseline and site roles first."
+      - hub_export_tar_paths | default([]) | length > 0
+    fail_msg: "Hub export of kind tar needs hub_export_tar_paths; set it in the droplet's host_vars."
     quiet: true
+  when: hub_export_kind == 'tar'
 
-- name: Hub export | Keep the container account's UID
-  ansible.builtin.set_fact:
-    hub_export_container_uid: "{{ hub_export_container_account.ansible_facts.getent_passwd[hub_export_container_user][1] }}"
+- name: Hub export | Check the redis kind's container account
+  when: hub_export_kind == 'redis'
+  block:
+    - name: Hub export | Require the redis kind's container settings
+      ansible.builtin.assert:
+        that:
+          - hub_export_container_user | default('') | length > 0
+          - hub_export_container | default('') | length > 0
+        fail_msg: "Hub export of kind redis needs hub_export_container_user and hub_export_container; set them in the droplet's host_vars."
+        quiet: true
+
+    - name: Hub export | Read the container account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ hub_export_container_user }}"
+        fail_key: false
+      register: hub_export_container_account
+
+    - name: Hub export | Check the container account's lingering
+      ansible.builtin.stat:
+        path: "/var/lib/systemd/linger/{{ hub_export_container_user }}"
+      register: hub_export_linger
+
+    - name: Hub export | Require the container account to exist and linger
+      ansible.builtin.assert:
+        that:
+          - hub_export_container_account.ansible_facts.getent_passwd[hub_export_container_user] is not none
+          - hub_export_linger.stat.exists
+        fail_msg: "Hub export needs {{ hub_export_container_user }} to exist and linger; run the baseline and site roles first."
+        quiet: true
+
+    - name: Hub export | Keep the container account's UID
+      ansible.builtin.set_fact:
+        hub_export_container_uid: "{{ hub_export_container_account.ansible_facts.getent_passwd[hub_export_container_user][1] }}"
 
 - name: Hub export | Make the export account, with no subordinate IDs and no password
   ansible.builtin.user:

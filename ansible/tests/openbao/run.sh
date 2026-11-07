@@ -145,11 +145,15 @@ assert all(set(d.get(path,[]))==want for path,want in zip(paths,expected))
 PY
 }
 audit_check() {
-  local attempt
+  local attempt account_journal
   for ((attempt=0; attempt<10; attempt++)); do
-    if as_user podman logs openbao 2>/dev/null | python3 -c '
-import json,sys
-entries=[json.loads(line) for line in sys.stdin if line.startswith("{")]
+    account_journal=$(journalctl --no-pager -o cat "_UID=$(id -u "$user")") || fail 'audit log must record the forwarded ansible login and hide secrets'
+    if printf '%s\n' "$account_journal" | python3 -c '
+import json,os,sys
+lines=sys.stdin.read().splitlines()
+for name in ("TEST_SEAL_KEY","TEST_ADMIN_PASSWORD","TEST_ANSIBLE_PASSWORD"):
+    assert all(os.environ[name] not in line for line in lines)
+entries=[json.loads(line) for line in lines if line.startswith("{")]
 assert any(d.get("type")=="request" and d.get("request",{}).get("path")=="auth/userpass/login/ansible" and d.get("request",{}).get("remote_address")=="192.0.2.10" for d in entries)
 found=any(d.get("request",{}).get("path")=="sys/auth/userpass" for d in entries)
 print("self-init requests audited: "+("yes" if found else "no"))
@@ -157,12 +161,6 @@ print("self-init requests audited: "+("yes" if found else "no"))
     sleep 1
   done
   [[ $attempt -lt 10 ]] || fail 'audit log must record the forwarded ansible login and hide secrets'
-  journalctl --no-pager -o cat "_UID=$(id -u "$user")" | python3 -c '
-import os,sys
-lines=sys.stdin.read().splitlines()
-for name in ("TEST_SEAL_KEY","TEST_ADMIN_PASSWORD","TEST_ANSIBLE_PASSWORD"):
-    assert all(os.environ[name] not in line for line in lines)
-' || fail 'audit log must record the forwarded ansible login and hide secrets'
 }
 audit_request_address() {
   local response=$1 expected=$2 attempt

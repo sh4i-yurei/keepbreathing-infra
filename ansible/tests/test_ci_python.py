@@ -17,6 +17,7 @@ COLLECTION_JOBS = (
     "break-glass-sheet",
     "hub-backup-disk",
     "openbao",
+    "openbao-config",
     "ticket-band",
     "vaultwarden-backup",
     "ansible-lint",
@@ -57,7 +58,7 @@ def test_collection_install_has_immediately_preceding_cache():
         }, name
 
 
-@pytest.mark.parametrize("job", ("openbao", "b2-bucket", "ticket-band"))
+@pytest.mark.parametrize("job", ("openbao", "b2-bucket", "ticket-band", "openbao-config"))
 def test_local_runner_run_steps_match_main(job, tmp_path):
     source = ROOT / ".github/workflows/ci.yml"
     data = workflow()
@@ -80,7 +81,7 @@ def test_architecture_describes_collection_cache_and_python_exception():
         if line.startswith("| `.github/workflows/ci.yml` |")
     )
     assert (
-        "eleven jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
+        "twelve jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
         in row
     )
     assert (

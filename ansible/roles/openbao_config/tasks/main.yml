@@ -1,0 +1,162 @@
+---
+# Manage what's inside OpenBao through its API, as the ansible login (OpenBao on the hub
+# decision 51). Every read runs in check mode too, because ansible.builtin.uri has no check-mode
+# support; every write is skipped there, and a debug task reports it instead.
+- name: OpenBao config | Read sys/health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
+    method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+    status_code: [200]
+  register: openbao_config_health
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: OpenBao config | Report both mounts while OpenBao isn't running
+  when: ansible_check_mode and openbao_config_health.status | default(-1) != 200
+  block:
+    - name: OpenBao config | Report the key/value store in check mode
+      ansible.builtin.debug:
+        msg: openbao_config would enable secret/ as a version 2 key/value store
+      changed_when: true
+
+    - name: OpenBao config | Report AppRole in check mode
+      ansible.builtin.debug:
+        msg: openbao_config would enable approle/
+      changed_when: true
+
+    - name: OpenBao config | End the role while OpenBao isn't running
+      ansible.builtin.meta: end_role
+
+- name: OpenBao config | Require a running OpenBao
+  ansible.builtin.assert:
+    that: openbao_config_health.status | default(-1) == 200
+    fail_msg: OpenBao must answer sys/health with 200 before openbao_config runs
+    quiet: true
+
+- name: OpenBao config | Sign in as ansible
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/userpass/login/ansible"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+    body_format: json
+    body:
+      password: "{{ openbao_ansible_password }}"
+    status_code: [200]
+    return_content: true
+  register: openbao_config_login
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config | Manage the mounts
+  block:
+    - name: OpenBao config | Read the secrets engines
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/mounts"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_config_mounts
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: OpenBao config | Require secret/ to be a version 2 key/value store
+      ansible.builtin.assert:
+        that: >-
+          'secret/' not in openbao_config_mounts.json.data
+          or (openbao_config_mounts.json.data['secret/'].type == 'kv'
+              and (openbao_config_mounts.json.data['secret/'].options | default({}, true)).version | default('') == '2')
+        fail_msg: secret/ must be a version 2 key/value store
+        quiet: true
+
+    - name: OpenBao config | Report the key/value store in check mode
+      ansible.builtin.debug:
+        msg: openbao_config would enable secret/ as a version 2 key/value store
+      changed_when: true
+      when: ansible_check_mode and 'secret/' not in openbao_config_mounts.json.data
+
+    - name: OpenBao config | Enable the key/value store
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/mounts/secret"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          type: kv
+          options:
+            version: "2"
+        status_code: [204]
+      register: openbao_config_enable_secret
+      changed_when: openbao_config_enable_secret.status == 204
+      no_log: true
+      when: not ansible_check_mode and 'secret/' not in openbao_config_mounts.json.data
+
+    - name: OpenBao config | Read the auth methods
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/auth"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_config_auth
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: OpenBao config | Require approle/ to be an AppRole auth method
+      ansible.builtin.assert:
+        that: >-
+          'approle/' not in openbao_config_auth.json.data
+          or openbao_config_auth.json.data['approle/'].type == 'approle'
+        fail_msg: approle/ must be an AppRole auth method
+        quiet: true
+
+    - name: OpenBao config | Report AppRole in check mode
+      ansible.builtin.debug:
+        msg: openbao_config would enable approle/
+      changed_when: true
+      when: ansible_check_mode and 'approle/' not in openbao_config_auth.json.data
+
+    - name: OpenBao config | Enable AppRole
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/auth/approle"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          type: approle
+        status_code: [204]
+      register: openbao_config_enable_approle
+      changed_when: openbao_config_enable_approle.status == 204
+      no_log: true
+      when: not ansible_check_mode and 'approle/' not in openbao_config_auth.json.data
+  always:
+    - name: OpenBao config | Revoke the ansible token
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/token/revoke-self"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        status_code: [204]
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+- name: Verify what's inside OpenBao
+  ansible.builtin.import_tasks: verify.yml
+  when: not ansible_check_mode

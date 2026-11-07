@@ -8,6 +8,9 @@ The consumer names the AppRole, whose role-id and secret-id files live under
 The value of secret/data/<consumer>/<name> goes to standard output with no newline. Every
 failure is one line on standard error and exit status 1, and no line ever holds a role ID,
 secret ID, token or secret value (OpenBao on the hub decision 58).
+
+Requests go only to the configured address: the helper ignores proxy variables in its
+environment and follows no redirect, so the token can't be carried anywhere else.
 """
 
 import argparse
@@ -81,6 +84,22 @@ def read_address(config):
     return address
 
 
+def opener():
+    """An opener for HTTP and HTTPS only, with no proxy handler and no redirect handler.
+
+    Any answer, a redirect included, comes back as it is, and any other scheme fails as an
+    unknown url type.
+    """
+    director = urllib.request.OpenerDirector()
+    for handler in (
+        urllib.request.HTTPHandler(),
+        urllib.request.HTTPSHandler(),
+        urllib.request.UnknownHandler(),
+    ):
+        director.add_handler(handler)
+    return director
+
+
 def call(address, method, path, token=None, body=None):
     """Send one request and return its status and body, whatever the status."""
     headers = {}
@@ -94,12 +113,8 @@ def call(address, method, path, token=None, body=None):
         f"{address}/v1/{path}", data=data, headers=headers, method=method
     )
     try:
-        try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
-                return response.status, response.read()
-        except urllib.error.HTTPError as error:
-            with error:
-                return error.code, error.read()
+        with opener().open(request, timeout=TIMEOUT) as response:
+            return response.status, response.read()
     except (OSError, http.client.HTTPException) as error:
         reason = error.reason if isinstance(error, urllib.error.URLError) else error
         raise Failure(
@@ -183,11 +198,17 @@ def secret(argv):
 
 def main(argv):
     try:
-        value = secret(argv)
+        sys.stdout.write(secret(argv))
     except Failure as failure:
         print(failure, file=sys.stderr)
         return 1
-    sys.stdout.write(value)
+    except Exception as error:  # noqa: BLE001 - every failure must end as one line
+        # Another error's text can hold what the helper was handling, such as the token in an
+        # invalid header, and a traceback runs to many lines, so only its class is named.
+        print(
+            f"openbao-read: unexpected error: {type(error).__name__}", file=sys.stderr
+        )
+        return 1
     return 0
 
 

@@ -87,6 +87,11 @@ READ_ANSWER = {
     "warnings": None,
     "auth": None,
 }
+# A token no OpenBao issues: the line break makes it an invalid header value, so Python raises
+# an error the helper does not turn into a Failure, after a token exists.
+BROKEN_TOKEN = TOKEN + "\r\nX-Injected: yes"
+# Variables that would send urllib's default opener through a proxy, or exempt hosts from one.
+PROXY_VARIABLES = ("http_proxy", "https_proxy", "no_proxy", "all_proxy")
 # Ways an endpoint can misbehave instead of answering.
 HANG_UP = "hang up"
 STALL = "stall"
@@ -147,12 +152,15 @@ class StandIn:
         if answer == GARBAGE:
             handler.wfile.write(b"HELLO\r\n\r\n")
             return
-        status, payload = answer
+        status, payload, *extra = answer
+        headers = extra[0] if extra else {}
         if isinstance(payload, bytes):
             data = payload
         else:
             data = b"" if payload is None else json.dumps(payload).encode()
         handler.send_response(status)
+        for name, value in headers.items():
+            handler.send_header(name, value)
         if data:
             handler.send_header("Content-Type", "application/json")
         handler.send_header("Content-Length", str(len(data)))
@@ -183,6 +191,14 @@ class StandIn:
 
 @pytest.fixture
 def stand_in():
+    server = StandIn()
+    yield server
+    server.close()
+
+
+@pytest.fixture
+def elsewhere():
+    """A second stand-in, as the target of a redirect or as a proxy."""
     server = StandIn()
     yield server
     server.close()
@@ -228,6 +244,46 @@ def run(*args):
     with redirect_stdout(output), redirect_stderr(errors):
         status = helper.main([str(arg) for arg in args])
     return status, output.getvalue(), errors.getvalue()
+
+
+def run_program(tmp_path, home, *args, env=None):
+    """Run the file under sys.executable, the way a caller starts /usr/local/bin/openbao-read.
+
+    A subprocess can't see monkeypatch, so sitecustomize replaces its account lookup. Proxy
+    variables from the runner's environment are dropped, so only those a test sets apply.
+    """
+    site = tmp_path / "site"
+    site.mkdir(exist_ok=True)
+    (site / "sitecustomize.py").write_text(
+        "import os, pwd, types\n"
+        f"_home = {str(home)!r}\n"
+        "_uid = os.getuid()\n"
+        "def _getpwuid(uid):\n"
+        "    if uid != _uid:\n"
+        "        raise KeyError(uid)\n"
+        "    return types.SimpleNamespace(pw_dir=_home)\n"
+        "pwd.getpwuid = _getpwuid\n"
+    )
+    paths = [str(site), *filter(None, [os.environ.get("PYTHONPATH")])]
+    inherited = {
+        name: value
+        for name, value in os.environ.items()
+        if name.lower() not in PROXY_VARIABLES
+    }
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), *[str(arg) for arg in args]],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+        env={
+            **inherited,
+            "HOME": REAL_HOME,
+            "PYTHONPATH": os.pathsep.join(paths),
+            **(env or {}),
+        },
+    )
+    return result.returncode, result.stdout, result.stderr
 
 
 def failed(result, message):
@@ -620,27 +676,126 @@ def test_help_names_the_program_and_its_arguments(capsys):
 
 
 def test_the_file_runs_as_a_program(tmp_path, home, config, stand_in):
-    # A subprocess can't see monkeypatch, so sitecustomize replaces its account lookup.
-    site = tmp_path / "site"
-    site.mkdir()
-    (site / "sitecustomize.py").write_text(
-        "import os, pwd, types\n"
-        f"_home = {str(home)!r}\n"
-        "_uid = os.getuid()\n"
-        "def _getpwuid(uid):\n"
-        "    if uid != _uid:\n"
-        "        raise KeyError(uid)\n"
-        "    return types.SimpleNamespace(pw_dir=_home)\n"
-        "pwd.getpwuid = _getpwuid\n"
+    assert run_program(tmp_path, home, "--config", config, "clientsvc/probe") == (
+        0,
+        VALUE,
+        "",
     )
-    paths = [str(site), *filter(None, [os.environ.get("PYTHONPATH")])]
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--config", str(config), "clientsvc/probe"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-        env={**os.environ, "HOME": REAL_HOME, "PYTHONPATH": os.pathsep.join(paths)},
-    )
-    assert (result.returncode, result.stdout, result.stderr) == (0, VALUE, "")
     assert stand_in.calls() == [LOGIN, READ, REVOKE]
+
+
+def test_an_unexpected_error_after_sign_in_names_only_its_class(home, config, stand_in):
+    answer = json.loads(json.dumps(LOGIN_ANSWER))
+    answer["auth"]["client_token"] = BROKEN_TOKEN
+    stand_in.overrides[LOGIN] = (200, answer)
+    failed(
+        run("--config", config, "clientsvc/probe"),
+        "openbao-read: unexpected error: ValueError\n",
+    )
+    # The token can't be sent as a header, so neither the read nor the revoke left the helper.
+    assert stand_in.calls() == [LOGIN]
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["openbao.tail4cf2f3.ts.net", "", "http://[::1"],
+    ids=["no scheme", "empty", "broken IPv6"],
+)
+def test_an_address_urllib_cannot_parse_fails_on_one_line(
+    address, home, tmp_path, stand_in
+):
+    path = tmp_path / "client.json"
+    path.write_text(json.dumps({"address": address}))
+    failed(
+        run("--config", path, "clientsvc/probe"),
+        "openbao-read: unexpected error: ValueError\n",
+    )
+
+
+def test_the_program_prints_no_traceback_and_no_token_for_an_unexpected_error(
+    tmp_path, home, config, stand_in
+):
+    answer = json.loads(json.dumps(LOGIN_ANSWER))
+    answer["auth"]["client_token"] = BROKEN_TOKEN
+    stand_in.overrides[LOGIN] = (200, answer)
+    failed(
+        run_program(tmp_path, home, "--config", config, "clientsvc/probe"),
+        "openbao-read: unexpected error: ValueError\n",
+    )
+
+
+def test_the_program_fails_on_one_line_when_its_output_cannot_hold_the_value(
+    tmp_path, home, config, stand_in
+):
+    stored = VALUE + "-\u00e9"
+    answer = json.loads(json.dumps(READ_ANSWER))
+    answer["data"]["data"]["value"] = stored
+    stand_in.overrides[READ] = (200, answer)
+    result = run_program(
+        tmp_path,
+        home,
+        "--config",
+        config,
+        "clientsvc/probe",
+        env={"PYTHONIOENCODING": "ascii"},
+    )
+    failed(result, "openbao-read: unexpected error: UnicodeEncodeError\n")
+    assert "\u00e9" not in result[2]
+    assert stand_in.calls() == [LOGIN, READ, REVOKE]
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_a_redirected_read_fails_and_never_reaches_the_redirect_target(
+    code, home, config, stand_in, elsewhere
+):
+    stand_in.overrides[READ] = (
+        code,
+        None,
+        {"Location": f"{elsewhere.address}{READ[1]}"},
+    )
+    failed(
+        run("--config", config, "clientsvc/probe"),
+        f"openbao-read: reading clientsvc/probe failed: {code}\n",
+    )
+    assert stand_in.calls() == [LOGIN, READ, REVOKE]
+    assert elsewhere.requests == []
+
+
+def test_a_redirected_revoke_is_reported_and_never_reaches_the_redirect_target(
+    home, config, stand_in, elsewhere
+):
+    stand_in.overrides[REVOKE] = (
+        302,
+        None,
+        {"Location": f"{elsewhere.address}{REVOKE[1]}"},
+    )
+    assert run("--config", config, "clientsvc/probe") == (
+        0,
+        VALUE,
+        "openbao-read: could not revoke the token: 302\n",
+    )
+    assert elsewhere.requests == []
+
+
+def test_proxy_variables_change_nothing(tmp_path, home, config, stand_in, elsewhere):
+    proxy = {
+        name: elsewhere.address
+        for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
+    }
+    assert run_program(
+        tmp_path, home, "--config", config, "clientsvc/probe", env=proxy
+    ) == (0, VALUE, "")
+    assert stand_in.calls() == [LOGIN, READ, REVOKE]
+    assert elsewhere.requests == []
+
+
+def test_an_address_that_is_not_http_fails_before_reaching_anything(
+    home, tmp_path, stand_in
+):
+    path = tmp_path / "client.json"
+    path.write_text(json.dumps({"address": "file:///nonexistent"}))
+    failed(
+        run("--config", path, "clientsvc/probe"),
+        "openbao-read: could not reach OpenBao at file:///nonexistent: "
+        "unknown url type: file\n",
+    )

@@ -1,10 +1,11 @@
-# Runs the repository checks on every branch push and pull request.
+# Runs the repository checks on every pull request and on every push to main.
 # The job names are what the ruleset on main requires by name, so renaming a job means
 # updating the ruleset in the same change.
 name: CI
 
 on:
-  push: {}
+  push:
+    branches: [main]
   pull_request: {}
 
 permissions:

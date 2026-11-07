@@ -235,11 +235,12 @@ def test_role_argument_validation_never_sends_master_credential_to_hub():
     assert "b2_master_key_id" not in spec
 
 
-def test_ci_runs_b2_driver_on_every_branch_push():
+def test_ci_runs_b2_driver_on_pull_requests_and_main():
     workflow = yaml.load(
         (ROOT.parent / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader
     )
-    assert workflow["on"]["push"] == {}
+    assert workflow["on"]["push"] == {"branches": ["main"]}
+    assert workflow["on"]["pull_request"] == {}
     assert "b2-bucket" in workflow["jobs"]
     commands = [
         step["run"] for step in workflow["jobs"]["b2-bucket"]["steps"] if "run" in step

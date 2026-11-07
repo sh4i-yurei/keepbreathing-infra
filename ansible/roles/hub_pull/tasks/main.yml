@@ -1,0 +1,153 @@
+---
+- name: Hub pull | Make or read the pull key
+  ansible.builtin.import_tasks: key.yml
+
+- name: Hub pull | Require a login and a restic password for every machine
+  ansible.builtin.assert:
+    that:
+      - (hub_pull_logins.get(item.0.machine, '') | length) > 0 if item.1 == 'login' else (b2_copy_passwords.get(item.0.machine, {}).get('hub', '') | length) > 0
+    fail_msg: "Hub pull for {{ item.0.machine }} needs {{ item.1 }} password."
+    quiet: true
+  loop: "{{ hub_pull_machines | product(['login', 'restic']) | list }}"
+  loop_control:
+    label: "{{ item.0.machine }} {{ item.1 }}"
+
+- name: Hub pull | Read account UID
+  ansible.builtin.command:
+    argv: [id, -u, "{{ hub_pull_user }}"]
+  register: hub_pull_uid
+  changed_when: false
+  check_mode: false
+
+- name: Hub pull | Check file paths for the rehearsal
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: >-
+    {{ ['/home/' ~ hub_pull_user ~ '/.config/systemd/user/hub-pull-run@.service',
+        '/etc/systemd/system/hub-pull@.service', '/etc/systemd/system/hub-pull@.timer',
+        '/home/' ~ hub_pull_user ~ '/.config/hub-pull/known_hosts']
+       + (hub_pull_machines | map(attribute='machine')
+          | map('regex_replace', '^(.*)$', '/home/' ~ hub_pull_user ~ '/.config/hub-pull/\1.conf') | list)
+       + (hub_pull_machines | map(attribute='machine')
+          | map('regex_replace', '^(.*)$', '/home/' ~ hub_pull_user ~ '/.config/hub-pull/\1.env') | list) }}
+  register: hub_pull_file_plan
+  when: ansible_check_mode
+
+- name: Hub pull | Report files the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would write {{ item.item }}"
+  loop: "{{ hub_pull_file_plan.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - ansible_check_mode
+    - not item.stat.exists
+
+- name: Hub pull | Check the account's folders
+  ansible.builtin.stat:
+    path: "/home/{{ hub_pull_user }}/{{ item }}"
+  loop:
+    - .config/systemd/user
+    - .config/hub-pull
+  register: hub_pull_folders
+
+- name: Hub pull | Note whether a rehearsal can write into the folders
+  ansible.builtin.set_fact:
+    hub_pull_can_write: "{{ not ansible_check_mode or (hub_pull_folders.results | map(attribute='stat.exists') | min) }}"
+
+- name: Hub pull | Create the account's folders
+  ansible.builtin.file:
+    path: "/home/{{ hub_pull_user }}/{{ item }}"
+    state: directory
+    owner: "{{ hub_pull_user }}"
+    group: "{{ hub_pull_user }}"
+    mode: "0700"
+  loop:
+    - .config/systemd/user
+    - .config/hub-pull
+
+- name: "Hub pull | Write each machine's address and stream"
+  ansible.builtin.copy:
+    content: |
+      HUB_PULL_ADDRESS={{ item.address }}
+      HUB_PULL_STREAM={{ item.stream }}
+    dest: "/home/{{ hub_pull_user }}/.config/hub-pull/{{ item.machine }}.conf"
+    owner: "{{ hub_pull_user }}"
+    group: "{{ hub_pull_user }}"
+    mode: "0600"
+  loop: "{{ hub_pull_machines }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  when: hub_pull_can_write | bool
+
+- name: "Hub pull | Write each machine's private repository settings"
+  ansible.builtin.copy:
+    content: |
+      RESTIC_REPOSITORY=rest:http://127.0.0.1:{{ backup_server_port }}/{{ item.machine }}/
+      RESTIC_REST_USERNAME={{ item.machine }}
+      RESTIC_REST_PASSWORD={{ hub_pull_logins[item.machine] }}
+      RESTIC_PASSWORD={{ b2_copy_passwords[item.machine].hub }}
+    dest: "/home/{{ hub_pull_user }}/.config/hub-pull/{{ item.machine }}.env"
+    owner: "{{ hub_pull_user }}"
+    group: "{{ hub_pull_user }}"
+    mode: "0600"
+  loop: "{{ hub_pull_machines }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  no_log: true
+  diff: false
+  when: hub_pull_can_write | bool
+
+- name: Hub pull | Pin each droplet's own host key
+  ansible.builtin.copy:
+    content: |
+      {% for machine in hub_pull_machines %}
+      {{ machine.address }} {{ hostvars[machine.host].hub_export_host_key }}
+      {% endfor %}
+    dest: "/home/{{ hub_pull_user }}/.config/hub-pull/known_hosts"
+    owner: "{{ hub_pull_user }}"
+    group: "{{ hub_pull_user }}"
+    mode: "0600"
+  when: hub_pull_can_write | bool
+
+- name: "Hub pull | Write user unit to {{ '/home/' ~ hub_pull_user ~ '/.config/systemd/user/hub-pull-run@.service' }}"
+  ansible.builtin.template:
+    src: hub-pull-run@.service.j2
+    dest: "/home/{{ hub_pull_user }}/.config/systemd/user/hub-pull-run@.service"
+    owner: "{{ hub_pull_user }}"
+    group: "{{ hub_pull_user }}"
+    mode: "0644"
+  notify: Reload hub pull user manager
+  when: hub_pull_can_write | bool
+
+- name: "Hub pull | Write system unit to {{ '/etc/systemd/system/' ~ item }}"
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - hub-pull@.service
+    - hub-pull@.timer
+  notify: Reload hub pull system manager
+
+- name: Hub pull | Pull the pinned restic image
+  containers.podman.podman_image:
+    name: "{{ hub_pull_restic_image }}"
+  become: true
+  become_user: "{{ hub_pull_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_pull_uid.stdout }}"
+  when: not ansible_check_mode
+
+- name: Hub pull | Apply manager reloads
+  ansible.builtin.meta: flush_handlers
+
+- name: Hub pull | Prepare and verify every machine
+  ansible.builtin.include_tasks: pull-one.yml
+  loop: "{{ hub_pull_machines }}"
+  loop_control:
+    loop_var: hub_pull_target
+    label: "{{ hub_pull_target.machine }}"
+  when: not ansible_check_mode

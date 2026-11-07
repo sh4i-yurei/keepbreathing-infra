@@ -1,0 +1,102 @@
+---
+- name: "Hub pull | Probe the hub repository for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ hub_pull_user }}/.config/hub-pull/{{ hub_pull_target.machine }}.env"
+      - "{{ hub_pull_restic_image }}"
+      - snapshots
+      - --json
+  become: true
+  become_user: "{{ hub_pull_user }}"
+  environment: &hub_pull_user_environment
+    XDG_RUNTIME_DIR: "/run/user/{{ hub_pull_uid.stdout }}"
+  register: hub_pull_probe
+  changed_when: false
+  failed_when: false
+
+- name: "Hub pull | Require an available or absent repository for {{ hub_pull_target.machine }}"
+  ansible.builtin.assert:
+    that: hub_pull_probe.rc in [0, 10]
+    fail_msg: "{{ hub_pull_probe.stderr }}"
+    quiet: true
+
+- name: "Hub pull | Initialize the repository once for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ hub_pull_user }}/.config/hub-pull/{{ hub_pull_target.machine }}.env"
+      - "{{ hub_pull_restic_image }}"
+      - init
+  become: true
+  become_user: "{{ hub_pull_user }}"
+  environment: *hub_pull_user_environment
+  changed_when: true
+  when: hub_pull_probe.rc == 10
+
+- name: "Hub pull | Enable and start the timer for {{ hub_pull_target.machine }}"
+  ansible.builtin.systemd_service:
+    name: "hub-pull@{{ hub_pull_target.machine }}.timer"
+    enabled: true
+    state: started
+
+- name: "Hub pull | Start the same system service as the timer for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv: [systemctl, start, "hub-pull@{{ hub_pull_target.machine }}.service"]
+  changed_when: false
+
+- name: "Hub pull | Read the snapshots for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv:
+      - podman
+      - run
+      - --rm
+      - --network
+      - host
+      - --security-opt
+      - label=disable
+      - --env-file
+      - "/home/{{ hub_pull_user }}/.config/hub-pull/{{ hub_pull_target.machine }}.env"
+      - "{{ hub_pull_restic_image }}"
+      - snapshots
+      - --json
+      - --latest
+      - "1"
+      - --host
+      - "{{ hub_pull_target.machine }}"
+  become: true
+  become_user: "{{ hub_pull_user }}"
+  environment: *hub_pull_user_environment
+  register: hub_pull_latest
+  changed_when: false
+
+- name: "Hub pull | Require a snapshot of the stream for {{ hub_pull_target.machine }}"
+  ansible.builtin.assert:
+    that:
+      - (hub_pull_latest.stdout | from_json | length) == 1
+      - ("/" ~ hub_pull_target.stream) in (hub_pull_latest.stdout | from_json | first).paths
+    fail_msg: "Hub pull for {{ hub_pull_target.machine }} left no snapshot of /{{ hub_pull_target.stream }}."
+    quiet: true
+
+- name: "Hub pull | Require the timer scheduled for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv: [systemctl, show, "hub-pull@{{ hub_pull_target.machine }}.timer", -p, UnitFileState, -p, NextElapseUSecRealtime, --value]
+  register: hub_pull_timer
+  changed_when: false
+  failed_when: >-
+    hub_pull_timer.stdout_lines | length < 2 or hub_pull_timer.stdout_lines[0] != 'enabled'
+    or hub_pull_timer.stdout_lines[1] in ['', 'n/a']

@@ -164,7 +164,7 @@ def test_driver_jobs_that_need_host_root_are_refused_before_podman_starts(
     assert capsys.readouterr().err == (
         f"{job} needs root in the host's own namespace (loop devices or security attributes), "
         "which a rootless container does not have. It runs in CI only. "
-        "Local jobs: b2-bucket, openbao, openbao-config, ticket-band\n"
+        "Local jobs: b2-bucket, hub-pull, openbao, openbao-config, ticket-band\n"
     )
     assert calls() == []
 
@@ -175,7 +175,7 @@ def test_a_name_that_is_not_a_driver_job_is_refused(fake, capsys):
     assert main(["syntax-check"], podman=podman) == 2
 
     assert capsys.readouterr().err == (
-        "syntax-check is not a driver job. Local jobs: b2-bucket, openbao, openbao-config, ticket-band\n"
+        "syntax-check is not a driver job. Local jobs: b2-bucket, hub-pull, openbao, openbao-config, ticket-band\n"
     )
     assert calls() == []
 
@@ -191,7 +191,7 @@ def test_no_job_name_is_a_usage_error(capsys):
 def test_list_prints_the_local_jobs(capsys):
     assert main(["--list"]) == 0
 
-    assert capsys.readouterr().out == "b2-bucket\nopenbao\nopenbao-config\nticket-band\n"
+    assert capsys.readouterr().out == "b2-bucket\nhub-pull\nopenbao\nopenbao-config\nticket-band\n"
 
 
 def test_openbao_runs_every_step_as_runner_and_removes_its_container(fake, capfd):
@@ -418,7 +418,7 @@ def test_the_module_command_lists_the_local_jobs():
     )
 
     assert result.returncode == 0
-    assert result.stdout == "b2-bucket\nopenbao\nopenbao-config\nticket-band\n"
+    assert result.stdout == "b2-bucket\nhub-pull\nopenbao\nopenbao-config\nticket-band\n"
 
 
 @pytest.mark.parametrize("state", ["running", "degraded"])

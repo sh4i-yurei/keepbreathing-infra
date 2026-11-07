@@ -57,5 +57,9 @@ amtool config routes test --config.file=alertmanager.yml \
   --verify.receivers=nowhere severity=info
 amtool config routes test --config.file=alertmanager.yml \
   --verify.receivers=nowhere alertname=Anything
+amtool config routes test --config.file=alertmanager.yml \
+  --verify.receivers=ntfy-tickets alertname=OpenBaoUnhealthy severity=warning band_health=true
+amtool config routes test --config.file=alertmanager.yml \
+  --verify.receivers=ntfy-tickets severity=page band_health=true
 
 echo 'hub rules: all checks passed'

@@ -31,3 +31,35 @@ tests:
       - eval_time: 21m
         alertname: JournalPullGapRecovered
         exp_alerts: []
+
+  # OpenBao's rule fires only for its own Gatus key: the hub_ntfy series fails throughout and
+  # must raise nothing (OpenBao on the hub decisions 42 and 59).
+  - interval: 30s
+    input_series:
+      - series: 'gatus_results_endpoint_success{group="hub",key="hub_openbao",name="openbao",type="HTTP"}'
+        values: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1'
+      - series: 'gatus_results_endpoint_success{group="hub",key="hub_ntfy",name="ntfy",type="HTTP"}'
+        values: '0+0x16'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: OpenBaoUnhealthy
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: OpenBaoUnhealthy
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              band_health: "true"
+              group: hub
+              key: hub_openbao
+              name: openbao
+              type: HTTP
+            exp_annotations:
+              gatus_key: hub_openbao
+              summary: OpenBao has failed its health check for 5 minutes.
+              description: >-
+                OpenBao on the hub is sealed, down or unreachable through svc:openbao. Services
+                can't fetch their secrets from it until it is back.
+      - eval_time: 8m
+        alertname: OpenBaoUnhealthy
+        exp_alerts: []

@@ -51,3 +51,20 @@
           pinned {{ hub_alertmanager_image }}. Running:
           {{ (hub_alertmanager_container.containers | first | default({})).ImageName | default('nothing') }}.
         quiet: true
+
+    - name: alertmanager-verify | Read Alertmanager's start time limit
+      ansible.builtin.command:
+        argv: [systemctl, --user, show, alertmanager.service, -p, TimeoutStartUSec]
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_alertmanager_start_timeout
+      changed_when: false
+
+    - name: alertmanager-verify | Alertmanager's first start is allowed 900 seconds
+      ansible.builtin.assert:
+        that:
+          - hub_alertmanager_start_timeout.stdout == 'TimeoutStartUSec=15min'
+        fail_msg: alertmanager.service must allow its first start 900 seconds
+        quiet: true

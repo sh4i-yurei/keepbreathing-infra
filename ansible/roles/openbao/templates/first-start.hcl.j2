@@ -31,6 +31,7 @@ path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete"
 path "auth/approle/role" { capabilities = ["list"] }
 path "auth/approle/role/*" { capabilities = ["create", "read", "update", "delete", "list"] }
 path "secret/data/restore-check/*" { capabilities = ["create", "update"] }
+path "secret/metadata/restore-check/*" { capabilities = ["read"] }
 EOP
     }
   }

@@ -12,3 +12,4 @@
   ansible.builtin.debug:
     msg: "openbao_config would issue a secret ID for {{ openbao_consumer.name }} and write its files"
   changed_when: true
+  when: openbao_consumer.files | default(true)

@@ -1,0 +1,51 @@
+---
+- name: OpenBao config | Read restore-check test secret metadata
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/secret/metadata/restore-check/test"
+    method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_restore_metadata
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config | Decide whether the test secret needs a new version
+  ansible.builtin.set_fact:
+    openbao_config_restore_needs_write: >-
+      {{ openbao_config_restore_metadata.status == 404 or
+         (openbao_config_restore_metadata.status == 200 and
+          ((openbao_config_restore_metadata.json.data.versions[
+             openbao_config_restore_metadata.json.data.current_version | string
+           ].deletion_time | default('') | length > 0) or
+           (openbao_config_restore_metadata.json.data.versions[
+             openbao_config_restore_metadata.json.data.current_version | string
+           ].destroyed | default(false)))) }}
+
+- name: OpenBao config | Report the test secret write in check mode
+  ansible.builtin.debug:
+    msg: "openbao_config would write restore-check's test secret"
+  changed_when: true
+  when: ansible_check_mode and openbao_config_restore_needs_write
+
+- name: OpenBao config | Write the restore-check test secret
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/secret/data/restore-check/test"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    body_format: json
+    body:
+      options:
+        cas: "{{ 0 if openbao_config_restore_metadata.status == 404 else openbao_config_restore_metadata.json.data.current_version }}"
+      data:
+        value: "{{ openbao_restore_check_value }}"
+    status_code: [200]
+  register: openbao_config_restore_write
+  changed_when: openbao_config_restore_write.status == 200
+  when: not ansible_check_mode and openbao_config_restore_needs_write
+  no_log: true

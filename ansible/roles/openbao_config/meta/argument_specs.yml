@@ -23,7 +23,21 @@ argument_specs:
             required: true
           account:
             type: str
-            required: true
+          files:
+            type: bool
+            default: true
+          extra_paths:
+            type: list
+            elements: dict
+            default: []
+            options:
+              path:
+                type: str
+                required: true
+              capabilities:
+                type: list
+                elements: str
+                required: true
       openbao_approle_bound_cidrs:
         type: list
         elements: str

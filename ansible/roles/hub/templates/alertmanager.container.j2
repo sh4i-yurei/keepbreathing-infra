@@ -13,6 +13,9 @@ Exec=--config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanag
 
 [Service]
 Restart=always
+# The first start translates the image's file owners for keep-id, which took longer than systemd's
+# default 90 seconds on the hub. Later starts reuse that copy.
+TimeoutStartSec=900
 
 [Install]
 WantedBy=default.target

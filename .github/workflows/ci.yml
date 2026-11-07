@@ -829,3 +829,19 @@ jobs:
           for playbook in playbooks/*.yml; do
             ansible-playbook --syntax-check "$playbook"
           done
+
+  hub-rules:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - run: bash tests/hub_rules/check.sh
+      - run: bash tests/hub_rules/self-test.sh

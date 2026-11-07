@@ -23,7 +23,17 @@
 - name: OpenBao config | Read consumer accounts
   ansible.builtin.getent:
     database: passwd
-  when: openbao_approles | length > 0
+  when: >-
+    openbao_approles | selectattr('files', 'undefined') | list | length > 0 or
+    openbao_approles | selectattr('files', 'defined') | selectattr('files') | list | length > 0
+
+- name: OpenBao config | Require an account for every consumer with files
+  ansible.builtin.assert:
+    that: item.account | default('') | length > 0
+    fail_msg: "openbao_approles entry {{ item.name }} must name an account, because it has files"
+    quiet: true
+  loop: "{{ openbao_approles }}"
+  when: item.files | default(true)
 
 - name: OpenBao config | Require consumer accounts
   ansible.builtin.assert:
@@ -31,7 +41,7 @@
     fail_msg: "openbao_approles account {{ item.account }} must exist before openbao_config runs"
     quiet: true
   loop: "{{ openbao_approles }}"
-  when: not ansible_check_mode
+  when: not ansible_check_mode and item.files | default(true)
 
 - name: OpenBao config | Read sys/health
   ansible.builtin.uri:
@@ -63,6 +73,12 @@
       loop: "{{ openbao_approles }}"
       loop_control:
         loop_var: openbao_consumer
+
+    - name: OpenBao config | Report the test secret while OpenBao isn't running
+      ansible.builtin.debug:
+        msg: "openbao_config would write restore-check's test secret"
+      changed_when: true
+      when: "'restore-check' in (openbao_approles | map(attribute='name') | list)"
 
     - name: OpenBao config | End the role while OpenBao isn't running
       ansible.builtin.meta: end_role
@@ -187,6 +203,10 @@
       loop: "{{ openbao_approles }}"
       loop_control:
         loop_var: openbao_consumer
+
+    - name: OpenBao config | Keep the restore-check test secret
+      ansible.builtin.include_tasks: restore-check.yml
+      when: "'restore-check' in (openbao_approles | map(attribute='name') | list)"
   always:
     - name: OpenBao config | Revoke the ansible token
       ansible.builtin.uri:

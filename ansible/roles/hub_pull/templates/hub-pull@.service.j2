@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/hub_pull). Edits here are overwritten.
+[Unit]
+Description=Start and wait for the hub's pull of %i
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ hub_pull_timeout | int + 300 }}
+ExecStart=/usr/bin/systemctl --user --machine={{ hub_pull_user }}@ start --wait hub-pull-run@%i.service

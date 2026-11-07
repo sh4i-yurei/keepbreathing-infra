@@ -1,0 +1,18 @@
+# Managed by Ansible (roles/hub_pull). Edits here are overwritten.
+# One connection a night, never restarted or retried, so a broken key can't trip a droplet's
+# fail2ban against control (Backups decision 65).
+[Unit]
+Description=Pull %i's export into its hub repository
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ hub_pull_timeout }}
+EnvironmentFile=/home/{{ hub_pull_user }}/.config/hub-pull/%i.conf
+ExecStart=/usr/bin/podman run --rm --network host --security-opt label=disable \
+  --env-file /home/{{ hub_pull_user }}/.config/hub-pull/%i.env \
+  --volume /home/{{ hub_pull_user }}/.ssh/hub-pull:/ssh/key:ro \
+  --volume /home/{{ hub_pull_user }}/.config/hub-pull/known_hosts:/ssh/known_hosts:ro \
+  {{ hub_pull_restic_image }} backup --retry-lock {{ hub_pull_lock_wait }} --host %i \
+  --stdin-filename ${HUB_PULL_STREAM} --stdin-from-command -- \
+  ssh -T -i /ssh/key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=/ssh/known_hosts hubexport@${HUB_PULL_ADDRESS}

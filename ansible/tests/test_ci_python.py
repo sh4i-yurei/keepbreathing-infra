@@ -1,4 +1,4 @@
-"""Repository CI must exercise Python tests on every branch push."""
+"""Repository CI must exercise Python tests on every pull request and every push to main."""
 
 from pathlib import Path
 
@@ -16,6 +16,7 @@ COLLECTION_JOBS = (
     "backup-server",
     "break-glass-sheet",
     "hub-backup-disk",
+    "hub-pull",
     "openbao",
     "openbao-config",
     "ticket-band",
@@ -58,7 +59,9 @@ def test_collection_install_has_immediately_preceding_cache():
         }, name
 
 
-@pytest.mark.parametrize("job", ("openbao", "b2-bucket", "ticket-band", "openbao-config"))
+@pytest.mark.parametrize(
+    "job", ("openbao", "b2-bucket", "ticket-band", "openbao-config")
+)
 def test_local_runner_run_steps_match_main(job, tmp_path):
     source = ROOT / ".github/workflows/ci.yml"
     data = workflow()
@@ -81,7 +84,7 @@ def test_architecture_describes_collection_cache_and_python_exception():
         if line.startswith("| `.github/workflows/ci.yml` |")
     )
     assert (
-        "twelve jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
+        "thirteen jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
         in row
     )
     assert (
@@ -90,9 +93,26 @@ def test_architecture_describes_collection_cache_and_python_exception():
     )
 
 
-def test_python_job_and_all_branch_push_trigger() -> None:
+def test_docs_describe_pull_request_and_main_trigger() -> None:
+    agents = (ROOT / "AGENTS.md").read_text()
+    row = next(
+        line
+        for line in (ROOT / "ARCHITECTURE.md").read_text().splitlines()
+        if line.startswith("| `.github/workflows/ci.yml` |")
+    )
+    assert "on every pull request and on every push to `main`" in agents
+    assert "on every pull request and every push to `main`." in row
+    assert (
+        "The `changes` job selects drivers for pull requests; main runs all drivers."
+        in row
+    )
+    assert "branch push" not in agents
+    assert "branch push" not in row
+
+
+def test_python_job_and_pull_request_trigger() -> None:
     data = workflow()
-    assert data["on"] == {"push": {}, "pull_request": {}}
+    assert data["on"] == {"push": {"branches": ["main"]}, "pull_request": {}}
     assert data["jobs"]["python"]["uses"] == (
         "sh4i-yurei/ci-workflows/.github/workflows/python.yml"
         "@6fa70095587800bf834d27d1cf2313a7b8dbb168"

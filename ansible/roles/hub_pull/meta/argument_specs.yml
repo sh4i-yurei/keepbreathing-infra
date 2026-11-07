@@ -1,0 +1,50 @@
+---
+argument_specs:
+  key:
+    short_description: Make or read the hub's pull key, before any droplet changes
+    options:
+      hub_pull_user:
+        type: str
+        required: true
+  main:
+    short_description: Pull each droplet's export into its hub repository nightly
+    options:
+      hub_pull_user:
+        type: str
+        required: true
+      hub_pull_machines:
+        type: list
+        elements: dict
+        required: true
+        options:
+          machine:
+            type: str
+            required: true
+          host:
+            type: str
+            required: true
+          address:
+            type: str
+            required: true
+          stream:
+            type: str
+            required: true
+      hub_pull_logins:
+        type: dict
+        required: true
+        no_log: true
+      b2_copy_passwords:
+        type: dict
+        required: true
+        no_log: true
+      backup_server_port:
+        type: int
+        required: true
+      hub_pull_restic_image:
+        type: str
+      hub_pull_schedule:
+        type: str
+      hub_pull_lock_wait:
+        type: str
+      hub_pull_timeout:
+        type: int

@@ -1,0 +1,5 @@
+---
+# The redis kind's own settings for the stand-in droplet, read by pull.yml's export play by default.
+hub_export_kind: redis
+hub_export_container_user: kbtest
+hub_export_container: keepbreath-redis

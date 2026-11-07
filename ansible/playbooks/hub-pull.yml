@@ -1,7 +1,7 @@
 ---
 # The hub pulls each droplet's export nightly through a forced-command account (Backups decisions 64 to 66).
 - name: Fetch the become password
-  hosts: hub:webservers
+  hosts: hub:hub_exports
   gather_facts: false
   become: false
   roles: [become_password]
@@ -15,16 +15,16 @@
         name: hub_pull
         tasks_from: key
 
-- name: Give each web droplet its forced-command export account
-  hosts: webservers
+- name: Give each droplet the hub pulls its forced-command export account
+  hosts: hub_exports
   gather_facts: false
   roles:
     - role: hub_export
       vars:
         hub_export_hub_key: "{{ hostvars['hub'].hub_pull_public_key }}"
 
-- name: Read each web droplet's own host key for the hub to pin
-  hosts: webservers
+- name: Read each droplet's own host key for the hub to pin
+  hosts: hub_exports
   gather_facts: false
   become: true
   tasks:

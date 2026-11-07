@@ -1,0 +1,13 @@
+---
+# The hub side of the tar cases, passed as -e @tests/hub_pull/testmail.yml: one machine, testmail,
+# with its own login and repository on the local backup server.
+hub_pull_machines:
+  - machine: testmail
+    host: localhost
+    address: 127.0.0.1
+    stream: testmail-config.tar
+hub_pull_logins:
+  testmail: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
+b2_copy_passwords:
+  testmail:
+    hub: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"

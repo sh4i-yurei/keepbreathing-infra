@@ -27,3 +27,15 @@ journal_gateway_allowed_sources: "{{ node_exporter_allowed_sources }}"
 podman_exporter_enabled: false
 podman_exporter_container_user: "{{ baseline_container_user }}"
 podman_exporter_expected_containers: []
+
+# The account the hub pulls mail's configuration through, limited to one command from control's
+# VPC address. The export is a tar of these paths, relative to / (Backups decisions 64, 65 and 70).
+hub_export_kind: tar
+hub_export_from: 10.128.0.5
+hub_export_tar_paths:
+  - etc/postfix
+  - etc/dovecot
+  - root/.secrets
+  - etc/letsencrypt/cli.ini
+  - etc/letsencrypt/renewal
+  - etc/letsencrypt/renewal-hooks

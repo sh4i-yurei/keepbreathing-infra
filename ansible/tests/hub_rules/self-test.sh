@@ -42,6 +42,17 @@ copy_inputs "$scratch/route"
 sed -i 's/receiver: ntfy-tickets/receiver: nowhere/' "$scratch/route/alertmanager.yml.j2"
 expect_failure route 'WARNING: Expected receivers did not match resolved receivers.'
 
+# Removes the band_health route from the copy, so severity=page band_health=true pages.
+copy_inputs "$scratch/band-health-route"
+band_health_config="$scratch/band-health-route/alertmanager.yml.j2"
+sed -i '/^    - matchers:$/{N;/band_health="true"/{N;N;d}}' "$band_health_config"
+if grep -q '^ *- band_health="true"$' "$band_health_config" \
+  || cmp -s "$band_health_config" roles/hub/templates/alertmanager.yml.j2; then
+  echo "ASSERTION FAILED: band-health-route did not remove the band_health route" >&2
+  exit 1
+fi
+expect_failure band-health-route 'WARNING: Expected receivers did not match resolved receivers.'
+
 copy_inputs "$scratch/config"
 cat > "$scratch/config/alertmanager.yml.j2" <<'YAML'
 route:

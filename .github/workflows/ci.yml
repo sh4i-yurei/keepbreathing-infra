@@ -625,7 +625,11 @@ jobs:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils openssh-server
+      - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils openssh-server sudo && sudo update-alternatives --set sudo /usr/bin/sudo.ws
+      - name: The driver runs the droplets' classic sudo
+        run: |
+          test "$(readlink -f /usr/bin/sudo)" = /usr/bin/sudo.ws
+          sudo --version | head -1 | grep -q '^Sudo version '
       - name: Existing hub pull accounts survive driver refusal
         run: |
           for account in hptest kbtest hubexport; do

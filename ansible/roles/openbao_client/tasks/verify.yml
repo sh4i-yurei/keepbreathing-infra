@@ -1,0 +1,47 @@
+---
+# Read back the helper and its address file. It also runs on its own.
+- name: OpenBao client verify | Read the configuration folder
+  ansible.builtin.stat:
+    path: /etc/openbao
+  register: openbao_client_verify_folder
+
+- name: OpenBao client verify | Read the helper
+  ansible.builtin.stat:
+    path: /usr/local/bin/openbao-read
+  register: openbao_client_verify_helper
+
+- name: OpenBao client verify | Read the address file metadata
+  ansible.builtin.stat:
+    path: /etc/openbao/client.json
+  register: openbao_client_verify_config
+
+- name: OpenBao client verify | Require root's folder, helper and address file
+  ansible.builtin.assert:
+    that:
+      - openbao_client_verify_folder.stat.isdir | default(false)
+      - openbao_client_verify_folder.stat.pw_name == 'root'
+      - openbao_client_verify_folder.stat.mode == '0755'
+      - openbao_client_verify_helper.stat.isreg | default(false)
+      - openbao_client_verify_helper.stat.pw_name == 'root'
+      - openbao_client_verify_helper.stat.mode == '0755'
+      - openbao_client_verify_config.stat.isreg | default(false)
+      - openbao_client_verify_config.stat.pw_name == 'root'
+      - openbao_client_verify_config.stat.mode == '0644'
+    fail_msg: /etc/openbao (0755), /usr/local/bin/openbao-read (0755) and /etc/openbao/client.json (0644) must exist and be owned by root
+    quiet: true
+
+- name: OpenBao client verify | Read the address file
+  ansible.builtin.slurp:
+    src: /etc/openbao/client.json
+  register: openbao_client_verify_content
+
+- name: OpenBao client verify | Require an address in client.json
+  ansible.builtin.assert:
+    that:
+      - openbao_client_verify_json is mapping
+      - openbao_client_verify_json.address | default(none) is string
+      - openbao_client_verify_json.address | length > 0
+    fail_msg: /etc/openbao/client.json must parse with an address
+    quiet: true
+  vars:
+    openbao_client_verify_json: "{{ openbao_client_verify_content.content | b64decode | from_json }}"

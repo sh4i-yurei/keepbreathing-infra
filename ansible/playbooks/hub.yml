@@ -51,6 +51,7 @@
     - backup_server
     - openbao
     - openbao_config
+    - openbao_client
     - ticket_band
     - role: tailscale_service
       tailscale_service_name: backup

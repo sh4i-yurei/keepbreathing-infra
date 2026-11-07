@@ -1,0 +1,10 @@
+---
+- name: Verify openbao_client on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Verify the openbao_client role alone
+      ansible.builtin.import_role:
+        name: openbao_client
+        tasks_from: verify

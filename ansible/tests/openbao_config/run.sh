@@ -269,6 +269,16 @@ assert match, 'no folder removal task'
 assert 'changed: [localhost] => (item=' + folder + ')' in match.group(1), match.group(1)
 PY
 }
+# The role warns that it skipped this folder, naming it as a JSON string, for this reason.
+skipped_warning() {
+  local log=$1 folder=$2 reason=$3
+  python3 - "$log" "$folder" "$reason" <<'PY' || fail "the role must warn that it skipped ${folder@Q}, $reason"
+import json, pathlib, re, sys
+log, folder, reason = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2], sys.argv[3]
+messages = [json.loads(text) for text in re.findall(r'"msg": ("(?:[^"\\]|\\.)*")', log)]
+assert 'openbao_config warning: skipped ' + json.dumps(folder) + ', ' + reason in messages, messages
+PY
+}
 not_removed_folder() {
   local log=$1 folder=$2
   if grep -Fq "(item=$folder)" "$log"; then fail "the folder task must not report $folder"; fi
@@ -883,6 +893,47 @@ play role -e "@$testsvc_list"
 [[ ! -e /home/bcother/.config/openbao/approle/testsvc ]] || fail "bcother's testsvc folder must be removed"
 consumer_state testsvc >"$work/testsvc-state-after-bcother.json"
 cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-bcother.json" || fail "bctest's testsvc folder must be untouched"
+
+# A folder name holding a newline can't make the role remove anything outside an approle folder.
+# Read line by line, this name would also print the path /home/bctest, which holds a planted file.
+odd_folder=/home/bcother/.config/openbao/approle/$'x\nbctest'
+install -d -o bcother -g bcother -m 0700 "$odd_folder"
+printf 'planted' >/home/bctest/planted
+play role -e "@$testsvc_list"
+[[ -f /home/bctest/planted ]] || fail 'a folder name holding a newline must not lead the role to remove /home/bctest'
+consumer_state testsvc >"$work/testsvc-state-after-newline.json"
+cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-newline.json" || fail "a folder name holding a newline must leave bctest's testsvc folder untouched"
+[[ -d $odd_folder ]] || fail 'a folder whose path is not a consumer folder path must be skipped, not removed'
+skipped_warning "$last_play_log" "$odd_folder" 'because its path is not /home/<account>/.config/openbao/approle/<name>'
+rm -r -- "$odd_folder" /home/bctest/planted
+
+# A link swapped in after find has listed the folders can't redirect the removal. The race_swap
+# callback in callback_plugins/ runs once the role's find task has finished, and turns one part of
+# the path from .config down to bcother's testsvc folder into a link to a tree outside /home that
+# holds a planted file where the removal would land.
+race_folder=/home/bcother/.config/openbao/approle/testsvc
+race_index=0
+for level in .config .config/openbao .config/openbao/approle .config/openbao/approle/testsvc; do
+  race_index=$((race_index + 1))
+  install -d -o bcother -g bcother -m 0700 /home/bcother/.config /home/bcother/.config/openbao \
+    /home/bcother/.config/openbao/approle "$race_folder"
+  remainder=${race_folder#"/home/bcother/$level"}
+  target=$work/outside-$race_index
+  mkdir -p "$target$remainder"
+  printf 'planted' >"$target$remainder/planted"
+  RACE_SWAP=/home/bcother/$level RACE_TARGET=$target ANSIBLE_CALLBACK_PLUGINS=$PWD/tests/openbao_config/callback_plugins \
+    ANSIBLE_CALLBACKS_ENABLED=race_swap play role -e "@$testsvc_list"
+  [[ -L /home/bcother/$level ]] || fail "the race_swap callback must have swapped /home/bcother/$level for a link"
+  [[ -f $target$remainder/planted ]] || fail "a link at /home/bcother/$level must not lead the role to remove $target$remainder"
+  skipped_warning "$last_play_log" "$race_folder" 'because it or a folder above it, up to .config, is a symbolic link or not a folder'
+  consumer_state testsvc >"$work/testsvc-state-after-race-$race_index.json"
+  cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-race-$race_index.json" || fail "a link at /home/bcother/$level must leave bctest's testsvc folder untouched"
+  rm -- "/home/bcother/$level"
+  mv -- "/home/bcother/$level.moved" "/home/bcother/$level"
+done
+# Without the swap, the same folder is removed.
+play role -e "@$testsvc_list"
+[[ ! -e $race_folder ]] || fail "bcother's testsvc folder must be removed once no link is in its path"
 
 # A folder for an entry without files is removed.
 play role -e "@$full_list"

@@ -104,9 +104,10 @@ flowchart TB
 - **No secrets in the repository.** Not encrypted, not in an example, not in a reverted commit.
   They are read at run time. Today `vault_secret` uses `bw`. OpenBao now runs on the hub, and it
   is where secrets that machines use go (Platform decision 4). The inventory's existing
-  Vaultwarden lookups do not move to it. The sudo passwords, Grafana's admin password and
-  OpenBao's own sign-in passwords are secrets a person uses, so they stay in Vaultwarden until
-  Ansible moves to the control plane (OpenBao on the hub's Scope and its decision 18). Two groups
+  Vaultwarden lookups do not move to it. The sudo passwords and Grafana's admin password are secrets
+  a person uses, so they stay in Vaultwarden until Ansible moves to the control plane (OpenBao on
+  the hub's Scope). OpenBao's own two sign-in passwords, for `keepbreath0` and `ansible`, stay in
+  Vaultwarden as the seal key does (OpenBao on the hub decision 18). Two groups
   never move into OpenBao at all. The secrets that restore OpenBao never move into it: the seal
   key, the restic repository passwords, the backup server logins and the B2 keys stay in
   Vaultwarden, private files on the hub and the printed sheet, because a restore locked inside

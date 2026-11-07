@@ -103,8 +103,19 @@ flowchart TB
 ## Rules every piece follows
 
 - **No secrets in the repository.** Not encrypted, not in an example, not in a reverted commit.
-  They are read at run time. Today `vault_secret` uses `bw`; machine secrets move to OpenBao on
-  the hub once it exists, and the vault lookups in the inventory are what it replaces.
+  They are read at run time. Today `vault_secret` uses `bw`. OpenBao now runs on the hub, and it
+  is where secrets that machines use go (Platform decision 4). The inventory's existing
+  Vaultwarden lookups do not move to it. The sudo passwords and Grafana's admin password are secrets
+  a person uses, so they stay in Vaultwarden until Ansible moves to the control plane (OpenBao on
+  the hub's Scope). OpenBao's own two sign-in passwords, for `keepbreath0` and `ansible`, stay in
+  Vaultwarden as the seal key does (OpenBao on the hub decision 18). Two groups
+  never move into OpenBao at all. The secrets that restore OpenBao never move into it: the seal
+  key, the restic repository passwords, the backup server logins and the B2 keys stay in
+  Vaultwarden, private files on the hub and the printed sheet, because a restore locked inside
+  OpenBao could not run (OpenBao on the hub decision 9). The paging path never takes a secret
+  from OpenBao, so Prometheus, Alertmanager, ntfy and Gatus keep their secrets where they are,
+  because whatever has to notice that OpenBao is broken cannot depend on it (OpenBao on the hub
+  decision 19).
 - **Every role proves what it claims.** Its setup tasks are followed by verify tasks that read
   the live state, and a second run of the same playbook must report `changed=0`.
 - **Rehearse before a live run.** Run with `--check --diff` against one `--limit` host first.

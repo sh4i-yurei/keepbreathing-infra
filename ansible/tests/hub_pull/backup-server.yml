@@ -12,6 +12,8 @@
     backup_server_logins:
       - name: testweb
         bcrypt: "{{ lookup('ansible.builtin.env', 'TEST_BCRYPT') }}"
+      - name: testmail
+        bcrypt: "{{ lookup('ansible.builtin.env', 'TEST_BCRYPT') }}"
       - name: verify
         bcrypt: "{{ lookup('ansible.builtin.env', 'TEST_VERIFY_BCRYPT') }}"
     backup_server_verify_password: "{{ lookup('ansible.builtin.env', 'TEST_VERIFY_PASSWORD') }}"

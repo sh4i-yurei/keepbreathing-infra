@@ -633,6 +633,7 @@ def fixture_items():
         "rclone vaultserv (hub)",
         "Backblaze master key",
         "rclone web (hub)",
+        "rclone mail (hub)",
     ]
     return {
         name: {

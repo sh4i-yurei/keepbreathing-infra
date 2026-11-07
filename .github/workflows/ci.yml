@@ -707,19 +707,27 @@ jobs:
             id "$account"
             sudo userdel -r "$account"
           done
+          sudo mkdir /etc/hub-export-test
+          echo keep | sudo tee /etc/hub-export-test/keep >/dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_pull/run.sh > /tmp/hub-pull-existing-files.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted existing hub pull files'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: hub pull files already exist' /tmp/hub-pull-existing-files.log
+          test "$(sudo cat /etc/hub-export-test/keep)" = keep
+          sudo rm -r /etc/hub-export-test
       - name: Hub pull role integration cases and cleanup
         shell: bash
         run: |
           ssh_before=$(systemctl is-active ssh.service ssh.socket || :)
           sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_pull/run.sh 2>&1 | tee driver.log
           grep -Fxq 'hub_pull driver: all cases passed' driver.log
-          test "$(grep -c '^PASS ' driver.log)" -eq 11
+          test "$(grep -c '^PASS ' driver.log)" -eq 17
           if grep -E '^CLEANUP FAILED:' driver.log; then echo 'ASSERTION FAILED: driver cleanup failed'; exit 1; fi
           for account in hptest kbtest hubexport; do
             if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: driver left $account"; exit 1; fi
           done
-          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf; do
-            if test -e "$path"; then echo "ASSERTION FAILED: driver left $path"; exit 1; fi
+          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test; do
+            if sudo test -e "$path"; then echo "ASSERTION FAILED: driver left $path"; exit 1; fi
           done
           if findmnt -rn -t tmpfs -o TARGET | grep -Eq '^/tmp/tmp\.[^/]+/backup$'; then echo 'ASSERTION FAILED: driver left backup tmpfs mounted'; exit 1; fi
           test -z "$(systemctl list-units --all --no-legend 'hub-pull*')"
@@ -737,8 +745,8 @@ jobs:
           for account in hptest kbtest hubexport; do
             if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: failure run left $account"; exit 1; fi
           done
-          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf; do
-            if test -e "$path"; then echo "ASSERTION FAILED: failure run left $path"; exit 1; fi
+          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test; do
+            if sudo test -e "$path"; then echo "ASSERTION FAILED: failure run left $path"; exit 1; fi
           done
           if findmnt -rn -t tmpfs -o TARGET | grep -Eq '^/tmp/tmp\.[^/]+/backup$'; then echo 'ASSERTION FAILED: failure run left backup tmpfs mounted'; exit 1; fi
           test -z "$(systemctl list-units --all --no-legend 'hub-pull*')"

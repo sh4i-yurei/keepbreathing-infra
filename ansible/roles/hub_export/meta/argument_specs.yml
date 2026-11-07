@@ -5,13 +5,17 @@ argument_specs:
     options:
       hub_export_kind:
         type: str
-        choices: [redis]
+        choices: [redis, tar]
       hub_export_container_user:
         type: str
-        required: true
+        description: The redis kind's container account; the role requires it for that kind.
       hub_export_container:
         type: str
-        required: true
+        description: The redis kind's container; the role requires it for that kind.
+      hub_export_tar_paths:
+        type: list
+        elements: str
+        description: The tar kind's paths, relative to /; the role requires them for that kind.
       hub_export_from:
         type: str
         required: true

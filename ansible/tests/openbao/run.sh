@@ -10,7 +10,6 @@ config=$home/.config/openbao/config
 seal=$home/.config/openbao/seal/seal.key
 first=$config/first-start.hcl
 quadlet=$home/.config/containers/systemd/openbao.container
-audit=$home/openbao/logs/audit.log
 image=quay.io/openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
 fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 
@@ -146,26 +145,37 @@ assert all(set(d.get(path,[]))==want for path,want in zip(paths,expected))
 PY
 }
 audit_check() {
-  python3 - "$audit" <<'PY' || fail 'audit log must record the forwarded ansible login and hide secrets'
+  local attempt account_journal
+  for ((attempt=0; attempt<10; attempt++)); do
+    account_journal=$(journalctl --no-pager -o cat "_UID=$(id -u "$user")") || fail 'audit log must record the forwarded ansible login and hide secrets'
+    if printf '%s\n' "$account_journal" | python3 -c '
 import json,os,sys
-lines=open(sys.argv[1]).read().splitlines()
-assert any((lambda d: d.get('type')=='request' and d.get('request',{}).get('path')=='auth/userpass/login/ansible' and d.get('request',{}).get('remote_address')=='192.0.2.10')(json.loads(line)) for line in lines)
-for name in ('TEST_SEAL_KEY','TEST_ADMIN_PASSWORD','TEST_ANSIBLE_PASSWORD'):
+lines=sys.stdin.read().splitlines()
+for name in ("TEST_SEAL_KEY","TEST_ADMIN_PASSWORD","TEST_ANSIBLE_PASSWORD"):
     assert all(os.environ[name] not in line for line in lines)
-found=any(json.loads(line).get('request',{}).get('path')=='sys/auth/userpass' for line in lines)
-print('self-init requests audited: '+('yes' if found else 'no'))
-PY
+entries=[json.loads(line) for line in lines if line.startswith("{")]
+assert any(d.get("type")=="request" and d.get("request",{}).get("path")=="auth/userpass/login/ansible" and d.get("request",{}).get("remote_address")=="192.0.2.10" for d in entries)
+found=any(d.get("request",{}).get("path")=="sys/auth/userpass" for d in entries)
+print("self-init requests audited: "+("yes" if found else "no"))
+' 2>/dev/null; then break; fi
+    sleep 1
+  done
+  [[ $attempt -lt 10 ]] || fail 'audit log must record the forwarded ansible login and hide secrets'
 }
 audit_request_address() {
-  local response=$1 expected=$2
-  LOGIN_RESPONSE="$response" python3 - "$audit" "$expected" <<'PY' || fail 'audit request must record the rightmost forwarded address'
+  local response=$1 expected=$2 attempt
+  for ((attempt=0; attempt<10; attempt++)); do
+    if as_user podman logs openbao 2>/dev/null | LOGIN_RESPONSE="$response" python3 -c '
 import json,os,sys
-request_id=json.loads(os.environ['LOGIN_RESPONSE'])['request_id']
-matches=[d for line in open(sys.argv[1]) if (d:=json.loads(line)).get('type')=='request' and d.get('request',{}).get('id')==request_id]
+request_id=json.loads(os.environ["LOGIN_RESPONSE"])["request_id"]
+matches=[d for line in sys.stdin if line.startswith("{") if (d:=json.loads(line)).get("type")=="request" and d.get("request",{}).get("id")==request_id]
 assert len(matches)==1
-assert matches[0].get('request',{}).get('path')=='auth/userpass/login/ansible'
-assert matches[0].get('request',{}).get('remote_address')==sys.argv[2]
-PY
+assert matches[0].get("request",{}).get("path")=="auth/userpass/login/ansible"
+assert matches[0].get("request",{}).get("remote_address")==sys.argv[1]
+' "$expected" 2>/dev/null; then return 0; fi
+    sleep 1
+  done
+  fail 'audit request must record the rightmost forwarded address'
 }
 health_error() {
   local forwarded=$1 expected=$2 code=000 attempt
@@ -235,7 +245,14 @@ done
 
 play role
 recap "$last_play_log" '[0-9]+'
+grep -Fq 'file_path = "stdout"' "$config/openbao.hcl" || fail 'audit device must write to stdout'
+if grep -Fq '/openbao/logs' "$config/openbao.hcl"; then fail 'config must not use the logs directory'; fi
+grep -Fxq 'LogDriver=journald' "$quadlet" || fail 'Quadlet must use the journald log driver'
+if grep -Fq '/openbao/logs' "$quadlet"; then fail 'Quadlet must not mount the logs directory'; fi
+[[ ! -e $home/openbao/logs ]] || fail 'role must not create the logs directory'
 healthy || fail 'first role run must initialize and unseal OpenBao'
+container_stdout=$(as_user podman logs openbao 2>/dev/null) || fail 'podman logs openbao must succeed'
+grep -Fq '==> OpenBao server configuration:' <<<"$container_stdout" || fail 'OpenBao standard output must carry its startup banner'
 health_error absent 'missing x-forwarded-for header and configured to reject when not present'
 [[ ! -e $first ]] || fail 'first-start file must be removed'
 [[ $(stat -c %s "$seal") == 44 && $(stat -c %a "$seal") == 600 && $(stat -c %U "$seal") == "$user" ]] || fail 'seal key metadata must match'
@@ -252,6 +269,21 @@ audit_request_address "$login_response_ansible" 192.0.2.10
 capabilities keepbreath0
 capabilities ansible
 audit_check
+
+sed -i '/^audit "file" "audit" {/,/^}/d' "$config/openbao.hcl"
+if grep -Fq 'audit "file" "audit"' "$config/openbao.hcl"; then fail 'audit block must be removed for the negative case'; fi
+restart
+for ((second=0; second<60; second++)); do
+  if healthy; then break; fi
+  sleep 1
+done
+healthy || { journalctl --no-pager -o cat -n 60 "_UID=$(id -u "$user")" | tail -30; fail 'removed audit restart must become healthy'; }
+account_journal=$(journalctl --no-pager -o cat "_UID=$(id -u "$user")") || fail 'the account journal must be readable'
+grep -Fq 'disabling removed audit device' <<<"$account_journal" || fail 'OpenBao must disable the removed audit device'
+verify_fails missing-audit 'OpenBao must record the forwarded client address'
+play role
+grep -Fq 'file_path = "stdout"' "$config/openbao.hcl" || fail 'role must restore the stdout audit device'
+play verify
 
 TEST_POISON_ADMIN=1 play role
 recap "$last_play_log" 0

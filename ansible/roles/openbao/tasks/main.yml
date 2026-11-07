@@ -41,7 +41,6 @@
     - .config/openbao/seal
     - openbao
     - openbao/raft
-    - openbao/logs
   when: openbao_account.uid is defined or not ansible_check_mode
 
 - name: OpenBao | Write the configuration

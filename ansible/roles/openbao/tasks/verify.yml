@@ -1,4 +1,13 @@
 ---
+- name: OpenBao | Read the account UID for verification
+  ansible.builtin.command:
+    argv:
+      - id
+      - -u
+      - "{{ openbao_user }}"
+  register: openbao_verify_uid
+  changed_when: false
+
 - name: OpenBao | Read sys/health
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/health"
@@ -87,18 +96,36 @@
       diff: false
 
     - name: OpenBao | Read the audit log as the service account
-      ansible.builtin.slurp:
-        src: "/home/{{ openbao_user }}/openbao/logs/audit.log"
+      ansible.builtin.command:
+        argv:
+          - podman
+          - logs
+          - openbao
       become: true
       become_user: "{{ openbao_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ openbao_verify_uid.stdout }}"
       register: openbao_audit_log
+      changed_when: false
+      failed_when: false
+      until: >-
+        openbao_audit_log.rc == 0 and
+        ((openbao_audit_log.stdout_lines | select('match', '^[{]') | map('from_json')
+          | selectattr('type', 'equalto', 'request')
+          | selectattr('request.path', 'equalto', 'auth/userpass/login/ansible')
+          | selectattr('request.id', 'equalto', openbao_verify_login.json.request_id)
+          | list | length) > 0)
+      retries: 11
+      delay: 1
+      ignore_errors: true
       no_log: true
       diff: false
 
     - name: OpenBao | Parse audit requests
       ansible.builtin.set_fact:
         openbao_audit_requests: >-
-          {{ (openbao_audit_log.content | b64decode).splitlines()
+          {{ openbao_audit_log.stdout_lines
+             | select('match', '^[{]')
              | map('from_json')
              | selectattr('type', 'equalto', 'request')
              | selectattr('request.path', 'equalto', 'auth/userpass/login/ansible')

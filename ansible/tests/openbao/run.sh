@@ -249,6 +249,22 @@ grep -Fq 'file_path = "stdout"' "$config/openbao.hcl" || fail 'audit device must
 if grep -Fq '/openbao/logs' "$config/openbao.hcl"; then fail 'config must not use the logs directory'; fi
 grep -Fxq 'LogDriver=journald' "$quadlet" || fail 'Quadlet must use the journald log driver'
 if grep -Fq '/openbao/logs' "$quadlet"; then fail 'Quadlet must not mount the logs directory'; fi
+# CI can't reproduce the hub's slow first start, so check the limit systemd actually loaded.
+start_timeout=$(as_user systemctl --user show openbao.service -p TimeoutStartUSec) || fail 'systemctl show openbao.service must succeed'
+if [[ $start_timeout != 'TimeoutStartUSec=15min' ]]; then
+  printf '%s\n' "$start_timeout" >&2
+  fail 'openbao.service must allow its first start 900 seconds'
+fi
+python3 - "$quadlet" <<'PY' || fail 'Quadlet [Service] section must set TimeoutStartSec=900 beside Restart=always'
+import pathlib, sys
+section, service = None, []
+for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    if line.startswith('[') and line.endswith(']'):
+        section = line
+    elif section == '[Service]':
+        service.append(line)
+assert 'Restart=always' in service and 'TimeoutStartSec=900' in service
+PY
 [[ ! -e $home/openbao/logs ]] || fail 'role must not create the logs directory'
 healthy || fail 'first role run must initialize and unseal OpenBao'
 container_stdout=$(as_user podman logs openbao 2>/dev/null) || fail 'podman logs openbao must succeed'

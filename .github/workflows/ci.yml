@@ -588,6 +588,16 @@ jobs:
           test -d /home/bctest
           id bctest
           sudo userdel -r bctest
+      - name: Existing bcnone account is preserved
+        run: |
+          sudo useradd -m bcnone
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_config/run.sh > /tmp/openbao-config-existing-bcnone.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing bcnone account was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: bcnone already exists' /tmp/openbao-config-existing-bcnone.log
+          test -d /home/bcnone
+          id bcnone
+          sudo userdel -r bcnone
       - name: openbao_config role integration cases
         run: |
           sudo cp -p /etc/environment /tmp/openbao-config-environment-before

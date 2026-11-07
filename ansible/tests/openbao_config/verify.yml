@@ -1,0 +1,14 @@
+---
+- name: Verify openbao_config on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    openbao_port: 8200
+    openbao_self_address: "192.0.2.10"
+    openbao_ansible_password: "{{ lookup('env', 'TEST_ANSIBLE_PASSWORD') }}"
+  tasks:
+    - name: Verify the openbao_config role alone
+      ansible.builtin.import_role:
+        name: openbao_config
+        tasks_from: verify

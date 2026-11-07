@@ -1,0 +1,15 @@
+---
+argument_specs:
+  main:
+    short_description: Manage what's inside OpenBao through its API, as the ansible login
+    options:
+      openbao_port:
+        type: int
+        required: true
+      openbao_self_address:
+        type: str
+        required: true
+      openbao_ansible_password:
+        type: str
+        required: true
+        no_log: true

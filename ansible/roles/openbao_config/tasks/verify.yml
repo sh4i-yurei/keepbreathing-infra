@@ -1,0 +1,72 @@
+---
+# Read back what main.yml manages. It also runs on its own, so it signs in for itself.
+- name: OpenBao config verify | Sign in as ansible
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/userpass/login/ansible"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+    body_format: json
+    body:
+      password: "{{ openbao_ansible_password }}"
+    status_code: [200]
+    return_content: true
+  register: openbao_config_verify_login
+  changed_when: false
+  no_log: true
+
+- name: OpenBao config verify | Read the mounts back
+  block:
+    - name: OpenBao config verify | Read the secrets engines
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/mounts"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_config_verify_mounts
+      changed_when: false
+      no_log: true
+
+    - name: OpenBao config verify | Require secret/ to be a version 2 key/value store
+      ansible.builtin.assert:
+        that:
+          - "'secret/' in openbao_config_verify_mounts.json.data"
+          - openbao_config_verify_mounts.json.data['secret/'].type == 'kv'
+          - (openbao_config_verify_mounts.json.data['secret/'].options | default({}, true)).version | default('') == '2'
+        fail_msg: secret/ must be a version 2 key/value store
+        quiet: true
+
+    - name: OpenBao config verify | Read the auth methods
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/auth"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_config_verify_auth
+      changed_when: false
+      no_log: true
+
+    - name: OpenBao config verify | Require approle/ to be an AppRole auth method
+      ansible.builtin.assert:
+        that:
+          - "'approle/' in openbao_config_verify_auth.json.data"
+          - openbao_config_verify_auth.json.data['approle/'].type == 'approle'
+        fail_msg: approle/ must be an AppRole auth method
+        quiet: true
+  always:
+    - name: OpenBao config verify | Revoke the ansible token
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/token/revoke-self"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [204]
+      changed_when: false
+      no_log: true

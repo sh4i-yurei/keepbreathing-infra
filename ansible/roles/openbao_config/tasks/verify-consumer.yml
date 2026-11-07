@@ -11,6 +11,9 @@
                                      (':' not in item and item.endswith('/32'))) else item] }}
   loop: "{{ openbao_approle_bound_cidrs }}"
 
+- name: OpenBao config verify | Build the wanted consumer policy
+  ansible.builtin.include_tasks: consumer-policy.yml
+
 - name: OpenBao config verify | Read the consumer policy
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ openbao_consumer.name }}"
@@ -29,7 +32,7 @@
   ansible.builtin.assert:
     that:
       - openbao_config_verify_policy.status == 200
-      - openbao_config_verify_policy.json.data.policy | default('') == "path \"secret/data/{{ openbao_consumer.name }}/*\" {\n  capabilities = [\"read\"]\n}\n"
+      - openbao_config_verify_policy.json.data.policy | default('') == openbao_config_wanted_policy
     fail_msg: "the policy {{ openbao_consumer.name }} must match openbao_approles"
     quiet: true
 
@@ -66,12 +69,14 @@
     path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/role-id"
   register: openbao_config_verify_role_file
   changed_when: false
+  when: openbao_consumer.files | default(true)
 
 - name: OpenBao config verify | Read secret ID file metadata
   ansible.builtin.stat:
     path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/secret-id"
   register: openbao_config_verify_secret_file
   changed_when: false
+  when: openbao_consumer.files | default(true)
 
 - name: OpenBao config verify | Require private consumer files
   ansible.builtin.assert:
@@ -84,6 +89,7 @@
       - openbao_config_verify_secret_file.stat.mode | default('') == '0600'
     fail_msg: "{{ openbao_consumer.name }}'s files must be owned by {{ openbao_consumer.account }} and readable by it alone"
     quiet: true
+  when: openbao_consumer.files | default(true)
 
 - name: OpenBao config verify | Read the private consumer files
   ansible.builtin.slurp:
@@ -91,8 +97,10 @@
   loop: [role-id, secret-id]
   register: openbao_config_verify_files
   no_log: true
+  when: openbao_consumer.files | default(true)
 
 - name: OpenBao config verify | Test the consumer sign-in and secret ID list
+  when: openbao_consumer.files | default(true)
   block:
     - name: OpenBao config verify | Sign in with the consumer files
       ansible.builtin.uri:

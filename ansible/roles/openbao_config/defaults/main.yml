@@ -1,0 +1,2 @@
+---
+openbao_restore_check_value: restore-check-test # noqa: var-naming[no-role-prefix] - handoff interface

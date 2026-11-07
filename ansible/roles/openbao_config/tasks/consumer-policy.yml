@@ -1,0 +1,14 @@
+---
+- name: OpenBao config | Start the wanted consumer policy
+  ansible.builtin.set_fact:
+    openbao_config_wanted_policy: "path \"secret/data/{{ openbao_consumer.name }}/*\" {\n  capabilities = [\"read\"]\n}\n"
+    openbao_config_policy_newline: "\n"
+
+- name: OpenBao config | Add each extra policy path
+  ansible.builtin.set_fact:
+    openbao_config_wanted_policy: >-
+      {{ openbao_config_wanted_policy ~ openbao_config_policy_newline ~
+         'path ' ~ (item.path | to_json) ~ ' {' ~ openbao_config_policy_newline ~
+         '  capabilities = [' ~ (item.capabilities | map('to_json') | join(', ')) ~
+         ']' ~ openbao_config_policy_newline ~ '}' ~ openbao_config_policy_newline }}
+  loop: "{{ openbao_consumer.extra_paths | default([]) }}"

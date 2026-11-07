@@ -624,7 +624,7 @@ jobs:
         with:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
-      - run: ansible-galaxy collection install --no-cache -r collections/requirements.yml
+      - run: ansible-galaxy collection install -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils openssh-server
       - name: Existing hub pull accounts survive driver refusal
         run: |

@@ -240,8 +240,8 @@ printf 'PASS the hub key gets only the export\n'
 
 # Case 6: the sudo rule allows only the bare script.
 for attempt in '/usr/local/libexec/hub-export x' '/bin/sh -c id' '-u kbtest /usr/local/libexec/hub-export'; do
-  # shellcheck disable=SC2086
   set +e
+  # shellcheck disable=SC2086
   runuser -u hubexport -- sudo -n $attempt >/dev/null 2>"$work/sudo.err"
   sudo_rc=$?
   set -e

@@ -1,0 +1,14 @@
+- name: OpenBao config | Report the policy while OpenBao isn't running
+  ansible.builtin.debug:
+    msg: "openbao_config would write the policy {{ openbao_consumer.name }}"
+  changed_when: true
+
+- name: OpenBao config | Report the AppRole while OpenBao isn't running
+  ansible.builtin.debug:
+    msg: "openbao_config would write the AppRole {{ openbao_consumer.name }}"
+  changed_when: true
+
+- name: OpenBao config | Report files while OpenBao isn't running
+  ansible.builtin.debug:
+    msg: "openbao_config would issue a secret ID for {{ openbao_consumer.name }} and write its files"
+  changed_when: true

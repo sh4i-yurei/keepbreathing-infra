@@ -59,6 +59,12 @@
           - openbao_config_verify_auth.json.data['approle/'].type == 'approle'
         fail_msg: approle/ must be an AppRole auth method
         quiet: true
+
+    - name: OpenBao config verify | Check each consumer
+      ansible.builtin.include_tasks: verify-consumer.yml
+      loop: "{{ openbao_approles }}"
+      loop_control:
+        loop_var: openbao_consumer
   always:
     - name: OpenBao config verify | Revoke the ansible token
       ansible.builtin.uri:

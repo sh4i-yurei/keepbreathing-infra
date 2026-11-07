@@ -1,0 +1,159 @@
+---
+- name: OpenBao config verify | Read the consumer policy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ openbao_consumer.name }}"
+    method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_verify_policy
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config verify | Require the consumer policy
+  ansible.builtin.assert:
+    that:
+      - openbao_config_verify_policy.status == 200
+      - openbao_config_verify_policy.json.data.policy | default('') == "path \"secret/data/{{ openbao_consumer.name }}/*\" {\n  capabilities = [\"read\"]\n}\n"
+    fail_msg: "the policy {{ openbao_consumer.name }} must match openbao_approles"
+    quiet: true
+
+- name: OpenBao config verify | Read the consumer AppRole
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}"
+    method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_verify_role
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config verify | Require the consumer AppRole settings
+  ansible.builtin.assert:
+    that:
+      - openbao_config_verify_role.status == 200
+      - openbao_config_verify_role.json.data.secret_id_ttl | default(-1) == 0
+      - openbao_config_verify_role.json.data.secret_id_num_uses | default(-1) == 0
+      - openbao_config_verify_role.json.data.secret_id_bound_cidrs | default([]) == openbao_approle_bound_cidrs
+      - openbao_config_verify_role.json.data.token_bound_cidrs | default([]) == openbao_approle_bound_cidrs | map('regex_replace', '/(32|128)$', '') | list
+      - openbao_config_verify_role.json.data.token_ttl | default(-1) == 300
+      - openbao_config_verify_role.json.data.token_max_ttl | default(-1) == 300
+      - openbao_config_verify_role.json.data.token_policies | default([]) == [openbao_consumer.name]
+    fail_msg: "the AppRole {{ openbao_consumer.name }} must have the settings decision 51 sets"
+    quiet: true
+
+- name: OpenBao config verify | Read role ID file metadata
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/role-id"
+  register: openbao_config_verify_role_file
+  changed_when: false
+
+- name: OpenBao config verify | Read secret ID file metadata
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/secret-id"
+  register: openbao_config_verify_secret_file
+  changed_when: false
+
+- name: OpenBao config verify | Require private consumer files
+  ansible.builtin.assert:
+    that:
+      - openbao_config_verify_role_file.stat.exists
+      - openbao_config_verify_secret_file.stat.exists
+      - openbao_config_verify_role_file.stat.pw_name | default('') == openbao_consumer.account
+      - openbao_config_verify_secret_file.stat.pw_name | default('') == openbao_consumer.account
+      - openbao_config_verify_role_file.stat.mode | default('') == '0600'
+      - openbao_config_verify_secret_file.stat.mode | default('') == '0600'
+    fail_msg: "{{ openbao_consumer.name }}'s files must be owned by {{ openbao_consumer.account }} and readable by it alone"
+    quiet: true
+
+- name: OpenBao config verify | Read the private consumer files
+  ansible.builtin.slurp:
+    src: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/{{ item }}"
+  loop: [role-id, secret-id]
+  register: openbao_config_verify_files
+  no_log: true
+
+- name: OpenBao config verify | Test the consumer sign-in and secret ID list
+  block:
+    - name: OpenBao config verify | Sign in with the consumer files
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/login"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+        body_format: json
+        body:
+          role_id: "{{ openbao_config_verify_files.results[0].content | b64decode }}"
+          secret_id: "{{ openbao_config_verify_files.results[1].content | b64decode }}"
+        status_code: [200, 400]
+        return_content: true
+      register: openbao_config_verify_consumer_login
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: OpenBao config verify | Require consumer sign-in
+      ansible.builtin.assert:
+        that: openbao_config_verify_consumer_login.status == 200
+        fail_msg: "{{ openbao_consumer.name }}'s files must sign in from openbao_self_address"
+        quiet: true
+
+    - name: OpenBao config verify | Look up the file's secret ID accessor
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}/secret-id/lookup"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          secret_id: "{{ openbao_config_verify_files.results[1].content | b64decode }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_config_verify_accessor
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: OpenBao config verify | List the consumer secret ID accessors
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}/secret-id"
+        method: LIST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [200, 404]
+        return_content: true
+      register: openbao_config_verify_accessors
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: OpenBao config verify | Require exactly the file's secret ID
+      ansible.builtin.assert:
+        that:
+          - openbao_config_verify_accessors.status == 200
+          - openbao_config_verify_accessors.json.data['keys'] | default([]) == [openbao_config_verify_accessor.json.data.secret_id_accessor]
+        fail_msg: "{{ openbao_consumer.name }} must have exactly one secret ID, the one in its file"
+        quiet: true
+  always:
+    - name: OpenBao config verify | Revoke the consumer token
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/token/revoke-self"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_consumer_login.json.auth.client_token }}"
+        status_code: [204]
+      changed_when: false
+      check_mode: false
+      when: openbao_config_verify_consumer_login.status | default(0) == 200
+      no_log: true

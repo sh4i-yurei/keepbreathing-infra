@@ -1,0 +1,219 @@
+---
+- name: OpenBao config | Read the consumer role ID
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}/role-id"
+    method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200]
+    return_content: true
+  register: openbao_config_role_id
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config | Create consumer configuration folders
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ openbao_consumer.account }}"
+    group: "{{ openbao_consumer.account }}"
+    mode: "{{ item.mode | default(omit) }}"
+  loop:
+    - path: "/home/{{ openbao_consumer.account }}/.config"
+    - path: "/home/{{ openbao_consumer.account }}/.config/openbao"
+    - path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle"
+      mode: '0700'
+    - path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}"
+      mode: '0700'
+  when: not ansible_check_mode
+
+- name: OpenBao config | Read the consumer role ID file metadata
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/role-id"
+  register: openbao_config_role_id_file
+  changed_when: false
+
+- name: OpenBao config | Read the consumer secret ID file metadata
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/secret-id"
+  register: openbao_config_secret_id_file
+  changed_when: false
+
+- name: OpenBao config | Read the existing role ID file
+  ansible.builtin.slurp:
+    src: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/role-id"
+  register: openbao_config_role_id_content
+  when: ansible_check_mode and openbao_config_role_id_file.stat.exists
+  no_log: true
+
+- name: OpenBao config | Write the consumer role ID file
+  ansible.builtin.copy:
+    dest: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/role-id"
+    content: "{{ openbao_config_role_id.json.data.role_id }}"
+    owner: "{{ openbao_consumer.account }}"
+    group: "{{ openbao_consumer.account }}"
+    mode: '0600'
+  when: not ansible_check_mode
+  no_log: true
+
+- name: OpenBao config | Read the existing secret ID file
+  ansible.builtin.slurp:
+    src: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/secret-id"
+  register: openbao_config_secret_id_content
+  when: openbao_config_secret_id_file.stat.exists and openbao_config_secret_id_file.stat.size > 0
+  no_log: true
+
+- name: OpenBao config | Set the existing secret ID
+  ansible.builtin.set_fact:
+    openbao_config_file_secret_id: >-
+      {{ (openbao_config_secret_id_content.content | b64decode)
+         if openbao_config_secret_id_file.stat.exists and openbao_config_secret_id_file.stat.size > 0
+         else '' }}
+  no_log: true
+
+- name: OpenBao config | Test the consumer secret ID by signing in
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/login"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+    body_format: json
+    body:
+      role_id: "{{ openbao_config_role_id.json.data.role_id }}"
+      secret_id: "{{ openbao_config_file_secret_id }}"
+    status_code: [200, 400]
+    return_content: true
+  register: openbao_config_consumer_login
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: openbao_config_file_secret_id | length > 0
+  no_log: true
+
+- name: OpenBao config | Revoke the consumer token immediately
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/token/revoke-self"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_consumer_login.json.auth.client_token }}"
+    status_code: [204]
+  changed_when: false
+  check_mode: false
+  when: openbao_config_consumer_login.status | default(0) == 200
+  no_log: true
+
+- name: OpenBao config | Refuse a secret ID error that reissuing cannot fix
+  ansible.builtin.fail:
+    msg: >-
+      {{ openbao_consumer.name }}'s secret ID file was refused for a reason a new secret ID can't fix:
+      {{ openbao_config_consumer_login.status }}
+      {{ (openbao_config_consumer_login.json.errors | default(['no OpenBao error'])) | first }}
+  when:
+    - openbao_config_file_secret_id | length > 0
+    - openbao_config_consumer_login.status != 200
+    - >-
+      not (openbao_config_consumer_login.status == 400 and
+      (openbao_config_consumer_login.json.errors | default([]) | first | default('')) == 'invalid role or secret ID')
+
+- name: OpenBao config | Decide whether the consumer needs a new secret ID
+  ansible.builtin.set_fact:
+    openbao_config_needs_secret_id: >-
+      {{ openbao_config_file_secret_id | length == 0 or
+         (openbao_config_consumer_login.status | default(0) == 400 and
+          (openbao_config_consumer_login.json.errors | default([]) | first | default('')) == 'invalid role or secret ID') }}
+
+- name: OpenBao config | Report a consumer file change in check mode
+  ansible.builtin.debug:
+    msg: "openbao_config would issue a secret ID for {{ openbao_consumer.name }} and write its files"
+  changed_when: true
+  when: >-
+    ansible_check_mode and (openbao_config_needs_secret_id or
+    not openbao_config_role_id_file.stat.exists or
+    (openbao_config_role_id_content.content | default('') | b64decode) != openbao_config_role_id.json.data.role_id or
+    openbao_config_role_id_file.stat.mode | default('') != '0600' or
+    openbao_config_secret_id_file.stat.mode | default('') != '0600')
+
+- name: OpenBao config | Issue a consumer secret ID
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}/secret-id"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200]
+    return_content: true
+  register: openbao_config_issued_secret_id
+  when: not ansible_check_mode and openbao_config_needs_secret_id
+  no_log: true
+
+- name: OpenBao config | Write the consumer secret ID file
+  ansible.builtin.copy:
+    dest: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/secret-id"
+    content: >-
+      {{ openbao_config_issued_secret_id.json.data.secret_id
+         if openbao_config_needs_secret_id else openbao_config_file_secret_id }}
+    owner: "{{ openbao_consumer.account }}"
+    group: "{{ openbao_consumer.account }}"
+    mode: '0600'
+  when: not ansible_check_mode
+  no_log: true
+
+- name: OpenBao config | Look up the kept secret ID accessor
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}/secret-id/lookup"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    body_format: json
+    body:
+      secret_id: "{{ openbao_config_file_secret_id }}"
+    status_code: [200]
+    return_content: true
+  register: openbao_config_kept_accessor
+  changed_when: false
+  check_mode: false
+  when: not openbao_config_needs_secret_id
+  no_log: true
+
+- name: OpenBao config | List the consumer secret ID accessors
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}/secret-id"
+    method: LIST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_accessors
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config | Report each other secret ID in check mode
+  ansible.builtin.debug:
+    msg: "openbao_config would destroy a secret ID of {{ openbao_consumer.name }} that isn't in its file"
+  loop: "{{ openbao_config_accessors.json.data['keys'] | default([]) if openbao_config_accessors.status == 200 else [] }}"
+  changed_when: true
+  when: ansible_check_mode and (openbao_config_needs_secret_id or item != openbao_config_kept_accessor.json.data.secret_id_accessor)
+
+- name: OpenBao config | Destroy each other consumer secret ID
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}/secret-id-accessor/destroy"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    body_format: json
+    body:
+      secret_id_accessor: "{{ item }}"
+    status_code: [204]
+  loop: "{{ openbao_config_accessors.json.data['keys'] | default([]) if openbao_config_accessors.status == 200 else [] }}"
+  when: >-
+    not ansible_check_mode and
+    item != (openbao_config_issued_secret_id.json.data.secret_id_accessor
+            if openbao_config_needs_secret_id else openbao_config_kept_accessor.json.data.secret_id_accessor)
+  no_log: true

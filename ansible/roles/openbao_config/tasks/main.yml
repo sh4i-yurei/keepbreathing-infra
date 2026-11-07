@@ -207,6 +207,9 @@
     - name: OpenBao config | Keep the restore-check test secret
       ansible.builtin.include_tasks: restore-check.yml
       when: "'restore-check' in (openbao_approles | map(attribute='name') | list)"
+
+    - name: OpenBao config | Remove consumers that openbao_approles no longer lists
+      ansible.builtin.include_tasks: remove-consumers.yml
   always:
     - name: OpenBao config | Revoke the ansible token
       ansible.builtin.uri:

@@ -132,6 +132,23 @@
           {{ (hub_prometheus_container.containers | first | default({})).ImageName | default('nothing') }}.
         quiet: true
 
+    - name: prometheus-verify | Read Prometheus's start time limit
+      ansible.builtin.command:
+        argv: [systemctl, --user, show, prometheus.service, -p, TimeoutStartUSec]
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_prometheus_start_timeout
+      changed_when: false
+
+    - name: prometheus-verify | Prometheus's first start is allowed 900 seconds
+      ansible.builtin.assert:
+        that:
+          - hub_prometheus_start_timeout.stdout == 'TimeoutStartUSec=15min'
+        fail_msg: prometheus.service must allow its first start 900 seconds
+        quiet: true
+
     - name: prometheus-verify | Prometheus sends its alerts to Alertmanager
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/alertmanagers"

@@ -9,7 +9,9 @@ for account in hptest kbtest hubexport; do
 done
 units=(/home/hptest/.config/systemd/user/hub-pull-run@.service
   /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer)
-for path in "${units[@]}" /etc/sudoers.d/hub-export /usr/local/libexec/hub-export; do
+for path in "${units[@]}" /etc/sudoers.d/hub-export /usr/local/libexec/hub-export \
+  /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf \
+  /etc/ssh/sshd_config.d/11-authorized-keys.conf; do
   [[ ! -e $path ]] || fail 'hub pull files already exist'
 done
 
@@ -86,7 +88,12 @@ undo_mount() { if mountpoint -q "$point"; then umount "$point"; fi; }
 undo_hptest() { runner_undo_account hptest; }
 undo_kbtest() { runner_undo_account kbtest; }
 undo_hubexport() { runner_undo_account hubexport; }
-undo_export_files() { rm -f /etc/sudoers.d/hub-export /usr/local/libexec/hub-export; }
+undo_export_files() {
+  rm -f /etc/sudoers.d/hub-export /usr/local/libexec/hub-export \
+    /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf \
+    /etc/ssh/sshd_config.d/11-authorized-keys.conf
+  if systemctl is-active --quiet ssh.service; then systemctl reload ssh.service; fi
+}
 undo_ssh() {
   local unit
   # The socket first: stopping the service while its socket is active prints a warning.
@@ -127,15 +134,22 @@ hp_uid=$(id -u hptest)
 pull_play "$work/no-kbtest.log" && fail 'hub export without kbtest must fail'
 assert_failure_message "$work/no-kbtest.log" 'Hub export needs kbtest to exist and linger; run the baseline and site roles first.'
 if id -u hubexport >/dev/null 2>&1; then fail 'hubexport made before kbtest lingered'; fi
+useradd -m kbtest
+kb_uid=$(id -u kbtest)
+pull_play "$work/no-kbtest-linger.log" && fail 'hub export without kbtest lingering must fail'
+assert_failure_message "$work/no-kbtest-linger.log" 'Hub export needs kbtest to exist and linger; run the baseline and site roles first.'
+if id -u hubexport >/dev/null 2>&1; then fail 'hubexport made before kbtest lingered'; fi
 # The key play runs before the export play by design, so case 1 leaves a key. Remove it so case 2
 # starts from a host where nothing the playbook makes exists.
 rm -f "$key" "$key.pub"
 printf 'PASS missing lingering fails before changes\n'
 
-useradd -m kbtest
-kb_uid=$(id -u kbtest)
 loginctl enable-linger kbtest
-systemctl start "user@$kb_uid.service"
+systemctl start "user@$kb_uid.service" || {
+  systemctl status "user@$kb_uid.service" --no-pager >&2 || :
+  journalctl -u "user@$kb_uid.service" -n 20 --no-pager >&2 || :
+  fail 'kbtest user manager must start'
+}
 start_redis "$redis_password"
 as_kb podman exec keepbreath-redis redis-cli SET probe hello >/dev/null
 as_kb podman exec keepbreath-redis redis-cli LPUSH celery task >/dev/null
@@ -163,11 +177,14 @@ pull_play "$work/first.log" || { tail -35 "$work/first.log" >&2; fail 'first hub
 grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/first.log" || fail 'first play recap failed'
 id -u hubexport >/dev/null || fail 'hubexport must exist'
 ! grep -q '^hubexport:' /etc/subuid || fail 'hubexport must have no subordinate IDs'
-mapfile -t entries </home/hubexport/.ssh/authorized_keys
+mapfile -t entries </etc/ssh/authorized_keys/hubexport
 [[ ${#entries[@]} -eq 1 ]] || fail 'authorized_keys must hold exactly one line'
+[[ $(stat -c '%U:%G %a' /etc/ssh/authorized_keys/hubexport) == 'root:root 644' ]] || fail 'authorized_keys owner or mode is wrong'
+sshd_keys=$(sshd -T -C user=hubexport,host=localhost,addr=127.0.0.1 | grep '^authorizedkeysfile ')
+[[ $sshd_keys == 'authorizedkeysfile /etc/ssh/authorized_keys/%u' ]] || fail "sshd must read the export key, got $sshd_keys"
 [[ ${entries[0]} == 'from="127.0.0.1",restrict,command="sudo -n /usr/local/libexec/hub-export" '* ]] ||
   fail "authorized_keys entry has the wrong options: ${entries[0]}"
-[[ ${entries[0]} == *"$(cut -d' ' -f1,2 "$key.pub")"* ]] || fail 'authorized_keys must hold the hub key'
+[[ ${entries[0]} == *" $(cat "$key.pub")" ]] || fail 'authorized_keys must end with the full hub key'
 visudo -cf /etc/sudoers.d/hub-export >/dev/null || fail 'sudo rule must pass visudo'
 [[ $(stat -c %a /etc/sudoers.d/hub-export) == 440 ]] || fail 'sudo rule must be mode 0440'
 [[ $(systemctl show hub-pull@testweb.timer -p UnitFileState --value) == enabled ]] || fail 'timer must be enabled'
@@ -212,17 +229,23 @@ as_hp ssh "${ssh_options[@]}" -W 127.0.0.1:22 hubexport@127.0.0.1 </dev/null >/d
 grep -Fq 'channel 0: open failed: administratively prohibited' "$work/forward.err" || fail 'a stdio forward must be refused'
 other=$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)
 [[ -n $other ]] || fail 'the runner must have a non-loopback address'
-if as_hp ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null "hubexport@$other" >/dev/null 2>"$work/other.err"; then
-  fail 'the key must be refused from another address'
-fi
+set +e
+as_hp ssh -T -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null "hubexport@$other" >/dev/null 2>"$work/other.err"
+ssh_rc=$?
+set -e
+[[ $ssh_rc == 255 ]] || fail "another address must exit 255, got $ssh_rc"
 grep -Fq 'Permission denied (publickey' "$work/other.err" || fail 'another address must get Permission denied'
 printf 'PASS the hub key gets only the export\n'
 
 # Case 6: the sudo rule allows only the bare script.
 for attempt in '/usr/local/libexec/hub-export x' '/bin/sh -c id' '-u kbtest /usr/local/libexec/hub-export'; do
   # shellcheck disable=SC2086
-  if runuser -u hubexport -- sudo -n $attempt >/dev/null 2>"$work/sudo.err"; then fail "sudo must refuse: $attempt"; fi
+  set +e
+  runuser -u hubexport -- sudo -n $attempt >/dev/null 2>"$work/sudo.err"
+  sudo_rc=$?
+  set -e
+  [[ $sudo_rc == 1 ]] || fail "sudo must refuse with exit 1: $attempt, got $sudo_rc"
   grep -Fq 'sudo: a password is required' "$work/sudo.err" || fail "sudo must ask for a password: $attempt"
 done
 runuser -u hubexport -- sudo -n /usr/local/libexec/hub-export >"$work/bare.out" || fail 'the bare script must run'
@@ -254,6 +277,25 @@ grep -Fq 'Host key verification failed.' "$work/hostkey.log" || fail 'ssh must r
 [[ $(snapshot_count) == "$count" ]] || fail 'a wrong host key must leave no snapshot'
 cp -p -- "$work/known_hosts" "$known_hosts"
 printf 'PASS a wrong host key fails before login\n'
+
+# An unknown host must also fail. This catches accept-new, which refuses only changed keys.
+: >"$known_hosts"
+count=$(snapshot_count)
+cursor=$(run_cursor)
+if systemctl start hub-pull@testweb.service; then fail 'an unknown host key must fail the pull'; fi
+run_output "$cursor" "$work/unknown-host.log"
+grep -Fq 'Host key verification failed.' "$work/unknown-host.log" || fail 'ssh must refuse an unknown host key'
+[[ $(snapshot_count) == "$count" ]] || fail 'an unknown host key must leave no snapshot'
+cp -p -- "$work/known_hosts" "$known_hosts"
+printf 'PASS an unknown host key fails before login\n'
+
+# The access role's drop-in must leave the hub export account able to log in.
+printf 'AuthorizedKeysFile /etc/ssh/authorized_keys/%%u\n' > /etc/ssh/sshd_config.d/11-authorized-keys.conf
+sshd -t && systemctl reload ssh.service
+count=$(snapshot_count)
+systemctl start hub-pull@testweb.service || fail 'the pull must work with the access drop-in'
+[[ $(snapshot_count) == $((count + 1)) ]] || fail 'the access drop-in pull must add one snapshot'
+printf 'PASS the access drop-in keeps the pull working\n'
 
 # Case 9: a wrong Redis password fails the pull.
 as_kb podman rm -f keepbreath-redis >/dev/null

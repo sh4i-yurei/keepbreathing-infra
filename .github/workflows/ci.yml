@@ -624,7 +624,7 @@ jobs:
         with:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
-      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: ansible-galaxy collection install --no-cache -r collections/requirements.yml
       - run: sudo apt-get update && sudo apt-get install -y podman apache2-utils openssh-server
       - name: Existing hub pull accounts survive driver refusal
         run: |
@@ -641,22 +641,23 @@ jobs:
         shell: bash
         run: |
           ssh_before=$(systemctl is-active ssh.service ssh.socket || :)
-          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_pull/run.sh | tee driver.log
-          test "$(tail -1 driver.log)" = 'hub_pull driver: all cases passed'
-          test "$(grep -c '^PASS ' driver.log)" -eq 9
+          sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_pull/run.sh 2>&1 | tee driver.log
+          grep -Fxq 'hub_pull driver: all cases passed' driver.log
+          test "$(grep -c '^PASS ' driver.log)" -eq 11
           if grep -E '^CLEANUP FAILED:' driver.log; then echo 'ASSERTION FAILED: driver cleanup failed'; exit 1; fi
           for account in hptest kbtest hubexport; do
             if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: driver left $account"; exit 1; fi
           done
-          test ! -e /etc/sudoers.d/hub-export
-          test ! -e /usr/local/libexec/hub-export
-          test ! -e /etc/systemd/system/hub-pull@.service
-          test ! -e /etc/systemd/system/hub-pull@.timer
+          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf; do
+            if test -e "$path"; then echo "ASSERTION FAILED: driver left $path"; exit 1; fi
+          done
+          if findmnt -rn -t tmpfs -o TARGET | grep -Eq '^/tmp/tmp\.[^/]+/backup$'; then echo 'ASSERTION FAILED: driver left backup tmpfs mounted'; exit 1; fi
           test -z "$(systemctl list-units --all --no-legend 'hub-pull*')"
           test "$ssh_before" = "$(systemctl is-active ssh.service ssh.socket || :)"
       - name: Failure after the role cleans up
         shell: bash
         run: |
+          ssh_before=$(systemctl is-active ssh.service ssh.socket || :)
           if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" TEST_FAIL_AFTER_HUB_PULL_ROLE=1 bash tests/hub_pull/run.sh > /tmp/hub-pull-failure.log 2>&1; then
             echo 'ASSERTION FAILED: driver accepted deliberate failure'; exit 1
           fi
@@ -666,9 +667,12 @@ jobs:
           for account in hptest kbtest hubexport; do
             if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: failure run left $account"; exit 1; fi
           done
-          test ! -e /etc/sudoers.d/hub-export
-          test ! -e /usr/local/libexec/hub-export
+          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf; do
+            if test -e "$path"; then echo "ASSERTION FAILED: failure run left $path"; exit 1; fi
+          done
+          if findmnt -rn -t tmpfs -o TARGET | grep -Eq '^/tmp/tmp\.[^/]+/backup$'; then echo 'ASSERTION FAILED: failure run left backup tmpfs mounted'; exit 1; fi
           test -z "$(systemctl list-units --all --no-legend 'hub-pull*')"
+          test "$ssh_before" = "$(systemctl is-active ssh.service ssh.socket || :)"
 
   hub-backup-disk:
     needs: changes

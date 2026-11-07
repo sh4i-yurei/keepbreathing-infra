@@ -48,6 +48,17 @@
   # A fresh rehearsal has no folder to put the key in; the report above stands in for it.
   when: not ansible_check_mode or hub_pull_ssh_folder.stat.exists
 
+- name: Hub pull | Check the public key file for a fresh rehearsal
+  ansible.builtin.stat:
+    path: "/home/{{ hub_pull_user }}/.ssh/hub-pull.pub"
+  register: hub_pull_public_key_file
+
+- name: Hub pull | Read the full public key for the droplets' play
+  ansible.builtin.slurp:
+    src: "/home/{{ hub_pull_user }}/.ssh/hub-pull.pub"
+  register: hub_pull_public_key_content
+  when: hub_pull_public_key_file.stat.exists
+
 - name: Hub pull | Keep the public key for the droplets' play
   ansible.builtin.set_fact:
-    hub_pull_public_key: "{{ hub_pull_key.public_key | default('', true) }}"
+    hub_pull_public_key: "{{ (hub_pull_public_key_content.content | default('') | b64decode) | regex_replace('\n$', '') }}"

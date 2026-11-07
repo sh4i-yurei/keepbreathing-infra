@@ -24,6 +24,9 @@ COLLECTION_JOBS = (
     "syntax-check",
 )
 INSTALL = "ansible-galaxy collection install -r collections/requirements.yml"
+HUB_PULL_INSTALL = (
+    "ansible-galaxy collection install --no-cache -r collections/requirements.yml"
+)
 CACHE_KEY = "${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}"
 
 
@@ -35,20 +38,29 @@ def workflow():
 
 def test_collection_install_has_immediately_preceding_cache():
     jobs = workflow()["jobs"]
+    installs_by_job = {
+        name: HUB_PULL_INSTALL if name == "hub-pull" else INSTALL
+        for name in COLLECTION_JOBS
+    }
     collection_jobs = {
         name
         for name, job in jobs.items()
-        if any(step.get("run") == INSTALL for step in job.get("steps", []))
+        if any(
+            step.get("run") in {INSTALL, HUB_PULL_INSTALL}
+            for step in job.get("steps", [])
+        )
     }
     assert collection_jobs == set(COLLECTION_JOBS)
     for name in sorted(collection_jobs):
         steps = jobs[name]["steps"]
         installs = [
-            index for index, step in enumerate(steps) if step.get("run") == INSTALL
+            index
+            for index, step in enumerate(steps)
+            if step.get("run") == installs_by_job[name]
         ]
         assert len(installs) == 1, name
         install_index = installs[0]
-        assert steps[install_index] == {"run": INSTALL}, name
+        assert steps[install_index] == {"run": installs_by_job[name]}, name
         assert steps[install_index - 1] == {
             "uses": "actions/cache@v6",
             "with": {

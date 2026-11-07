@@ -83,3 +83,27 @@
         - hub_grafana
         - site_www
         - site_domain-expiration
+
+    # The OpenBao check must be loaded but need not pass: hub.yml applies this role before the
+    # openbao role, so on a fresh hub OpenBao isn't running yet, and the openbao role's own verify
+    # proves it healthy. Gatus lists a check only after its first result, so this waits for one.
+    - name: gatus-verify | The OpenBao check is loaded
+      block:
+        - name: gatus-verify | Wait for Gatus to list the OpenBao check
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ hub_gatus_port }}/api/v1/endpoints/statuses"
+            return_content: true
+          register: hub_gatus_openbao_statuses
+          until: >-
+            hub_gatus_openbao_statuses.status == 200
+            and (hub_gatus_openbao_statuses.json | selectattr('key', 'equalto', 'hub_openbao')
+            | list | length > 0)
+          retries: 15
+          delay: 10
+      rescue:
+        - name: gatus-verify | Report the missing OpenBao check
+          ansible.builtin.fail:
+            msg: >-
+              Gatus must load the openbao health check, but its endpoint statuses list no check
+              with key hub_openbao after 15 retries. Listed:
+              {{ hub_gatus_openbao_statuses.json | default([], true) | map(attribute='key') | list }}.

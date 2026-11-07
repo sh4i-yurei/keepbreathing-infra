@@ -42,6 +42,18 @@ endpoints:
     alerts:
       - type: ntfy
 
+  # OpenBao answers 200 only when initialized, unsealed and active. This check has no Gatus alert:
+  # its notice is the OpenBaoUnhealthy rule in prometheus-rules.yml, which Alertmanager's
+  # band_health route sends straight to ntfy's tickets topic (OpenBao on the hub decision 59).
+  - name: openbao
+    group: hub
+    url: "https://openbao.tail4cf2f3.ts.net/v1/sys/health"
+    interval: 1m
+    conditions:
+      - "[STATUS] == 200"
+    extra-labels:
+      certificate_ticket: "true"
+
   - name: apex
     group: site
     url: "https://keepbreath.ing/"

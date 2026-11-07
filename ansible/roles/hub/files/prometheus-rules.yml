@@ -91,3 +91,20 @@ groups:
           description: >-
             The {{ $labels.name }} container on {{ $labels.instance }} is in state {{ $value }} (2 is running;
             3 stopped, 5 exited).
+
+  # Notices about the ticket band's own health carry band_health="true", which Alertmanager routes
+  # straight to ntfy's tickets topic (OpenBao on the hub decisions 24, 41 and 59).
+  - name: band-health
+    rules:
+      - alert: OpenBaoUnhealthy
+        expr: gatus_results_endpoint_success{key="hub_openbao"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          band_health: "true"
+        annotations:
+          gatus_key: hub_openbao
+          summary: OpenBao has failed its health check for 5 minutes.
+          description: >-
+            OpenBao on the hub is sealed, down or unreachable through svc:openbao. Services
+            can't fetch their secrets from it until it is back.

@@ -3,10 +3,16 @@
 # the role's copy of ntfy's alertmanager template with priority 5 (Monitoring and alerting decisions
 # #14, #22, #27 and #35). severity="warning" goes to the tickets topic through ntfy's built-in
 # alertmanager template, at its default priority 3. Everything else, such as info, goes to a receiver
-# with no destination.
+# with no destination. Notices about the ticket band's own health, labelled band_health="true", go
+# to the tickets topic first, grouped so each alert is its own notice, and never page whatever their
+# severity (OpenBao on the hub decisions 24, 41 and 59).
 route:
   receiver: nowhere
   routes:
+    - matchers:
+        - band_health="true"
+      receiver: ntfy-tickets
+      group_by: ['...']
     - matchers:
         - severity=~"page|critical"
       receiver: ntfy-pages

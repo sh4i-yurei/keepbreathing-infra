@@ -1,0 +1,184 @@
+---
+# openbao_approles is the whole truth (OpenBao on the hub decision 54). Delete every AppRole and
+# every policy it doesn't name, except the four reserved policies, and every consumer folder that
+# belongs to no entry with files. Nothing under secret/ is ever deleted.
+- name: OpenBao config | Set the listed consumer names
+  ansible.builtin.set_fact:
+    openbao_config_listed_names: "{{ openbao_approles | map(attribute='name') | list }}"
+
+- name: OpenBao config | List the AppRoles
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role"
+    method: LIST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_approle_list
+  changed_when: false
+  check_mode: false
+  # A dry run before approle/ exists has no AppRoles to list.
+  when: not ansible_check_mode or 'approle/' in openbao_config_auth.json.data
+  no_log: true
+
+- name: OpenBao config | Set the AppRoles to delete
+  ansible.builtin.set_fact:
+    openbao_config_stale_approles: >-
+      {{ (openbao_config_approle_list.json.data['keys'] | default([])
+          if openbao_config_approle_list.status | default(0) == 200 else [])
+         | reject('in', openbao_config_listed_names) | list }}
+
+- name: OpenBao config | Report each AppRole to delete in check mode
+  ansible.builtin.debug:
+    msg: "openbao_config would delete the AppRole {{ item }}"
+  loop: "{{ openbao_config_stale_approles }}"
+  changed_when: true
+  when: ansible_check_mode
+
+- name: OpenBao config | Delete each AppRole not on the list
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ item }}"
+    method: DELETE
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [204]
+  loop: "{{ openbao_config_stale_approles }}"
+  changed_when: true
+  when: not ansible_check_mode
+  no_log: true
+
+- name: OpenBao config | List the policies
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl"
+    method: LIST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200]
+    return_content: true
+  register: openbao_config_policy_list
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config | Set the policies to delete
+  ansible.builtin.set_fact:
+    openbao_config_stale_policies: >-
+      {{ openbao_config_policy_list.json.data['keys']
+         | reject('in', openbao_config_listed_names + ['ansible', 'keepbreath0', 'default', 'root'])
+         | list }}
+
+- name: OpenBao config | Report each policy to delete in check mode
+  ansible.builtin.debug:
+    msg: "openbao_config would delete the policy {{ item }}"
+  loop: "{{ openbao_config_stale_policies }}"
+  changed_when: true
+  when: ansible_check_mode
+
+- name: OpenBao config | Delete each policy not on the list
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ item }}"
+    method: DELETE
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [204]
+  loop: "{{ openbao_config_stale_policies }}"
+  changed_when: true
+  when: not ansible_check_mode
+  no_log: true
+
+# The role runs as root, so a folder is removed only when its path is exactly
+# /home/<account>/.config/openbao/approle/<name> and nothing from .config down to it is a link.
+# find ends each path with a NUL byte, because a folder name may itself hold a newline.
+- name: OpenBao config | List the consumer folders on the machine
+  ansible.builtin.command:
+    argv:
+      - find
+      - /home
+      - -mindepth
+      - '5'
+      - -maxdepth
+      - '5'
+      - -path
+      - /home/*/.config/openbao/approle/*
+      - -type
+      - d
+      - -print0
+  register: openbao_config_consumer_folders
+  changed_when: false
+  check_mode: false
+
+# YAML turns \0 into the NUL byte find printed after each path.
+- name: OpenBao config | Split the consumer folders on NUL bytes
+  ansible.builtin.set_fact:
+    openbao_config_found_folders: "{{ openbao_config_consumer_folders.stdout.split('\0') | reject('equalto', '') | list }}"
+    openbao_config_folder_pattern: '^/home/[a-z_][a-z0-9_-]*/[.]config/openbao/approle/[a-z][a-z0-9-]*$'
+
+- name: OpenBao config | Warn about each folder whose path is not a consumer folder path
+  ansible.builtin.debug:
+    msg: "openbao_config warning: skipped {{ item | to_json }}, because its path is not /home/<account>/.config/openbao/approle/<name>"
+  loop: "{{ openbao_config_found_folders | reject('regex', openbao_config_folder_pattern, match_type='fullmatch') | list }}"
+  loop_control:
+    label: "{{ item | to_json }}"
+
+- name: OpenBao config | Start the consumer folders to keep
+  ansible.builtin.set_fact:
+    openbao_config_kept_folders: []
+
+- name: OpenBao config | Keep the folder of each consumer with files
+  ansible.builtin.set_fact:
+    openbao_config_kept_folders: "{{ openbao_config_kept_folders + ['/home/' ~ item.account ~ '/.config/openbao/approle/' ~ item.name] }}"
+  loop: "{{ openbao_approles }}"
+  when: item.files | default(true)
+
+- name: OpenBao config | Set the consumer folders that belong to no entry with files
+  ansible.builtin.set_fact:
+    openbao_config_stale_folders: >-
+      {{ openbao_config_found_folders
+         | select('regex', openbao_config_folder_pattern, match_type='fullmatch')
+         | reject('in', openbao_config_kept_folders) | list }}
+
+# stat with follow false describes each path itself, so a link reads as a link.
+- name: OpenBao config | Look at each stale folder and its parents up to .config without following links
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: false
+    get_checksum: false
+    get_mime: false
+    get_attributes: false
+  loop: >-
+    {{ (openbao_config_stale_folders
+        + (openbao_config_stale_folders | map('dirname') | list)
+        + (openbao_config_stale_folders | map('dirname') | map('dirname') | list)
+        + (openbao_config_stale_folders | map('dirname') | map('dirname') | map('dirname') | list))
+       | unique | list }}
+  register: openbao_config_folder_stats
+
+- name: OpenBao config | Set the paths that are folders and not links
+  ansible.builtin.set_fact:
+    openbao_config_plain_folders: >-
+      {{ openbao_config_folder_stats.results | selectattr('stat.exists') | selectattr('stat.isdir')
+         | rejectattr('stat.islnk') | map(attribute='item') | list }}
+    openbao_config_removable_folders: []
+
+- name: OpenBao config | Keep each stale folder whose path from .config down holds only folders
+  ansible.builtin.set_fact:
+    openbao_config_removable_folders: "{{ openbao_config_removable_folders + [item] }}"
+  loop: "{{ openbao_config_stale_folders }}"
+  when: >-
+    [item, item | dirname, item | dirname | dirname, item | dirname | dirname | dirname]
+    | difference(openbao_config_plain_folders) | length == 0
+
+- name: OpenBao config | Warn about each stale folder reached through a link
+  ansible.builtin.debug:
+    msg: "openbao_config warning: skipped {{ item | to_json }}, because it or a folder above it, up to .config, is a symbolic link or not a folder"
+  loop: "{{ openbao_config_stale_folders | reject('in', openbao_config_removable_folders) | list }}"
+
+- name: OpenBao config | Remove consumer folders that belong to no entry with files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ openbao_config_removable_folders }}"

@@ -9,6 +9,7 @@ fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 
 if id -u "$user" >/dev/null 2>&1; then fail 'bctest already exists'; fi
 if id -u bcnone >/dev/null 2>&1; then fail 'bcnone already exists'; fi
+if id -u bcother >/dev/null 2>&1; then fail 'bcother already exists'; fi
 # A listener may answer with 404 or 403, so only connection failure means free.
 if [[ $(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8200/ || true) != 000 ]]; then
   fail '127.0.0.1:8200 is already in use'
@@ -27,6 +28,17 @@ runner_remove_account() {
   fi
   if grep -vFx 'userdel: bctest mail spool (/var/mail/bctest) not found' "$work/account-cleanup.log" >"$work/unexpected-cleanup.log"; then
     cat "$work/unexpected-cleanup.log" >&2
+    return 1
+  fi
+}
+# bcother is created only by the 3.2d cases, after the check above proved it didn't exist.
+remove_bcother() {
+  if ! runner_undo_account bcother >"$work/bcother-cleanup.log" 2>&1; then
+    cat "$work/bcother-cleanup.log" >&2
+    return 1
+  fi
+  if grep -vFx 'userdel: bcother mail spool (/var/mail/bcother) not found' "$work/bcother-cleanup.log" >"$work/unexpected-bcother-cleanup.log"; then
+    cat "$work/unexpected-bcother-cleanup.log" >&2
     return 1
   fi
 }
@@ -51,6 +63,7 @@ play() {
     if [[ -n ${admin_token:-} && ( $name == role || $name == verify ) ]]; then
       no_ansible_tokens "$name play"
     fi
+    if [[ ${reserved_check:-0} == 1 && $name == role ]]; then reserved_policies_intact "$name play"; fi
     return 0
   fi
   tail -40 "$log"
@@ -70,6 +83,7 @@ play_fails() {
   if [[ -n ${admin_token:-} && ( $name == role || $name == verify ) ]]; then
     no_ansible_tokens "$label play"
   fi
+  if [[ ${reserved_check:-0} == 1 && $name == role ]]; then reserved_policies_intact "$label play"; fi
 }
 play_fails_contains() {
   local label=$1 name=$2 message=$3 log
@@ -84,6 +98,7 @@ play_fails_contains() {
   if [[ -n ${admin_token:-} && ( $name == role || $name == verify ) ]]; then
     no_ansible_tokens "$label play"
   fi
+  if [[ ${reserved_check:-0} == 1 && $name == role ]]; then reserved_policies_intact "$label play"; fi
 }
 recap() {
   local log=$1 expected=$2
@@ -202,6 +217,82 @@ for path in pathlib.Path(sys.argv[1]).glob('*.log'):
         assert os.environ[name] not in data, (path, name)
     for secret in pathlib.Path(sys.argv[1]).glob('*-id'):
         assert secret.read_text() not in data, (path, secret)
+PY
+}
+# The reserved policies survive every 3.2d run, and the ansible policy keeps the text it had
+# before any reserved-name case ran.
+reserved_policies_intact() {
+  local label=$1
+  api_expect 200 "$label policy list" LIST sys/policies/acl admin_token
+  python3 - "$work/api.json" <<'PY' || fail "$label must keep the policies ansible, default, keepbreath0 and root"
+import json, sys
+keys = set(json.load(open(sys.argv[1]))['data']['keys'])
+assert {'ansible', 'default', 'keepbreath0', 'root'} <= keys, sorted(keys)
+PY
+  api_expect 200 "$label ansible policy read" GET sys/policies/acl/ansible admin_token
+  python3 - "$work/ansible-policy.json" "$work/api.json" <<'PY' || fail "$label must leave the ansible policy text unchanged"
+import json, sys
+before, after = (json.load(open(path))['data']['policy'] for path in sys.argv[1:])
+assert before == after
+PY
+}
+# A consumer's AppRole settings, role ID, policy text, and folder and files as one JSON line.
+# The role ID and file contents are hashed, so the line holds no credential.
+consumer_state() {
+  local name=$1
+  api_expect 200 "$name AppRole state" GET "auth/approle/role/$name" admin_token
+  cp "$work/api.json" "$work/state-approle.json"
+  api_expect 200 "$name role ID state" GET "auth/approle/role/$name/role-id" admin_token
+  cp "$work/api.json" "$work/state-role.json"
+  api_expect 200 "$name policy state" GET "sys/policies/acl/$name" admin_token
+  python3 - "$work/state-approle.json" "$work/state-role.json" "$work/api.json" "$name" <<'PY'
+import hashlib, json, pathlib, sys
+approle, role, policy = (json.load(open(path))['data'] for path in sys.argv[1:4])
+folder = pathlib.Path('/home/bctest/.config/openbao/approle') / sys.argv[4]
+def stat(path):
+    info = path.stat()
+    return [oct(info.st_mode), info.st_uid, info.st_gid, info.st_ino]
+files = {path.name: stat(path) + [hashlib.sha256(path.read_bytes()).hexdigest()]
+         for path in sorted(folder.iterdir())}
+print(json.dumps({'approle': approle, 'role_id': hashlib.sha256(role['role_id'].encode()).hexdigest(),
+                  'policy': policy['policy'], 'folder': stat(folder), 'files': files}, sort_keys=True))
+PY
+}
+# The folder removal task reports this folder as changed, in its own section of the log.
+removed_folder() {
+  local log=$1 folder=$2
+  python3 - "$log" "$folder" <<'PY' || fail "the folder task must report $folder as changed"
+import pathlib, re, sys
+log, folder = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2]
+match = re.search(r'TASK \[openbao_config : OpenBao config \| Remove consumer folders that belong to no entry with files\][^\n]*\n(.*?)(?=\nTASK \[|\nPLAY RECAP)', log, re.S)
+assert match, 'no folder removal task'
+assert 'changed: [localhost] => (item=' + folder + ')' in match.group(1), match.group(1)
+PY
+}
+# The role warns that it skipped this folder, naming it as a JSON string, for this reason.
+skipped_warning() {
+  local log=$1 folder=$2 reason=$3
+  python3 - "$log" "$folder" "$reason" <<'PY' || fail "the role must warn that it skipped ${folder@Q}, $reason"
+import json, pathlib, re, sys
+log, folder, reason = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2], sys.argv[3]
+messages = [json.loads(text) for text in re.findall(r'"msg": ("(?:[^"\\]|\\.)*")', log)]
+assert 'openbao_config warning: skipped ' + json.dumps(folder) + ', ' + reason in messages, messages
+PY
+}
+not_removed_folder() {
+  local log=$1 folder=$2
+  if grep -Fq "(item=$folder)" "$log"; then fail "the folder task must not report $folder"; fi
+}
+# Every consumer folder left under any account's .config/openbao/approle/, hidden ones included.
+consumer_folders() {
+  python3 - <<'PY'
+import pathlib
+for home in sorted(pathlib.Path('/home').iterdir()):
+    folder = home / '.config' / 'openbao' / 'approle'
+    if folder.is_dir():
+        for entry in sorted(folder.iterdir()):
+            if entry.is_dir():
+                print(entry)
 PY
 }
 saved_ids_index=0
@@ -725,6 +816,157 @@ api_expect 403 'ansible cannot read test value' GET secret/data/restore-check/te
 api_expect 403 'ansible cannot read other metadata' GET secret/metadata/other/test ansible_token
 api_expect 204 'ansible token revoke' POST auth/token/revoke-self ansible_token
 no_ansible_tokens '3.2c cases'
+
+# 3.2d: openbao_approles is the whole truth. Each case first applies all four entries, so the
+# AppRoles, policies and folders it expects gone exist before an entry comes off the list.
+reserved_check=1
+approle_dir=/home/bctest/.config/openbao/approle
+full_list=$work/full-consumers.json
+testsvc_list=$work/testsvc-only.json
+printf '%s\n' '{"openbao_approles":[{"name":"testsvc","account":"bctest"},{"name":"othersvc","account":"bctest"},{"name":"restore-check","files":false},{"name":"openbao-snapshot","account":"bctest","extra_paths":[{"path":"sys/storage/raft/snapshot","capabilities":["read"]}]}]}' >"$full_list"
+printf '%s\n' '{"openbao_approles":[{"name":"testsvc","account":"bctest"}]}' >"$testsvc_list"
+play role -e "@$full_list"
+for name in testsvc othersvc restore-check openbao-snapshot; do
+  api_expect 200 "$name AppRole before removal" GET "auth/approle/role/$name" admin_token
+  api_expect 200 "$name policy before removal" GET "sys/policies/acl/$name" admin_token
+done
+for name in testsvc othersvc openbao-snapshot; do
+  [[ -d $approle_dir/$name ]] || fail "the $name folder must exist before removal"
+done
+save_ids testsvc
+save_ids othersvc
+consumer_state testsvc >"$work/testsvc-state-before.json"
+
+# The dry run reports every deletion and deletes nothing.
+play role --check --diff -e "@$testsvc_list"
+grep -Eq 'localhost[[:space:]]+:.*failed=0' "$last_play_log" || { tail -40 "$last_play_log"; fail 'the removal dry run must finish with failed=0'; }
+for name in othersvc restore-check openbao-snapshot; do
+  for kind in AppRole policy; do
+    grep -Fq "\"msg\": \"openbao_config would delete the $kind $name\"" "$last_play_log" || fail "check mode must report: openbao_config would delete the $kind $name"
+  done
+done
+removed_folder "$last_play_log" "$approle_dir/othersvc"
+removed_folder "$last_play_log" "$approle_dir/openbao-snapshot"
+not_removed_folder "$last_play_log" "$approle_dir/testsvc"
+if grep -Fq 'openbao_config would delete the AppRole testsvc' "$last_play_log"; then fail 'check mode must not report deleting testsvc'; fi
+for name in testsvc othersvc restore-check openbao-snapshot; do
+  api_expect 200 "$name AppRole after the dry run" GET "auth/approle/role/$name" admin_token
+  api_expect 200 "$name policy after the dry run" GET "sys/policies/acl/$name" admin_token
+done
+for name in othersvc openbao-snapshot; do
+  [[ -d $approle_dir/$name ]] || fail "check mode must leave the $name folder"
+done
+
+# The real run deletes them; testsvc is untouched and othersvc's secret ID stops working.
+play role -e "@$testsvc_list"
+for name in othersvc restore-check openbao-snapshot; do
+  api_expect 404 "$name AppRole after removal" GET "auth/approle/role/$name" admin_token
+  api_expect 404 "$name policy after removal" GET "sys/policies/acl/$name" admin_token
+done
+for name in othersvc openbao-snapshot; do
+  [[ ! -e $approle_dir/$name ]] || fail "the $name folder must be removed"
+done
+consumer_state testsvc >"$work/testsvc-state-after.json"
+cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after.json" || fail "testsvc's AppRole, policy and folder must be unchanged"
+saved_login othersvc 400
+grep -Fq 'invalid role or secret ID' "$work/api.json" || fail "othersvc's secret ID must be refused with invalid role or secret ID"
+play role -e "@$testsvc_list"
+recap "$last_play_log" 0
+play role --check --diff -e "@$testsvc_list"
+recap "$last_play_log" 0
+
+# A policy written by hand is reported in check mode and deleted by the real run.
+api_expect 204 'handmade policy write' POST sys/policies/acl/handmade admin_token '{"policy":"path \"secret/data/handmade/*\" { capabilities = [\"read\"] }"}'
+play role --check --diff -e "@$testsvc_list"
+grep -Fq '"msg": "openbao_config would delete the policy handmade"' "$last_play_log" || fail 'check mode must report: openbao_config would delete the policy handmade'
+api_expect 200 'check mode keeps the handmade policy' GET sys/policies/acl/handmade admin_token
+play role -e "@$testsvc_list"
+api_expect 404 'handmade policy after the real run' GET sys/policies/acl/handmade admin_token
+
+# A folder for testsvc under another account is removed; bctest's is untouched.
+useradd -m bcother
+undo_add 'remove driver-created bcother' remove_bcother
+install -d -o bcother -g bcother -m 0700 /home/bcother/.config /home/bcother/.config/openbao \
+  /home/bcother/.config/openbao/approle /home/bcother/.config/openbao/approle/testsvc
+printf 'stray' >/home/bcother/.config/openbao/approle/testsvc/secret-id
+play role -e "@$testsvc_list"
+[[ ! -e /home/bcother/.config/openbao/approle/testsvc ]] || fail "bcother's testsvc folder must be removed"
+consumer_state testsvc >"$work/testsvc-state-after-bcother.json"
+cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-bcother.json" || fail "bctest's testsvc folder must be untouched"
+
+# A folder name holding a newline can't make the role remove anything outside an approle folder.
+# Read line by line, this name would also print the path /home/bctest, which holds a planted file.
+odd_folder=/home/bcother/.config/openbao/approle/$'x\nbctest'
+install -d -o bcother -g bcother -m 0700 "$odd_folder"
+printf 'planted' >/home/bctest/planted
+play role -e "@$testsvc_list"
+[[ -f /home/bctest/planted ]] || fail 'a folder name holding a newline must not lead the role to remove /home/bctest'
+consumer_state testsvc >"$work/testsvc-state-after-newline.json"
+cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-newline.json" || fail "a folder name holding a newline must leave bctest's testsvc folder untouched"
+[[ -d $odd_folder ]] || fail 'a folder whose path is not a consumer folder path must be skipped, not removed'
+skipped_warning "$last_play_log" "$odd_folder" 'because its path is not /home/<account>/.config/openbao/approle/<name>'
+rm -r -- "$odd_folder" /home/bctest/planted
+
+# A link swapped in after find has listed the folders can't redirect the removal. The race_swap
+# callback in callback_plugins/ runs once the role's find task has finished, and turns one part of
+# the path from .config down to bcother's testsvc folder into a link to a tree outside /home that
+# holds a planted file where the removal would land.
+race_folder=/home/bcother/.config/openbao/approle/testsvc
+race_index=0
+for level in .config .config/openbao .config/openbao/approle .config/openbao/approle/testsvc; do
+  race_index=$((race_index + 1))
+  install -d -o bcother -g bcother -m 0700 /home/bcother/.config /home/bcother/.config/openbao \
+    /home/bcother/.config/openbao/approle "$race_folder"
+  remainder=${race_folder#"/home/bcother/$level"}
+  target=$work/outside-$race_index
+  mkdir -p "$target$remainder"
+  printf 'planted' >"$target$remainder/planted"
+  RACE_SWAP=/home/bcother/$level RACE_TARGET=$target ANSIBLE_CALLBACK_PLUGINS=$PWD/tests/openbao_config/callback_plugins \
+    ANSIBLE_CALLBACKS_ENABLED=race_swap play role -e "@$testsvc_list"
+  [[ -L /home/bcother/$level ]] || fail "the race_swap callback must have swapped /home/bcother/$level for a link"
+  [[ -f $target$remainder/planted ]] || fail "a link at /home/bcother/$level must not lead the role to remove $target$remainder"
+  skipped_warning "$last_play_log" "$race_folder" 'because it or a folder above it, up to .config, is a symbolic link or not a folder'
+  consumer_state testsvc >"$work/testsvc-state-after-race-$race_index.json"
+  cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-race-$race_index.json" || fail "a link at /home/bcother/$level must leave bctest's testsvc folder untouched"
+  rm -- "/home/bcother/$level"
+  mv -- "/home/bcother/$level.moved" "/home/bcother/$level"
+done
+# Without the swap, the same folder is removed.
+play role -e "@$testsvc_list"
+[[ ! -e $race_folder ]] || fail "bcother's testsvc folder must be removed once no link is in its path"
+
+# A folder for an entry without files is removed.
+play role -e "@$full_list"
+install -d -o bctest -g bctest -m 0700 "$approle_dir/restore-check"
+play role -e "@$full_list"
+[[ ! -e $approle_dir/restore-check ]] || fail 'the restore-check folder must be removed, because its entry has no files'
+
+# An empty list removes every AppRole, every consumer policy and every consumer folder.
+play role -e '{"openbao_approles":[]}'
+api_expect 404 'AppRole list after the empty list' LIST auth/approle/role admin_token
+api_expect 200 'policy list after the empty list' LIST sys/policies/acl admin_token
+python3 - "$work/api.json" <<'PY' || fail 'only ansible, default, keepbreath0 and root may remain after the empty list'
+import json, sys
+assert sorted(json.load(open(sys.argv[1]))['data']['keys']) == ['ansible', 'default', 'keepbreath0', 'root']
+PY
+[[ -z $(consumer_folders) ]] || { consumer_folders >&2; fail 'no consumer folder may remain after the empty list'; }
+play role -e "@$full_list"
+for name in testsvc othersvc restore-check openbao-snapshot; do
+  api_expect 200 "$name AppRole recreated" GET "auth/approle/role/$name" admin_token
+  api_expect 200 "$name policy recreated" GET "sys/policies/acl/$name" admin_token
+done
+for name in testsvc othersvc openbao-snapshot; do
+  [[ -d $approle_dir/$name ]] || fail "the $name folder must be recreated"
+done
+play role -e "@$full_list"
+recap "$last_play_log" 0
+reserved_check=0
+
+remove_bcother
+if id -u bcother >/dev/null 2>&1; then fail 'the driver must remove bcother'; fi
+[[ ! -e /home/bcother ]] || fail "the driver must remove bcother's home"
+[[ ! -e /var/lib/systemd/linger/bcother ]] || fail 'the driver must leave bcother no lingering file'
+no_ansible_tokens '3.2d cases'
 
 api_expect 204 'keepbreath0 token revoke' POST auth/token/revoke-self admin_token
 logs_clean

@@ -13,3 +13,18 @@ argument_specs:
         type: str
         required: true
         no_log: true
+      openbao_approles:
+        type: list
+        elements: dict
+        required: true
+        options:
+          name:
+            type: str
+            required: true
+          account:
+            type: str
+            required: true
+      openbao_approle_bound_cidrs:
+        type: list
+        elements: str
+        required: true

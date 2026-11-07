@@ -1,0 +1,114 @@
+---
+- name: OpenBao config | Start the wanted token-bound address list
+  ansible.builtin.set_fact:
+    openbao_config_token_bound_cidrs: []
+
+- name: OpenBao config | Normalize full-length token-bound addresses
+  ansible.builtin.set_fact:
+    openbao_config_token_bound_cidrs: >-
+      {{ openbao_config_token_bound_cidrs +
+         [item.rsplit('/', 1)[0] if ((':' in item and item.endswith('/128')) or
+                                     (':' not in item and item.endswith('/32'))) else item] }}
+  loop: "{{ openbao_approle_bound_cidrs }}"
+
+- name: OpenBao config | Set the wanted consumer policy and AppRole
+  ansible.builtin.set_fact:
+    openbao_config_wanted_policy: "path \"secret/data/{{ openbao_consumer.name }}/*\" {\n  capabilities = [\"read\"]\n}\n"
+    openbao_config_wanted_role:
+      secret_id_ttl: 0
+      secret_id_num_uses: 0
+      secret_id_bound_cidrs: "{{ openbao_approle_bound_cidrs }}"
+      token_bound_cidrs: "{{ openbao_config_token_bound_cidrs }}"
+      token_ttl: 300
+      token_max_ttl: 300
+      token_policies: ["{{ openbao_consumer.name }}"]
+
+- name: OpenBao config | Read the consumer policy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ openbao_consumer.name }}"
+    method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_policy
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config | Report a consumer policy change
+  ansible.builtin.debug:
+    msg: "openbao_config would write the policy {{ openbao_consumer.name }}"
+  changed_when: true
+  when: ansible_check_mode and (openbao_config_policy.status == 404 or openbao_config_policy.json.data.policy != openbao_config_wanted_policy)
+
+- name: OpenBao config | Write the consumer policy
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ openbao_consumer.name }}"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    body_format: json
+    body:
+      policy: "{{ openbao_config_wanted_policy }}"
+    status_code: [204]
+  when: not ansible_check_mode and (openbao_config_policy.status == 404 or openbao_config_policy.json.data.policy != openbao_config_wanted_policy)
+  no_log: true
+
+- name: OpenBao config | Read the consumer AppRole
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}"
+    method: GET
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_role
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+- name: OpenBao config | Compare the consumer AppRole settings
+  ansible.builtin.set_fact:
+    openbao_config_role_differs: >-
+      {{ openbao_config_role.status == 404 or
+         (openbao_config_role.status == 200 and (
+          openbao_config_role.json.data.secret_id_ttl != 0 or
+          openbao_config_role.json.data.secret_id_num_uses != 0 or
+          openbao_config_role.json.data.secret_id_bound_cidrs != openbao_approle_bound_cidrs or
+          openbao_config_role.json.data.token_bound_cidrs != openbao_config_wanted_role.token_bound_cidrs or
+          openbao_config_role.json.data.token_ttl != 300 or
+          openbao_config_role.json.data.token_max_ttl != 300 or
+          openbao_config_role.json.data.token_policies != [openbao_consumer.name])) }}
+
+- name: OpenBao config | Report a consumer AppRole change
+  ansible.builtin.debug:
+    msg: "openbao_config would write the AppRole {{ openbao_consumer.name }}"
+  changed_when: true
+  when: ansible_check_mode and openbao_config_role_differs
+
+- name: OpenBao config | Write the consumer AppRole
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/approle/role/{{ openbao_consumer.name }}"
+    method: POST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    body_format: json
+    body: "{{ openbao_config_wanted_role | combine({'token_bound_cidrs': openbao_approle_bound_cidrs}) }}"
+    status_code: [204]
+  when: not ansible_check_mode and openbao_config_role_differs
+  no_log: true
+
+- name: OpenBao config | Report files for a new AppRole or missing account
+  ansible.builtin.debug:
+    msg: "openbao_config would issue a secret ID for {{ openbao_consumer.name }} and write its files"
+  changed_when: true
+  when: ansible_check_mode and (openbao_config_role.status == 404 or openbao_consumer.account not in (ansible_facts.getent_passwd | default({})))
+
+- name: OpenBao config | Manage consumer files and secret IDs
+  ansible.builtin.include_tasks: consumer-files.yml
+  when: not ansible_check_mode or (openbao_config_role.status == 200 and openbao_consumer.account in (ansible_facts.getent_passwd | default({})))

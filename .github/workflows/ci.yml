@@ -24,6 +24,7 @@ jobs:
       hub_backup_disk: ${{ steps.select.outputs.hub_backup_disk }}
       hub_pull: ${{ steps.select.outputs.hub_pull }}
       openbao: ${{ steps.select.outputs.openbao }}
+      openbao_client: ${{ steps.select.outputs.openbao_client }}
       openbao_config: ${{ steps.select.outputs.openbao_config }}
       ticket_band: ${{ steps.select.outputs.ticket_band }}
       vaultwarden_backup: ${{ steps.select.outputs.vaultwarden_backup }}
@@ -557,6 +558,92 @@ jobs:
           if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8200/ || true)" != 000; then echo 'ASSERTION FAILED: full driver left listener'; exit 1; fi
           sudo cmp /tmp/openbao-environment-before /etc/environment
           sudo systemctl show-environment | cmp /tmp/openbao-manager-before -
+
+  openbao-client:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.openbao_client == 'true') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y podman passt
+      - name: Existing account is preserved
+        run: |
+          sudo useradd -m bltest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing account was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: bltest already exists' /tmp/openbao-client-existing.log
+          test -d /home/bltest
+          id bltest
+          sudo userdel -r bltest
+      - name: Existing blother, helper and configuration folder are preserved
+        run: |
+          sudo useradd -m blother
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-existing-blother.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing blother account was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: blother already exists' /tmp/openbao-client-existing-blother.log
+          test -d /home/blother
+          id blother
+          sudo userdel -r blother
+          printf 'existing helper\n' | sudo tee /usr/local/bin/openbao-read > /dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-existing-helper.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing helper was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /usr/local/bin/openbao-read already exists' /tmp/openbao-client-existing-helper.log
+          test "$(cat /usr/local/bin/openbao-read)" = 'existing helper'
+          sudo rm /usr/local/bin/openbao-read
+          sudo mkdir /etc/openbao
+          printf 'existing config\n' | sudo tee /etc/openbao/keep > /dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-existing-folder.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing /etc/openbao was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /etc/openbao already exists' /tmp/openbao-client-existing-folder.log
+          test "$(cat /etc/openbao/keep)" = 'existing config'
+          sudo rm -r /etc/openbao
+          if id bltest >/dev/null 2>&1; then echo 'ASSERTION FAILED: a refusal created bltest'; exit 1; fi
+      - name: openbao_client role integration cases
+        run: |
+          sudo cp -p /etc/environment /tmp/openbao-client-environment-before
+          sudo systemctl show-environment > /tmp/openbao-client-manager-before
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-full.log 2>&1; then
+            cat /tmp/openbao-client-full.log
+          else
+            tail -80 /tmp/openbao-client-full.log
+            exit 1
+          fi
+          if test "$(tail -1 /tmp/openbao-client-full.log)" != 'openbao_client driver: all cases passed'; then
+            echo 'ASSERTION FAILED: openbao_client driver success message was not its last line'
+            exit 1
+          fi
+      - name: Full driver cleans up
+        run: |
+          for account in bltest blother; do
+            if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: full driver left $account"; exit 1; fi
+            if test -e "/home/$account"; then echo "ASSERTION FAILED: full driver left /home/$account"; exit 1; fi
+            if test -e "/var/lib/systemd/linger/$account"; then echo "ASSERTION FAILED: full driver left lingering for $account"; exit 1; fi
+          done
+          if test -e /usr/local/bin/openbao-read; then echo 'ASSERTION FAILED: full driver left /usr/local/bin/openbao-read'; exit 1; fi
+          if test -e /etc/openbao; then echo 'ASSERTION FAILED: full driver left /etc/openbao'; exit 1; fi
+          for port in 8200 18300; do
+            if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$port/" || true)" != 000; then echo "ASSERTION FAILED: full driver left a listener on $port"; exit 1; fi
+          done
+          sudo cmp /tmp/openbao-client-environment-before /etc/environment
+          sudo systemctl show-environment | cmp /tmp/openbao-client-manager-before -
 
   openbao-config:
     needs: changes

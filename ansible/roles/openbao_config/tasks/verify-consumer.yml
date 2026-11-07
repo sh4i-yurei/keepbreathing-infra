@@ -1,4 +1,16 @@
 ---
+- name: OpenBao config verify | Start the wanted token-bound address list
+  ansible.builtin.set_fact:
+    openbao_config_token_bound_cidrs: []
+
+- name: OpenBao config verify | Normalize full-length token-bound addresses
+  ansible.builtin.set_fact:
+    openbao_config_token_bound_cidrs: >-
+      {{ openbao_config_token_bound_cidrs +
+         [item.rsplit('/', 1)[0] if ((':' in item and item.endswith('/128')) or
+                                     (':' not in item and item.endswith('/32'))) else item] }}
+  loop: "{{ openbao_approle_bound_cidrs }}"
+
 - name: OpenBao config verify | Read the consumer policy
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ openbao_consumer.name }}"
@@ -42,7 +54,7 @@
       - openbao_config_verify_role.json.data.secret_id_ttl | default(-1) == 0
       - openbao_config_verify_role.json.data.secret_id_num_uses | default(-1) == 0
       - openbao_config_verify_role.json.data.secret_id_bound_cidrs | default([]) == openbao_approle_bound_cidrs
-      - openbao_config_verify_role.json.data.token_bound_cidrs | default([]) == openbao_approle_bound_cidrs | map('regex_replace', '/(32|128)$', '') | list
+      - openbao_config_verify_role.json.data.token_bound_cidrs | default([]) == openbao_config_token_bound_cidrs
       - openbao_config_verify_role.json.data.token_ttl | default(-1) == 300
       - openbao_config_verify_role.json.data.token_max_ttl | default(-1) == 300
       - openbao_config_verify_role.json.data.token_policies | default([]) == [openbao_consumer.name]

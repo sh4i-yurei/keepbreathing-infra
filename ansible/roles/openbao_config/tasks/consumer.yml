@@ -1,4 +1,16 @@
 ---
+- name: OpenBao config | Start the wanted token-bound address list
+  ansible.builtin.set_fact:
+    openbao_config_token_bound_cidrs: []
+
+- name: OpenBao config | Normalize full-length token-bound addresses
+  ansible.builtin.set_fact:
+    openbao_config_token_bound_cidrs: >-
+      {{ openbao_config_token_bound_cidrs +
+         [item.rsplit('/', 1)[0] if ((':' in item and item.endswith('/128')) or
+                                     (':' not in item and item.endswith('/32'))) else item] }}
+  loop: "{{ openbao_approle_bound_cidrs }}"
+
 - name: OpenBao config | Set the wanted consumer policy and AppRole
   ansible.builtin.set_fact:
     openbao_config_wanted_policy: "path \"secret/data/{{ openbao_consumer.name }}/*\" {\n  capabilities = [\"read\"]\n}\n"
@@ -6,7 +18,7 @@
       secret_id_ttl: 0
       secret_id_num_uses: 0
       secret_id_bound_cidrs: "{{ openbao_approle_bound_cidrs }}"
-      token_bound_cidrs: "{{ openbao_approle_bound_cidrs | map('regex_replace', '/(32|128)$', '') | list }}"
+      token_bound_cidrs: "{{ openbao_config_token_bound_cidrs }}"
       token_ttl: 300
       token_max_ttl: 300
       token_policies: ["{{ openbao_consumer.name }}"]

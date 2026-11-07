@@ -185,10 +185,14 @@ for path in pathlib.Path(sys.argv[1]).glob('*.log'):
         assert secret.read_text() not in data, (path, secret)
 PY
 }
+saved_ids_index=0
 save_ids() {
   local name=$1
+  saved_ids_index=$((saved_ids_index + 1))
   cp "/home/bctest/.config/openbao/approle/$name/role-id" "$work/saved-$name-role-id"
   cp "/home/bctest/.config/openbao/approle/$name/secret-id" "$work/saved-$name-secret-id"
+  cp "$work/saved-$name-role-id" "$work/history-$saved_ids_index-$name-role-id"
+  cp "$work/saved-$name-secret-id" "$work/history-$saved_ids_index-$name-secret-id"
 }
 consumer_body() {
   local name=$1
@@ -337,16 +341,17 @@ assert {key: data[key] for key in expected} == expected
 PY
   api_expect 200 "$name role ID read" GET "auth/approle/role/$name/role-id" admin_token
   python3 - "$work/api.json" "$name" <<'PY' || fail 'role ID file must match OpenBao'
-import json, pathlib, sys
+import json, pathlib, pwd, sys
 name = sys.argv[2]
 folder = pathlib.Path('/home/bctest/.config/openbao/approle') / name
 role_id = json.load(open(sys.argv[1]))['data']['role_id']
 assert (folder / 'role-id').read_text() == role_id
 assert folder.stat().st_mode & 0o777 == 0o700
+assert folder.stat().st_uid == pwd.getpwnam('bctest').pw_uid
 for filename in ('role-id', 'secret-id'):
     path = folder / filename
     assert path.stat().st_mode & 0o777 == 0o600
-    assert path.stat().st_uid == folder.stat().st_uid
+    assert path.stat().st_uid == pwd.getpwnam('bctest').pw_uid
 PY
 done
 
@@ -368,6 +373,10 @@ api_address=198.51.100.7 api_expect 403 'bound token cannot move' GET secret/dat
 grep -Fq 'permission denied' "$work/api.json" || fail 'moved token refusal must say permission denied'
 api_expect 204 'testsvc token revoke' POST auth/token/revoke-self consumer_token
 consumer_login testsvc 2001:db8::10 200
+python3 - "$work/api.json" <<'PY' || fail 'IPv6 testsvc token must have default and testsvc policies'
+import json, sys
+assert json.load(open(sys.argv[1]))['auth']['policies'] == ['default', 'testsvc']
+PY
 revoke_consumer
 consumer_login testsvc 198.51.100.7 400
 grep -Fq 'source address \"198.51.100.7\" unauthorized by CIDR restrictions on the role' "$work/api.json" || fail 'unbound sign-in must cite CIDR restrictions'
@@ -497,12 +506,32 @@ play_fails verify-login verify "testsvc's files must sign in from openbao_self_a
 no_ansible_tokens 'sign-in verify failure'
 play role -e "@$work/consumers.json"
 api_expect 200 'issue extra ID for verify' POST auth/approle/role/testsvc/secret-id admin_token
+python3 - "$work/api.json" "$work/verify-extra-secret-id" <<'PY'
+import json, pathlib, sys
+pathlib.Path(sys.argv[2]).write_text(json.load(open(sys.argv[1]))['data']['secret_id'])
+PY
 play_fails verify-extra verify 'testsvc must have exactly one secret ID, the one in its file' -e "@$work/consumers.json"
 no_ansible_tokens 'extra-ID verify failure'
 play role -e "@$work/consumers.json"
+save_ids testsvc
 play verify -e "@$work/consumers.json"
 one_accessor testsvc
 no_ansible_tokens 'verify repair'
+
+# A shorter IPv6 prefix stays a network in OpenBao's token-bound address list.
+wide_cidrs='{"openbao_approle_bound_cidrs":["192.0.2.10/32","2001:db8::/32","198.51.100.0/24","2001:db8::10/128"]}'
+play role -e "@$work/consumers.json" -e "$wide_cidrs"
+api_expect 200 'read AppRole with IPv6 network' GET auth/approle/role/testsvc admin_token
+python3 - "$work/api.json" <<'PY' || fail 'token-bound addresses must preserve the IPv6 /32 network'
+import json, sys
+assert json.load(open(sys.argv[1]))['data']['token_bound_cidrs'] == [
+    '192.0.2.10', '2001:db8::/32', '198.51.100.0/24', '2001:db8::10']
+PY
+play role -e "@$work/consumers.json" -e "$wide_cidrs"
+recap "$last_play_log" 0
+play verify -e "@$work/consumers.json" -e "$wide_cidrs"
+play role -e "@$work/consumers.json"
+no_ansible_tokens 'IPv6 network comparison'
 
 api_expect 200 'read ansible policy before reserved names' GET sys/policies/acl/ansible admin_token
 cp "$work/api.json" "$work/ansible-policy.json"

@@ -506,7 +506,13 @@ def test_workflow_jobs():
     )
     assert workflow["on"] == {"push": {}, "pull_request": {}}
     jobs = workflow["jobs"]
-    assert set(jobs) == JOBS | {"changes", "ansible-lint", "syntax-check", "python"}
+    assert set(jobs) == JOBS | {
+        "changes",
+        "ansible-lint",
+        "syntax-check",
+        "python",
+        "hub-rules",
+    }
     for job in JOBS:
         assert jobs[job]["needs"] == "changes"
         assert jobs[job]["if"] == (
@@ -514,6 +520,6 @@ def test_workflow_jobs():
             "needs.changes.outputs.full == 'true' || "
             "needs.changes.outputs." + job.replace("-", "_") + " == 'true') }}"
         )
-    for job in ("ansible-lint", "syntax-check", "python"):
+    for job in ("ansible-lint", "syntax-check", "python", "hub-rules"):
         assert "needs" not in jobs[job]
         assert "if" not in jobs[job]

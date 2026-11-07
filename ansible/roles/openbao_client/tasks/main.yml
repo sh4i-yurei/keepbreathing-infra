@@ -1,0 +1,30 @@
+---
+# Install openbao-read, which signs in as the calling account's AppRole and prints one secret,
+# and the address it signs in at (OpenBao on the hub decision 58).
+- name: OpenBao client | Create the configuration folder
+  ansible.builtin.file:
+    path: /etc/openbao
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: OpenBao client | Install the openbao-read helper
+  ansible.builtin.copy:
+    src: openbao-read.py
+    dest: /usr/local/bin/openbao-read
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: OpenBao client | Write the address file
+  ansible.builtin.template:
+    src: client.json.j2
+    dest: /etc/openbao/client.json
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Verify the OpenBao client
+  ansible.builtin.import_tasks: verify.yml
+  when: not ansible_check_mode

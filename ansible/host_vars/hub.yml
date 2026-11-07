@@ -8,7 +8,14 @@ openbao_user: keepbreath7
 ticket_band_user: keepbreath8
 openbao_port: 8200
 openbao_self_address: "100.95.89.6"
-openbao_approles: []
+openbao_approles:
+  - name: restore-check
+    files: false
+  - name: openbao-snapshot
+    account: "{{ openbao_user }}"
+    extra_paths:
+      - path: sys/storage/raft/snapshot
+        capabilities: [read]
 openbao_approle_bound_cidrs:
   - "100.95.89.6/32"
   - "fd7a:115c:a1e0::6e31:5907/128"

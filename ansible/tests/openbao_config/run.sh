@@ -37,6 +37,8 @@ TEST_ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32
 TEST_ANSIBLE_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 play_index=0
 printf '%s\n' '{"openbao_approles":[{"name":"testsvc","account":"bctest"},{"name":"othersvc","account":"bctest"}]}' >"$work/consumers.json"
+printf '%s\n' '{"openbao_approles":[{"name":"restore-check","files":false},{"name":"openbao-snapshot","account":"bctest","extra_paths":[{"path":"sys/storage/raft/snapshot","capabilities":["read"]}]}]}' >"$work/restore-consumers.json"
+restore_list=$work/restore-consumers.json
 
 # Run a playbook from this folder and require it to pass.
 play() {
@@ -46,6 +48,9 @@ play() {
   log=$work/$name-$play_index.log
   last_play_log=$log
   if ansible-playbook -i localhost, "tests/openbao_config/$name.yml" "$@" >"$log" 2>&1; then
+    if [[ -n ${admin_token:-} && ( $name == role || $name == verify ) ]]; then
+      no_ansible_tokens "$name play"
+    fi
     return 0
   fi
   tail -40 "$log"
@@ -62,6 +67,9 @@ play_fails() {
     fail "$label unexpectedly passed"
   fi
   grep -Fq "\"msg\": \"$message\"" "$log" || { tail -30 "$log"; fail "$label failed with the wrong message"; }
+  if [[ -n ${admin_token:-} && ( $name == role || $name == verify ) ]]; then
+    no_ansible_tokens "$label play"
+  fi
 }
 play_fails_contains() {
   local label=$1 name=$2 message=$3 log
@@ -73,6 +81,9 @@ play_fails_contains() {
     fail "$label unexpectedly passed"
   fi
   grep -Fq "$message" "$log" || { tail -30 "$log"; fail "$label failed without the expected message"; }
+  if [[ -n ${admin_token:-} && ( $name == role || $name == verify ) ]]; then
+    no_ansible_tokens "$label play"
+  fi
 }
 recap() {
   local log=$1 expected=$2
@@ -95,6 +106,14 @@ reports_both_mounts() {
   recap "$log" 2
   grep -Fq '"msg": "openbao_config would enable secret/ as a version 2 key/value store"' "$log" || fail 'check mode must report the key/value store'
   grep -Fq '"msg": "openbao_config would enable approle/"' "$log" || fail 'check mode must report AppRole'
+}
+check_restore_report() {
+  local log=$1 message
+  for message in 'the policy restore-check' 'the AppRole restore-check' 'the policy openbao-snapshot' 'the AppRole openbao-snapshot' "restore-check's test secret"; do
+    grep -Fq "openbao_config would write $message" "$log" || fail "check mode must report $message"
+  done
+  grep -Fq 'openbao_config would issue a secret ID for openbao-snapshot and write its files' "$log" || fail 'snapshot files must be reported'
+  if grep -Fq 'openbao_config would issue a secret ID for restore-check and write its files' "$log"; then fail 'restore-check must have no files'; fi
 }
 
 # Call OpenBao's API with the forwarded test address. The token is passed by variable name,
@@ -256,6 +275,8 @@ for name in testsvc othersvc; do
     grep -Fq "\"msg\": \"$message\"" "$last_play_log" || fail "missing check-mode message: $message"
   done
 done
+play role --check --diff -e "@$restore_list"
+check_restore_report "$last_play_log"
 play_fails no-openbao role 'OpenBao must answer sys/health with 200 before openbao_config runs'
 
 # Start OpenBao through the openbao role.
@@ -555,6 +576,155 @@ api_expect 404 'missing account must not create AppRole' GET auth/approle/role/s
 play role --check --diff -e '{"openbao_approles":[{"name":"svcnone","account":"bcnone"}]}'
 grep -Fq 'openbao_config would issue a secret ID for svcnone and write its files' "$last_play_log" || fail 'check mode must report missing-account files'
 no_ansible_tokens 'input refusal and missing-account check'
+
+# 3.2c begins with an absent test secret, after 3.2a exercised its grant.
+api_expect 204 'remove the 3.2a test secret' DELETE secret/metadata/restore-check/test admin_token
+play role --check --diff -e "@$restore_list"
+check_restore_report "$last_play_log"
+api_expect 404 'check mode leaves snapshot policy absent' GET sys/policies/acl/openbao-snapshot admin_token
+api_expect 404 'check mode leaves test secret absent' GET secret/metadata/restore-check/test admin_token
+play role -e "@$restore_list"
+api_expect 200 'snapshot policy' GET sys/policies/acl/openbao-snapshot admin_token
+python3 - "$work/api.json" <<'PY' || fail 'snapshot policy must match the wanted text'
+import json,sys
+assert json.load(open(sys.argv[1]))['data']['policy'] == 'path "secret/data/openbao-snapshot/*" {\n  capabilities = ["read"]\n}\n\npath "sys/storage/raft/snapshot" {\n  capabilities = ["read"]\n}\n'
+PY
+api_expect 200 'restore-check policy' GET sys/policies/acl/restore-check admin_token
+python3 - "$work/api.json" <<'PY' || fail 'restore-check must have only its own policy block'
+import json,sys
+assert json.load(open(sys.argv[1]))['data']['policy'] == 'path "secret/data/restore-check/*" {\n  capabilities = ["read"]\n}\n'
+PY
+for name in restore-check openbao-snapshot; do
+  api_expect 200 "$name AppRole settings" GET "auth/approle/role/$name" admin_token
+  python3 - "$work/api.json" "$name" <<'PY' || fail "$name AppRole must have decision 51's settings"
+import json,sys
+data=json.load(open(sys.argv[1]))['data']
+assert data['secret_id_ttl']==0 and data['secret_id_num_uses']==0
+assert data['secret_id_bound_cidrs']==['192.0.2.10/32','2001:db8::10/128']
+assert data['token_bound_cidrs']==['192.0.2.10','2001:db8::10']
+assert data['token_ttl']==300 and data['token_max_ttl']==300
+assert data['token_policies']==[sys.argv[2]]
+PY
+done
+save_ids openbao-snapshot
+python3 - <<'PY' || fail 'snapshot files must be private to bctest'
+import pathlib,pwd,stat
+folder=pathlib.Path('/home/bctest/.config/openbao/approle/openbao-snapshot')
+uid=pwd.getpwnam('bctest').pw_uid
+assert folder.stat().st_uid==uid and stat.S_IMODE(folder.stat().st_mode)==0o700
+for name in ('role-id','secret-id'):
+    path=folder/name
+    assert path.stat().st_uid==uid and stat.S_IMODE(path.stat().st_mode)==0o600
+PY
+if compgen -G '/home/*/.config/openbao/approle/restore-check' >/dev/null; then
+  fail 'restore-check must have no files in any account'
+fi
+api_expect 404 'restore-check has no secret IDs' LIST auth/approle/role/restore-check/secret-id admin_token
+api_expect 200 'test secret value' GET secret/data/restore-check/test admin_token
+python3 - "$work/api.json" 1 <<'PY' || fail 'test secret must have the expected value and version'
+import json,sys
+data=json.load(open(sys.argv[1]))['data']
+assert data['data']['value']=='restore-check-test' and data['metadata']['version']==int(sys.argv[2])
+PY
+python3 - "$restore_list" "$work/two-paths.json" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1]))
+data['openbao_approles'][1]['extra_paths'].append(
+    {'path':'sys/health','capabilities':['read','list']})
+with open(sys.argv[2],'w') as stream:
+    json.dump(data,stream)
+PY
+play role -e "@$work/two-paths.json"
+api_expect 200 'two-path policy' GET sys/policies/acl/openbao-snapshot admin_token
+python3 - "$work/api.json" <<'PY' || fail 'extra policy paths must retain list order and JSON capabilities'
+import json,sys
+assert json.load(open(sys.argv[1]))['data']['policy'] == 'path "secret/data/openbao-snapshot/*" {\n  capabilities = ["read"]\n}\n\npath "sys/storage/raft/snapshot" {\n  capabilities = ["read"]\n}\n\npath "sys/health" {\n  capabilities = ["read", "list"]\n}\n'
+PY
+play role -e "@$restore_list"
+consumer_login openbao-snapshot 192.0.2.10 200
+python3 - "$work/api.json" <<'PY' || fail 'snapshot token must have default and openbao-snapshot policies'
+import json,sys
+assert json.load(open(sys.argv[1]))['auth']['policies']==['default','openbao-snapshot']
+PY
+snapshot_token=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["auth"]["client_token"])' "$work/api.json")
+api_expect 200 'snapshot read' GET sys/storage/raft/snapshot snapshot_token
+[[ $(wc -c <"$work/api.json") -gt 0 ]] || fail 'snapshot must have a body'
+api_expect 403 'snapshot restore refused' POST sys/storage/raft/snapshot snapshot_token
+api_expect 403 'snapshot test secret refused' GET secret/data/restore-check/test snapshot_token
+api_expect 204 'snapshot token revoke' POST auth/token/revoke-self snapshot_token
+api_expect 200 'restore-check role ID' GET auth/approle/role/restore-check/role-id admin_token
+restore_role_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["role_id"])' "$work/api.json")
+printf '%s' "$restore_role_id" >"$work/restore-check-role-id"
+api_expect 200 'issue restore-check secret ID' POST auth/approle/role/restore-check/secret-id admin_token
+restore_secret_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["secret_id"])' "$work/api.json")
+restore_accessor=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["secret_id_accessor"])' "$work/api.json")
+printf '%s' "$restore_secret_id" >"$work/restore-check-secret-id"
+restore_body=$(RESTORE_ROLE_ID=$restore_role_id RESTORE_SECRET_ID=$restore_secret_id python3 -c 'import json,os; print(json.dumps({"role_id":os.environ["RESTORE_ROLE_ID"],"secret_id":os.environ["RESTORE_SECRET_ID"]}))')
+api_expect 200 'restore-check sign-in' POST auth/approle/login '' "$restore_body"
+restore_token=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["auth"]["client_token"])' "$work/api.json")
+api_expect 200 'restore-check reads its test secret' GET secret/data/restore-check/test restore_token
+python3 - "$work/api.json" <<'PY' || fail 'restore-check must read the value Ansible wrote'
+import json,sys
+assert json.load(open(sys.argv[1]))['data']['data']['value']=='restore-check-test'
+PY
+api_expect 204 'restore-check token revoke' POST auth/token/revoke-self restore_token
+play role -e "@$restore_list"
+recap "$last_play_log" 0
+play role --check --diff -e "@$restore_list"
+recap "$last_play_log" 0
+api_expect 200 'test secret after no-op runs' GET secret/data/restore-check/test admin_token
+python3 - "$work/api.json" <<'PY' || fail 'no-op runs must leave the test secret at version 1'
+import json,sys
+assert json.load(open(sys.argv[1]))['data']['metadata']['version']==1
+PY
+play verify -e "@$restore_list"
+api_expect 200 'restore-check still signs in' POST auth/approle/login '' "$restore_body"
+revoke_consumer
+api_expect 200 'restore-check accessor survives' LIST auth/approle/role/restore-check/secret-id admin_token
+python3 - "$work/api.json" "$restore_accessor" <<'PY' || fail 'restore-check accessor must survive'
+import json,sys
+assert json.load(open(sys.argv[1]))['data']['keys']==[sys.argv[2]]
+PY
+api_expect 204 'soft-delete test secret' DELETE secret/data/restore-check/test admin_token
+play role --check --diff -e "@$restore_list"
+grep -Fq "openbao_config would write restore-check's test secret" "$last_play_log" || fail 'check mode must report deleted test secret'
+api_expect 404 'check mode leaves test secret deleted' GET secret/data/restore-check/test admin_token
+play_fails verify-deleted verify "restore-check's test secret must exist" -e "@$restore_list"
+play role -e "@$restore_list"
+api_expect 200 'repaired test secret' GET secret/data/restore-check/test admin_token
+python3 - "$work/api.json" 2 <<'PY' || fail 'soft-deleted test secret must be version 2'
+import json,sys
+data=json.load(open(sys.argv[1]))['data']
+assert data['data']['value']=='restore-check-test' and data['metadata']['version']==int(sys.argv[2])
+PY
+play verify -e "@$restore_list"
+api_expect 204 'destroy test secret version 2' PUT secret/destroy/restore-check/test admin_token '{"versions":[2]}'
+play role -e "@$restore_list"
+api_expect 200 'version 3 test secret' GET secret/data/restore-check/test admin_token
+python3 - "$work/api.json" <<'PY' || fail 'destroyed test secret must be version 3'
+import json,sys
+data=json.load(open(sys.argv[1]))['data']
+assert data['data']['value']=='restore-check-test' and data['metadata']['version']==3
+PY
+api_expect 204 'delete test secret metadata' DELETE secret/metadata/restore-check/test admin_token
+printf '%s\n' '{"openbao_approles":[{"name":"openbao-snapshot","account":"bctest","extra_paths":[{"path":"sys/storage/raft/snapshot","capabilities":["read"]}]}]}' >"$work/snapshot-only.json"
+play role -e "@$work/snapshot-only.json"
+api_expect 404 'no reader means no test secret' GET secret/metadata/restore-check/test admin_token
+play role -e "@$restore_list"
+api_expect 200 'test secret returns at version 1' GET secret/data/restore-check/test admin_token
+python3 - "$work/api.json" <<'PY' || fail 'test secret after metadata deletion must be version 1'
+import json,sys
+data=json.load(open(sys.argv[1]))['data']
+assert data['data']['value']=='restore-check-test' and data['metadata']['version']==1
+PY
+play_fails missing-files-account role 'openbao_approles entry svcnoacct must name an account, because it has files' -e '{"openbao_approles":[{"name":"svcnoacct"}]}'
+api_expect 404 'missing files account creates no AppRole' GET auth/approle/role/svcnoacct admin_token
+login ansible TEST_ANSIBLE_PASSWORD ansible_token
+api_expect 200 'ansible reads test metadata' GET secret/metadata/restore-check/test ansible_token
+api_expect 403 'ansible cannot read test value' GET secret/data/restore-check/test ansible_token
+api_expect 403 'ansible cannot read other metadata' GET secret/metadata/other/test ansible_token
+api_expect 204 'ansible token revoke' POST auth/token/revoke-self ansible_token
+no_ansible_tokens '3.2c cases'
 
 api_expect 204 'keepbreath0 token revoke' POST auth/token/revoke-self admin_token
 logs_clean

@@ -11,9 +11,11 @@
                                      (':' not in item and item.endswith('/32'))) else item] }}
   loop: "{{ openbao_approle_bound_cidrs }}"
 
-- name: OpenBao config | Set the wanted consumer policy and AppRole
+- name: OpenBao config | Build the wanted consumer policy
+  ansible.builtin.include_tasks: consumer-policy.yml
+
+- name: OpenBao config | Set the wanted consumer AppRole
   ansible.builtin.set_fact:
-    openbao_config_wanted_policy: "path \"secret/data/{{ openbao_consumer.name }}/*\" {\n  capabilities = [\"read\"]\n}\n"
     openbao_config_wanted_role:
       secret_id_ttl: 0
       secret_id_num_uses: 0
@@ -107,8 +109,15 @@
   ansible.builtin.debug:
     msg: "openbao_config would issue a secret ID for {{ openbao_consumer.name }} and write its files"
   changed_when: true
-  when: ansible_check_mode and (openbao_config_role.status == 404 or openbao_consumer.account not in (ansible_facts.getent_passwd | default({})))
+  when: >-
+    ansible_check_mode and openbao_consumer.files | default(true) and
+    (openbao_config_role.status == 404 or
+     openbao_consumer.account not in (ansible_facts.getent_passwd | default({})))
 
 - name: OpenBao config | Manage consumer files and secret IDs
   ansible.builtin.include_tasks: consumer-files.yml
-  when: not ansible_check_mode or (openbao_config_role.status == 200 and openbao_consumer.account in (ansible_facts.getent_passwd | default({})))
+  when: >-
+    openbao_consumer.files | default(true) and
+    (not ansible_check_mode or
+     (openbao_config_role.status == 200 and
+      openbao_consumer.account in (ansible_facts.getent_passwd | default({}))))

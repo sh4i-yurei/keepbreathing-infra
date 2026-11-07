@@ -65,6 +65,10 @@
       loop: "{{ openbao_approles }}"
       loop_control:
         loop_var: openbao_consumer
+
+    - name: OpenBao config verify | Check the restore-check test secret
+      ansible.builtin.include_tasks: verify-restore-check.yml
+      when: "'restore-check' in (openbao_approles | map(attribute='name') | list)"
   always:
     - name: OpenBao config verify | Revoke the ansible token
       ansible.builtin.uri:

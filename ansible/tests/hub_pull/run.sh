@@ -245,6 +245,10 @@ restic_machine testweb dump latest /web-redis.rdb >"$work/dump.rdb"
 podman run --rm --security-opt label=disable --volume "$work/dump.rdb:/dump.rdb:ro" "$redis_image" \
   redis-check-rdb /dump.rdb >"$work/check-rdb.log" 2>&1 || fail 'redis-check-rdb must accept the dump'
 grep -Fq '[info] 2 keys read' "$work/check-rdb.log" || fail 'the dump must hold the two keys'
+# The role reads the timer's properties by name, then requires it enabled and scheduled (#187).
+for task in 'Hub pull | Read the timer for testweb' 'Hub pull | Require the timer scheduled for testweb'; do
+  [[ $(task_status "$work/first.log" "$task") == ok ]] || fail "the first play must report ok for: $task"
+done
 printf 'PASS first play installs the pull and takes a snapshot of the queue\n'
 
 if [[ ${TEST_FAIL_AFTER_HUB_PULL_ROLE:-} == 1 ]]; then

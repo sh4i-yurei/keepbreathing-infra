@@ -151,6 +151,10 @@
 
 		// bastion-server
 		"tag:bastion": ["autogroup:admin"],
+
+		// Temporary: Infrastructure as code's test of GitHub runners joining through a federated
+		// identity. Removed once the result is in the Infrastructure as code note.
+		"tag:iac-ci-test": ["autogroup:admin"],
 	},
 
 	// Machines tagged tag:hub are approved automatically to serve the hub's Services, so a

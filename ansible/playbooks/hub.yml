@@ -78,3 +78,7 @@
       vars:
         tailscale_service_name: openbao
         tailscale_service_port: "{{ openbao_port }}"
+    - name: Back up OpenBao's snapshot nightly
+      ansible.builtin.import_role:
+        name: openbao_backup
+      tags: [openbao_backup]

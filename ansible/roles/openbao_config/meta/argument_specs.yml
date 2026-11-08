@@ -49,3 +49,27 @@ argument_specs:
       openbao_make_transit_keys:
         type: bool
         default: false
+      openbao_jwt_roles:
+        type: list
+        elements: dict
+        default: []
+        options:
+          name:
+            type: str
+            required: true
+          bound_claims:
+            type: dict
+            required: true
+          transit_keys:
+            type: list
+            elements: str
+            required: true
+          token_ttl:
+            type: int
+            default: 1800
+      openbao_jwt_issuer:
+        type: str
+        default: https://token.actions.githubusercontent.com
+      openbao_jwt_audience:
+        type: str
+        default: ""

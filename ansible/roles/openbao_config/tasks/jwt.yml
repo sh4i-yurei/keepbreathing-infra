@@ -1,0 +1,258 @@
+---
+# jwt/, the issuer it trusts, and the roles openbao_jwt_roles lists, each with its own policy
+# (OpenBao on the hub decisions 65, 66 and 68). openbao_jwt_roles is the whole truth: a JWT role it
+# doesn't list is deleted here, and remove-consumers.yml deletes its policy. jwt/ is enabled when the
+# list isn't empty and never disabled. The token's policy isn't widened in check mode, so a dry run
+# reads nothing under jwt/ while jwt/ is absent, and reports the config and every role as writes.
+- name: OpenBao config | Require jwt/ to be a JWT auth method
+  ansible.builtin.assert:
+    that: >-
+      'jwt/' not in openbao_config_auth.json.data
+      or openbao_config_auth.json.data['jwt/'].type == 'jwt'
+    fail_msg: jwt/ must be a JWT auth method
+    quiet: true
+
+- name: OpenBao config | Manage jwt/, its config, and each listed JWT role and its policy
+  when: openbao_jwt_roles | length > 0
+  vars:
+    openbao_config_jwt_present: "{{ 'jwt/' in openbao_config_auth.json.data }}"
+    # Each task names its entry openbao_config_jwt_role. verify.yml builds the same two values.
+    openbao_config_jwt_wanted_policy: |
+      {% for key in openbao_config_jwt_role.transit_keys %}
+      path "transit/datakey/plaintext/{{ key }}" {
+        capabilities = ["update"]
+      }
+      path "transit/decrypt/{{ key }}" {
+        capabilities = ["update"]
+      }
+      {% endfor %}
+      path "auth/token/lookup-self" {
+        capabilities = ["read"]
+      }
+      path "secret/data/{{ openbao_config_jwt_role.name }}/*" {
+        capabilities = ["read"]
+      }
+    # Argument validation doesn't fill in a nested option's default, so token_ttl's 1800 is here.
+    openbao_config_jwt_wanted_role:
+      role_type: jwt
+      user_claim: sub
+      bound_audiences: ["{{ openbao_jwt_audience }}"]
+      bound_claims_type: string
+      bound_claims: "{{ openbao_config_jwt_role.bound_claims }}"
+      token_policies: ["{{ openbao_config_jwt_role.name }}"]
+      token_no_default_policy: true
+      token_ttl: "{{ openbao_config_jwt_role.token_ttl | default(1800) | int }}"
+      token_max_ttl: "{{ openbao_config_jwt_role.token_ttl | default(1800) | int }}"
+  block:
+    - name: OpenBao config | Report jwt/ in check mode
+      ansible.builtin.debug:
+        msg: openbao_config would enable jwt/
+      changed_when: true
+      when: ansible_check_mode and not openbao_config_jwt_present
+
+    - name: OpenBao config | Enable jwt/
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/auth/jwt"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          type: jwt
+        status_code: [204]
+      register: openbao_config_enable_jwt
+      changed_when: openbao_config_enable_jwt.status == 204
+      no_log: true
+      when: not ansible_check_mode and not openbao_config_jwt_present
+
+    # GET auth/jwt/config answers 404 until the config is first written.
+    - name: OpenBao config | Read jwt/'s config
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/config"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        status_code: [200, 404]
+        return_content: true
+      register: openbao_config_jwt_config
+      changed_when: false
+      check_mode: false
+      no_log: true
+      when: not ansible_check_mode or openbao_config_jwt_present
+
+    - name: OpenBao config | Compare jwt/'s config with the issuer
+      ansible.builtin.set_fact:
+        openbao_config_jwt_config_differs: >-
+          {{ openbao_config_jwt_config.status | default(404) != 200
+             or openbao_config_jwt_config.json.data.oidc_discovery_url != openbao_jwt_issuer
+             or openbao_config_jwt_config.json.data.bound_issuer != openbao_jwt_issuer }}
+
+    - name: OpenBao config | Report jwt/'s config in check mode
+      ansible.builtin.debug:
+        msg: "openbao_config would write jwt/'s config"
+      changed_when: true
+      when: ansible_check_mode and openbao_config_jwt_config_differs
+
+    # OpenBao fetches the issuer's discovery document when the config is written, and drops the
+    # keys it cached, so the config is written only when it differs.
+    - name: OpenBao config | Write jwt/'s config
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/config"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          oidc_discovery_url: "{{ openbao_jwt_issuer }}"
+          bound_issuer: "{{ openbao_jwt_issuer }}"
+        status_code: [204]
+      changed_when: true
+      no_log: true
+      when: not ansible_check_mode and openbao_config_jwt_config_differs
+
+    - name: OpenBao config | Read each JWT role policy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ item.name }}"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        status_code: [200, 404]
+        return_content: true
+      loop: "{{ openbao_jwt_roles }}"
+      register: openbao_config_jwt_policy_reads
+      changed_when: false
+      check_mode: false
+      no_log: true
+
+    - name: OpenBao config | Report each JWT role policy change in check mode
+      ansible.builtin.debug:
+        msg: "openbao_config would write the policy {{ item.item.name }}"
+      loop: "{{ openbao_config_jwt_policy_reads.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      vars:
+        openbao_config_jwt_role: "{{ item.item }}"
+      changed_when: true
+      when: ansible_check_mode and (item.status != 200 or item.json.data.policy != openbao_config_jwt_wanted_policy)
+
+    - name: OpenBao config | Write each JWT role policy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ item.item.name }}"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          policy: "{{ openbao_config_jwt_wanted_policy }}"
+        status_code: [204]
+      loop: "{{ openbao_config_jwt_policy_reads.results }}"
+      vars:
+        openbao_config_jwt_role: "{{ item.item }}"
+      changed_when: true
+      no_log: true
+      when: not ansible_check_mode and (item.status != 200 or item.json.data.policy != openbao_config_jwt_wanted_policy)
+
+    - name: OpenBao config | Read each JWT role
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/role/{{ item.name }}"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        status_code: [200, 404]
+        return_content: true
+      loop: "{{ openbao_jwt_roles }}"
+      register: openbao_config_jwt_role_reads
+      changed_when: false
+      check_mode: false
+      no_log: true
+      when: not ansible_check_mode or openbao_config_jwt_present
+
+    # A role differs when it is absent, its read was skipped in check mode, or any field the role
+    # sets reads back otherwise.
+    - name: OpenBao config | Report each JWT role change in check mode
+      ansible.builtin.debug:
+        msg: "openbao_config would write the JWT role {{ item.item.name }}"
+      loop: "{{ openbao_config_jwt_role_reads.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      vars:
+        openbao_config_jwt_role: "{{ item.item }}"
+      changed_when: true
+      when: >-
+        ansible_check_mode and
+        (item.status | default(404) != 200
+         or (openbao_config_jwt_wanted_role | dict2items | map(attribute='key') | map('extract', item.json.data) | list)
+            != (openbao_config_jwt_wanted_role | dict2items | map(attribute='value') | list))
+
+    - name: OpenBao config | Write each JWT role
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/role/{{ item.item.name }}"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+        body_format: json
+        body: "{{ openbao_config_jwt_wanted_role }}"
+        status_code: [204]
+      loop: "{{ openbao_config_jwt_role_reads.results }}"
+      vars:
+        openbao_config_jwt_role: "{{ item.item }}"
+      changed_when: true
+      no_log: true
+      when: >-
+        not ansible_check_mode and
+        (item.status | default(404) != 200
+         or (openbao_config_jwt_wanted_role | dict2items | map(attribute='key') | map('extract', item.json.data) | list)
+            != (openbao_config_jwt_wanted_role | dict2items | map(attribute='value') | list))
+
+# The cleanup runs whenever jwt/ exists, so an empty list deletes every JWT role and leaves jwt/.
+# LIST auth/jwt/role answers 404 when there are no roles.
+- name: OpenBao config | List the JWT roles
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/role"
+    method: LIST
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openbao_config_jwt_role_list
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: >-
+    'jwt/' in openbao_config_auth.json.data
+    or (not ansible_check_mode and openbao_jwt_roles | length > 0)
+
+- name: OpenBao config | Set the JWT roles to delete
+  ansible.builtin.set_fact:
+    openbao_config_stale_jwt_roles: >-
+      {{ (openbao_config_jwt_role_list.json.data['keys'] | default([])
+          if openbao_config_jwt_role_list.status | default(0) == 200 else [])
+         | reject('in', openbao_jwt_roles | map(attribute='name') | list) | list }}
+
+- name: OpenBao config | Report each JWT role to delete in check mode
+  ansible.builtin.debug:
+    msg: "openbao_config would delete the JWT role {{ item }}"
+  loop: "{{ openbao_config_stale_jwt_roles }}"
+  changed_when: true
+  when: ansible_check_mode
+
+- name: OpenBao config | Delete each JWT role not on the list
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/role/{{ item }}"
+    method: DELETE
+    headers:
+      X-Forwarded-For: "{{ openbao_self_address }}"
+      X-Vault-Token: "{{ openbao_config_login.json.auth.client_token }}"
+    status_code: [204]
+  loop: "{{ openbao_config_stale_jwt_roles }}"
+  changed_when: true
+  no_log: true
+  when: not ansible_check_mode

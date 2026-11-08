@@ -1,7 +1,7 @@
 ---
-# openbao_approles is the whole truth (OpenBao on the hub decision 54). Delete every AppRole and
-# every policy it doesn't name, except the four reserved policies, and every consumer folder that
-# belongs to no entry with files. Nothing under secret/ is ever deleted.
+# openbao_approles is the whole truth (OpenBao on the hub decision 54). Delete every AppRole it
+# doesn't name, every policy naming no consumer or JWT role (decision 68) but the four reserved
+# ones, and each consumer folder of no entry with files. Nothing under secret/ is ever deleted.
 - name: OpenBao config | Set the listed consumer names
   ansible.builtin.set_fact:
     openbao_config_listed_names: "{{ openbao_approles | map(attribute='name') | list }}"
@@ -67,7 +67,7 @@
   ansible.builtin.set_fact:
     openbao_config_stale_policies: >-
       {{ openbao_config_policy_list.json.data['keys']
-         | reject('in', openbao_config_listed_names + ['ansible', 'keepbreath0', 'default', 'root'])
+         | reject('in', openbao_config_listed_names + (openbao_jwt_roles | map(attribute='name') | list) + ['ansible', 'keepbreath0', 'default', 'root'])
          | list }}
 
 - name: OpenBao config | Report each policy to delete in check mode

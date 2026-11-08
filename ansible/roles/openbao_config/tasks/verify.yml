@@ -60,6 +60,165 @@
         fail_msg: approle/ must be an AppRole auth method
         quiet: true
 
+    - name: OpenBao config verify | Read the ansible policy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/ansible"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_config_verify_ansible_policy
+      changed_when: false
+      no_log: true
+
+    - name: OpenBao config verify | Require the ansible policy to match its file, ignoring trailing newlines
+      ansible.builtin.assert:
+        that: >-
+          openbao_config_verify_ansible_policy.json.data.policy.rstrip('\n')
+          == lookup('ansible.builtin.file', role_path ~ '/../openbao/files/ansible-policy.hcl', rstrip=false).rstrip('\n')
+        fail_msg: the ansible policy must match roles/openbao/files/ansible-policy.hcl
+        quiet: true
+
+    # A listed key that doesn't exist passes here, because the run warned about it.
+    - name: OpenBao config verify | Read each listed transit key
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/transit/keys/{{ item }}"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [200, 404]
+        return_content: true
+      loop: "{{ openbao_transit_keys }}"
+      register: openbao_config_verify_transit_keys
+      changed_when: false
+      no_log: true
+
+    - name: OpenBao config verify | Require each listed transit key that exists to be aes256-gcm96 with deletion, export and plaintext backup off
+      ansible.builtin.assert:
+        that: >-
+          openbao_config_verify_transit_key.status == 404
+          or (openbao_config_verify_transit_key.json.data.type == 'aes256-gcm96'
+              and openbao_config_verify_transit_key.json.data.deletion_allowed is false
+              and openbao_config_verify_transit_key.json.data.exportable is false
+              and openbao_config_verify_transit_key.json.data.allow_plaintext_backup is false)
+        fail_msg: "transit key {{ item }} must be aes256-gcm96 with deletion, export and plaintext backup off"
+        quiet: true
+      vars:
+        openbao_config_verify_transit_key: "{{ openbao_config_verify_transit_keys.results | selectattr('item', 'equalto', item) | first }}"
+      loop: "{{ openbao_transit_keys }}"
+
+    # OpenBao never compares bound_issuer with the discovery document's issuer, so both are read
+    # back (decision 65). The policy and role values are the ones jwt.yml builds.
+    - name: OpenBao config verify | Check jwt/'s config, each JWT role and each JWT role policy
+      when: not ansible_check_mode and openbao_jwt_roles | length > 0
+      vars:
+        openbao_config_jwt_wanted_policy: |
+          {% for key in openbao_config_jwt_role.transit_keys %}
+          path "transit/datakey/plaintext/{{ key }}" {
+            capabilities = ["update"]
+          }
+          path "transit/decrypt/{{ key }}" {
+            capabilities = ["update"]
+          }
+          {% endfor %}
+          path "auth/token/lookup-self" {
+            capabilities = ["read"]
+          }
+          path "secret/data/{{ openbao_config_jwt_role.name }}/*" {
+            capabilities = ["read"]
+          }
+        openbao_config_jwt_wanted_role:
+          role_type: jwt
+          user_claim: sub
+          bound_audiences: ["{{ openbao_jwt_audience }}"]
+          bound_claims_type: string
+          bound_claims: "{{ openbao_config_jwt_role.bound_claims }}"
+          token_policies: ["{{ openbao_config_jwt_role.name }}"]
+          token_no_default_policy: true
+          token_ttl: "{{ openbao_config_jwt_role.token_ttl | default(1800) | int }}"
+          token_max_ttl: "{{ openbao_config_jwt_role.token_ttl | default(1800) | int }}"
+      block:
+        - name: OpenBao config verify | Read jwt/'s config
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/config"
+            method: GET
+            headers:
+              X-Forwarded-For: "{{ openbao_self_address }}"
+              X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+            status_code: [200, 404]
+            return_content: true
+          register: openbao_config_verify_jwt_config
+          changed_when: false
+          no_log: true
+
+        - name: OpenBao config verify | Require jwt/'s config to name the issuer twice
+          ansible.builtin.assert:
+            that:
+              - openbao_config_verify_jwt_config.status == 200
+              - openbao_config_verify_jwt_config.json.data.oidc_discovery_url | default('') == openbao_jwt_issuer
+              - openbao_config_verify_jwt_config.json.data.bound_issuer | default('') == openbao_jwt_issuer
+            fail_msg: "jwt/'s config must name {{ openbao_jwt_issuer }} as its discovery URL and bound issuer"
+            quiet: true
+
+        - name: OpenBao config verify | Read each JWT role
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ openbao_port }}/v1/auth/jwt/role/{{ item.name }}"
+            method: GET
+            headers:
+              X-Forwarded-For: "{{ openbao_self_address }}"
+              X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+            status_code: [200, 404]
+            return_content: true
+          loop: "{{ openbao_jwt_roles }}"
+          register: openbao_config_verify_jwt_roles
+          changed_when: false
+          no_log: true
+
+        - name: OpenBao config verify | Require each JWT role to match its entry
+          ansible.builtin.assert:
+            that:
+              - item.status == 200
+              - >-
+                (openbao_config_jwt_wanted_role | dict2items | map(attribute='key') | map('extract', item.json.data) | list)
+                == (openbao_config_jwt_wanted_role | dict2items | map(attribute='value') | list)
+            fail_msg: "JWT role {{ item.item.name }} must match openbao_jwt_roles"
+            quiet: true
+          loop: "{{ openbao_config_verify_jwt_roles.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+          vars:
+            openbao_config_jwt_role: "{{ item.item }}"
+
+        - name: OpenBao config verify | Read each JWT role policy
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/{{ item.name }}"
+            method: GET
+            headers:
+              X-Forwarded-For: "{{ openbao_self_address }}"
+              X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+            status_code: [200, 404]
+            return_content: true
+          loop: "{{ openbao_jwt_roles }}"
+          register: openbao_config_verify_jwt_policies
+          changed_when: false
+          no_log: true
+
+        - name: OpenBao config verify | Require each JWT role policy to match its entry
+          ansible.builtin.assert:
+            that:
+              - item.status == 200
+              - item.json.data.policy | default('') == openbao_config_jwt_wanted_policy
+            fail_msg: "JWT role {{ item.item.name }}'s policy must match openbao_jwt_roles"
+            quiet: true
+          loop: "{{ openbao_config_verify_jwt_policies.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+          vars:
+            openbao_config_jwt_role: "{{ item.item }}"
+
     - name: OpenBao config verify | Check each consumer
       ansible.builtin.include_tasks: verify-consumer.yml
       loop: "{{ openbao_approles }}"

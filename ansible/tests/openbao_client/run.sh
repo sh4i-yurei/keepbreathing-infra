@@ -274,12 +274,14 @@ assert not ({"approle", "userpass-ansible"} & set(names)), names
 PY
 }
 logs_clean() {
-  python3 - "$work" <<'PY' || fail 'play logs and helper output must contain no generated secret, role ID or secret ID'
+  python3 - "$work" "$patterns" <<'PY' || fail 'play logs and helper output must contain no generated secret, role ID, secret ID or test value'
 import os, pathlib, sys
-work = pathlib.Path(sys.argv[1])
+work, patterns = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 secrets = [os.environ[name] for name in ('TEST_SEAL_KEY', 'TEST_ADMIN_PASSWORD', 'TEST_ANSIBLE_PASSWORD')]
 secrets += [path.read_text() for path in work.glob('*-id')]
-assert len(secrets) == 7, len(secrets)
+# The two Podman test values, read from their pattern files so no command line holds them.
+secrets += [(patterns / name).read_text().rstrip('\n') for name in ('pod-one', 'pod-two')]
+assert len(secrets) == 9, len(secrets)
 logs = sorted(work.glob('*.log'))
 assert len(logs) > 10, logs
 for path in logs:
@@ -405,6 +407,265 @@ helper_exact 'bltest listing its Podman secrets through podman unshare' 0 "$podm
 podman_secret --unshare bltest "$podman_id" delete
 helper_exact 'bltest deleting its Podman secret through podman unshare' 0 '' ''
 [[ ! -e $podman_secrets/$podman_id ]] || fail "delete through podman unshare must remove the secret's file"
+stop_proxy
+
+# An account takes its containers' secrets from OpenBao (decision 72). podman-account makes
+# openbao-podman-secret blother's default Podman secret driver, podman-secret keeps only a path
+# in a Podman secret, and a Quadlet unit reads the value when it starts. Lookups reach OpenBao
+# at the hub's address.
+start_proxy 192.0.2.10
+blother_uid=$(id -u blother)
+bltest_uid=$(id -u bltest)
+openbao_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("roles/openbao/defaults/main.yml"))["openbao_image"])')
+# Run a command as an account from /, with its run directory, the way its user manager would.
+as_account() {
+  local account=$1
+  shift
+  (
+    cd /
+    HOME="/home/$account" USER="$account" LOGNAME="$account" \
+      XDG_RUNTIME_DIR="/run/user/$(id -u "$account")" runuser -u "$account" -- "$@"
+  )
+}
+# Count a pipe's lines matching a pattern file; no match is a count of 0, not a failure.
+count_matching() { grep -cF -f "$1" || [[ $? == 1 ]]; }
+# Print the files under the given folders holding a pattern file's value, skipping sockets and
+# FIFOs.
+files_holding() {
+  local pattern=$1
+  shift
+  grep -rlsF -D skip -f "$pattern" "$@" || true
+}
+# OpenBao's reads of one path, from its audit log, which is the openbao container's output.
+audit_reads() {
+  as_account bltest podman logs openbao 2>/dev/null | AUDIT_PATH=$1 python3 -c '
+import json, os, sys
+count = 0
+for line in sys.stdin:
+    if not line.startswith("{"):
+        continue
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        continue
+    request = entry.get("request", {})
+    if (entry.get("type") == "request" and request.get("operation") == "read"
+            and request.get("path") == os.environ["AUDIT_PATH"]):
+        count += 1
+print(count)
+'
+}
+secret_changed() {
+  local log=$1 expected=$2
+  grep -Fq "\"openbao_client_secret_changed\": $expected" "$log" || {
+    tail -40 "$log"
+    fail "$log must set openbao_client_secret_changed to $expected"
+  }
+}
+podman_secret_play() {
+  local path=$1
+  shift
+  play podman-secret -e openbao_client_podman_account=blother -e openbao_client_secret_name=appkey \
+    -e "openbao_client_secret_path=$path" "$@"
+}
+appkey_field() { as_account blother podman secret inspect --format "{{$1}}" appkey; }
+unit_state() { as_account blother systemctl --user is-active podread.service || true; }
+blother_journal_count() { journalctl --no-pager -o cat "_UID=$blother_uid" | grep -cFx "$1" || [[ $? == 1 ]]; }
+wait_for_journal() {
+  local line=$1 count=$2 attempt
+  for ((attempt=0; attempt<60; attempt++)); do
+    (( $(blother_journal_count "$line") >= count )) && return 0
+    sleep 1
+  done
+  journalctl --no-pager -o cat "_UID=$blother_uid" | tail -30
+  fail "blother's journal must have the line $line $count times"
+}
+
+# The two test values live only in OpenBao and in pattern files outside /tmp and every home,
+# which grep -F -f reads, so no command line and no file the cases search ever holds them.
+patterns=$(mktemp -d /run/openbao-client-patterns.XXXXXX)
+undo_add 'remove the test value patterns' undo_patterns
+undo_patterns() { rm -rf -- "$patterns"; }
+pod_one_value=pod-one-value-1
+pod_two_value=pod-two-value-longer-2
+printf '%s\n' "$pod_one_value" >"$patterns/pod-one"
+printf '%s\n' "$pod_two_value" >"$patterns/pod-two"
+printf '%s\n%s\n' "$pod_one_value" "$pod_two_value" >"$patterns/both"
+api_expect 200 'othersvc pod-one write' POST secret/data/othersvc/pod-one admin_token "{\"data\":{\"value\":\"$pod_one_value\"}}"
+api_expect 200 'othersvc pod-two write' POST secret/data/othersvc/pod-two admin_token "{\"data\":{\"value\":\"$pod_two_value\"}}"
+
+# blother's own role would turn on lingering and write its transient storage before its first
+# podman command.
+loginctl enable-linger blother
+for ((attempt=0; attempt<120; attempt++)); do
+  [[ -S /run/user/$blother_uid/bus ]] && break
+  sleep 0.5
+done
+[[ -S /run/user/$blother_uid/bus ]] || fail "blother's user manager must start"
+as_account blother mkdir -p -m 0700 /home/blother/.config/containers
+printf '[storage]\ndriver = "overlay"\ntransient_store = true\n' |
+  as_account blother tee /home/blother/.config/containers/storage.conf >/dev/null
+as_account blother podman pull -q "$openbao_image" >/dev/null
+
+# Check mode for an account that doesn't exist yet reports what it would do and makes nothing.
+if id -u blnone >/dev/null 2>&1; then fail 'blnone already exists'; fi
+play podman-account --check --diff -e openbao_client_podman_account=blnone
+recap "$last_play_log" 1
+grep -Fq "\"msg\": \"openbao_client would make blnone's default Podman secret driver openbao-podman-secret\"" "$last_play_log" ||
+  fail 'podman-account in check mode must report the default driver it would make for blnone'
+play podman-secret --check --diff -e openbao_client_podman_account=blnone -e openbao_client_secret_name=appkey \
+  -e openbao_client_secret_path=othersvc/pod-one
+recap "$last_play_log" 1
+grep -Fq '"msg": "openbao_client would create the Podman secret appkey for blnone"' "$last_play_log" ||
+  fail 'podman-secret in check mode must report the secret it would create for blnone'
+secret_changed "$last_play_log" true
+if id -u blnone >/dev/null 2>&1; then fail 'check mode must not create blnone'; fi
+[[ ! -e /home/blnone ]] || fail 'check mode must not create /home/blnone'
+
+# podman-account writes the shell driver as blother's drop-in, as blother, and changes nothing
+# the second time.
+play podman-account -e openbao_client_podman_account=blother
+changed_task "$last_play_log" 'OpenBao client | Write the OpenBao secret driver drop-in'
+drop_in_folder=/home/blother/.config/containers/containers.conf.d
+[[ $(stat -c '%U %a %F' "$drop_in_folder") == 'blother 700 directory' ]] || fail "$drop_in_folder must be blother's with mode 0700"
+[[ $(stat -c '%U %a %F' "$drop_in_folder/openbao.conf") == 'blother 600 regular file' ]] || fail "openbao.conf must be blother's with mode 0600"
+cmp -s - "$drop_in_folder/openbao.conf" <<'EOF' || fail 'openbao.conf must hold exactly the shell driver and its four commands'
+# Written by openbao_client (OpenBao on the hub decision 72). Every Podman secret in this
+# account keeps only an OpenBao path, and openbao-podman-secret looks the value up.
+[secrets]
+driver = "shell"
+
+[secrets.opts]
+delete = "/usr/local/bin/openbao-podman-secret delete"
+list = "/usr/local/bin/openbao-podman-secret list"
+lookup = "/usr/local/bin/openbao-podman-secret lookup"
+store = "/usr/local/bin/openbao-podman-secret store"
+EOF
+play podman-account -e openbao_client_podman_account=blother
+recap "$last_play_log" 0
+
+# bltest's OpenBao container runs on persistent storage, so bltest is refused and given nothing.
+play_fails podman-account-persistent podman-account \
+  "bltest must use Podman's transient store, with its run root under /run/user/$bltest_uid/, before it takes secrets from OpenBao" \
+  -e openbao_client_podman_account=bltest
+[[ ! -e /home/bltest/.config/containers/containers.conf.d ]] || fail 'a refused account must get no containers.conf.d'
+
+# A wrong secret name or path is refused before anything is made.
+play_fails podman-secret-name podman-secret 'openbao_client_secret_name must match ^[a-z][a-z0-9-]*$' \
+  -e openbao_client_podman_account=blother -e openbao_client_secret_name=App-Key -e openbao_client_secret_path=othersvc/pod-one
+play_fails podman-secret-path podman-secret 'openbao_client_secret_path must be <consumer>/<name>, each matching ^[a-z][a-z0-9-]*$' \
+  -e openbao_client_podman_account=blother -e openbao_client_secret_name=appkey -e openbao_client_secret_path=othersvc
+[[ -z $(as_account blother podman secret ls --quiet) ]] || fail 'a refused name or path must create no Podman secret'
+[[ ! -e /home/blother/.config/openbao/podman-secrets ]] || fail 'a refused name or path must store no path'
+
+# Four runs: create, unchanged, a new path, unchanged. None reads a value from OpenBao.
+reads_one=$(audit_reads secret/data/othersvc/pod-one)
+reads_two=$(audit_reads secret/data/othersvc/pod-two)
+podman_secret_play othersvc/pod-one
+recap "$last_play_log" 1
+secret_changed "$last_play_log" true
+podman_secret_play othersvc/pod-one
+recap "$last_play_log" 0
+secret_changed "$last_play_log" false
+podman_secret_play othersvc/pod-two
+recap "$last_play_log" 1
+secret_changed "$last_play_log" true
+podman_secret_play othersvc/pod-two
+recap "$last_play_log" 0
+secret_changed "$last_play_log" false
+appkey_secret=$(appkey_field .ID)
+mapping_folder=/home/blother/.config/openbao/podman-secrets
+[[ $(stat -c '%U %a %F' "$mapping_folder/$appkey_secret") == 'blother 600 regular file' ]] || fail "appkey's mapping file must be blother's with mode 0600"
+printf '%s' othersvc/pod-two | cmp -s - "$mapping_folder/$appkey_secret" || fail "appkey's mapping file must hold exactly othersvc/pod-two"
+[[ $(audit_reads secret/data/othersvc/pod-one) == "$reads_one" ]] || fail 'podman-secret must never read othersvc/pod-one from OpenBao'
+[[ $(audit_reads secret/data/othersvc/pod-two) == "$reads_two" ]] || fail 'podman-secret must never read othersvc/pod-two from OpenBao'
+
+# Check mode after the real runs changes nothing.
+play podman-account --check --diff -e openbao_client_podman_account=blother
+recap "$last_play_log" 0
+podman_secret_play othersvc/pod-two --check --diff
+recap "$last_play_log" 0
+secret_changed "$last_play_log" false
+
+# A missing mapping file is replaced under a new ID holding the path.
+rm -- "${mapping_folder:?}/$appkey_secret"
+podman_secret_play othersvc/pod-two
+recap "$last_play_log" 1
+secret_changed "$last_play_log" true
+replaced_secret=$(appkey_field .ID)
+[[ $replaced_secret != "$appkey_secret" ]] || fail 'a missing mapping file must give appkey a new ID'
+printf '%s' othersvc/pod-two | cmp -s - "$mapping_folder/$replaced_secret" || fail "appkey's new mapping file must hold exactly othersvc/pod-two"
+
+# A secret made by hand with the file driver is removed through it and made again with shell.
+# The file driver keeps each secret's data base64-encoded in secretsdata.json, so the path is
+# looked for both as it is and encoded.
+file_driver_folder=/home/blother/.local/share/containers/storage/secrets/filedriver
+file_driver_path=$(printf '%s' othersvc/pod-one | base64)
+as_account blother podman secret rm appkey >/dev/null
+printf '%s' othersvc/pod-one | as_account blother podman secret create --driver file appkey - >/dev/null
+[[ $(appkey_field .Spec.Driver.Name) == file ]] || fail 'the hand-made appkey must use the file driver'
+[[ -n $(grep -rlsF "$file_driver_path" "$file_driver_folder" || true) ]] || fail 'the file driver must hold the hand-made path'
+podman_secret_play othersvc/pod-one
+recap "$last_play_log" 2
+changed_task "$last_play_log" 'OpenBao client | Remove the Podman secret made with another driver'
+secret_changed "$last_play_log" true
+[[ $(appkey_field .Spec.Driver.Name) == shell ]] || fail 'appkey must be made again with the shell driver'
+[[ -z $(grep -rlsF -e othersvc/pod-one -e "$file_driver_path" "$file_driver_folder" || true) ]] || fail 'the file driver must keep no copy of the path'
+podman_secret_play othersvc/pod-one
+recap "$last_play_log" 0
+secret_changed "$last_play_log" false
+
+# A Quadlet unit reads appkey's value from OpenBao when it starts and prints only its length.
+unit_folder=/home/blother/.config/containers/systemd
+as_account blother mkdir -p -m 0700 "$unit_folder"
+printf '%s\n' '[Container]' "Image=$openbao_image" 'Entrypoint=/bin/sh' \
+  'Exec=-c "echo len=$${#MYSECRET}; sleep 300"' 'Secret=appkey,type=env,target=MYSECRET' |
+  as_account blother tee "$unit_folder/podread.container" >/dev/null
+as_account blother systemctl --user daemon-reload
+as_account blother systemctl --user start podread.service
+wait_for_journal len=15 1
+[[ $(unit_state) == active ]] || fail 'podread.service must be active'
+for ((attempt=0; attempt<10; attempt++)); do
+  (( $(audit_reads secret/data/othersvc/pod-one) > reads_one )) && break
+  sleep 1
+done
+(( $(audit_reads secret/data/othersvc/pod-one) > reads_one )) || fail "OpenBao's audit log must record the unit's read of othersvc/pod-one"
+
+# While it runs, the value is in the container's files under blother's run directory and the
+# container's own environment, and nowhere else.
+[[ -n $(files_holding "$patterns/pod-one" "/run/user/$blother_uid") ]] || fail "a file under /run/user/$blother_uid must hold the value while the unit runs"
+container_pid=$(as_account blother podman inspect --format '{{.State.Pid}}' systemd-podread)
+[[ -n $(grep -lsaF -f "$patterns/pod-one" "/proc/$container_pid/environ" || true) ]] || fail "the container's environment must hold the value"
+held=$(files_holding "$patterns/pod-one" /home/blother)
+[[ -z $held ]] || fail "no file under blother's home may hold the value while the unit runs: $held"
+[[ $(journalctl --no-pager -o verbose | count_matching "$patterns/pod-one") == 0 ]] || fail 'no journal line may hold the value'
+inspected=$(as_account blother podman inspect systemd-podread)
+[[ $(printf '%s' "$inspected" | count_matching "$patterns/pod-one") == 0 ]] || fail "podman inspect of the container must not hold the value"
+held=$(grep -lsaF -f "$patterns/pod-one" /proc/[0-9]*/cmdline || true)
+[[ -z $held ]] || fail "no process command line may hold the value: $held"
+conmon_pids=$(pgrep -u "$blother_uid" -x conmon || true)
+[[ -n $conmon_pids ]] || fail "conmon must run for podread.service"
+for pid in $conmon_pids; do
+  [[ -z $(grep -lsaF -f "$patterns/pod-one" "/proc/$pid/environ" || true) ]] || fail "conmon's environment must not hold the value"
+done
+
+# After it stops, no file anywhere the cases look holds the value.
+as_account blother systemctl --user stop podread.service
+held=$(files_holding "$patterns/pod-one" "/run/user/$blother_uid" /home/blother /tmp /var/tmp)
+[[ -z $held ]] || fail "no file may hold the value after the unit stops: $held"
+as_account blother systemctl --user start podread.service
+wait_for_journal len=15 2
+[[ $(unit_state) == active ]] || fail 'podread.service must be active again'
+
+# Replacing appkey while the unit runs leaves it running, and a restart reads the new value.
+podman_secret_play othersvc/pod-two
+recap "$last_play_log" 1
+secret_changed "$last_play_log" true
+[[ $(unit_state) == active ]] || fail 'podread.service must stay active while appkey is replaced'
+as_account blother systemctl --user restart podread.service
+wait_for_journal len=22 1
+as_account blother systemctl --user stop podread.service
+[[ $(journalctl --no-pager -o verbose | count_matching "$patterns/both") == 0 ]] || fail 'no journal line may hold either value'
 stop_proxy
 
 no_leftover_tokens

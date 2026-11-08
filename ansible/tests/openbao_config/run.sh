@@ -53,6 +53,11 @@ play_index=0
 printf '%s\n' '{"openbao_approles":[{"name":"testsvc","account":"bctest"},{"name":"othersvc","account":"bctest"}]}' >"$work/consumers.json"
 printf '%s\n' '{"openbao_approles":[{"name":"restore-check","files":false},{"name":"openbao-snapshot","account":"bctest","extra_paths":[{"path":"sys/storage/raft/snapshot","capabilities":["read"]}]}]}' >"$work/restore-consumers.json"
 restore_list=$work/restore-consumers.json
+# The three JWT test roles (OpenBao on the hub decisions 65, 66 and 71): test-plan and test-durable
+# bound to keepbreathing-infra's repository ID, test-durable also to the durable environment, and
+# test-short to the site repository's ID and the reusable short-lived workflow at main.
+jwt_roles=$work/jwt-roles.json
+printf '%s\n' '{"openbao_jwt_roles":[{"name":"test-plan","bound_claims":{"repository_id":"1368108961"},"transit_keys":["tofu-durable"]},{"name":"test-durable","bound_claims":{"repository_id":"1368108961","environment":"durable"},"transit_keys":["tofu-durable"]},{"name":"test-short","bound_claims":{"repository_id":"1305427147","job_workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main"},"transit_keys":["tofu-short-lived"]}]}' >"$jwt_roles"
 
 # Run a playbook from this folder and require it to pass.
 play() {
@@ -219,6 +224,9 @@ for path in pathlib.Path(sys.argv[1]).glob('*.log'):
         assert os.environ[name] not in data, (path, name)
     for secret in pathlib.Path(sys.argv[1]).glob('*-id'):
         assert secret.read_text() not in data, (path, secret)
+    # Every token the driver signed and every OpenBao token a JWT sign-in issued.
+    for secret in pathlib.Path(sys.argv[1]).glob('*.token'):
+        assert secret.read_text() not in data, (path, secret)
 PY
 }
 # The reserved policies survive every 3.2d run, and the ansible policy keeps the text it had
@@ -280,6 +288,54 @@ log, folder, reason = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2], sys.ar
 messages = [json.loads(text) for text in re.findall(r'"msg": ("(?:[^"\\]|\\.)*")', log)]
 assert 'openbao_config warning: skipped ' + json.dumps(folder) + ', ' + reason in messages, messages
 PY
+}
+# Whether the play log holds this exact message, reading each msg as a JSON string.
+has_message() {
+  python3 - "$1" "$2" <<'PY'
+import json, pathlib, re, sys
+log, message = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2]
+messages = [json.loads(text) for text in re.findall(r'"msg": ("(?:[^"\\]|\\.)*")', log)]
+sys.exit(0 if message in messages else 1)
+PY
+}
+reports() { has_message "$1" "$2" || fail "the role must report: $2"; }
+reports_not() { if has_message "$1" "$2"; then fail "the role must not report: $2"; fi; }
+# The role warns that a listed transit key is missing, naming decision 27's restore and the flag.
+transit_warning_text() {
+  printf '%s' "openbao_config warning: transit key $1 is missing; restore OpenBao's snapshot (decision 27), or make it on purpose with -e openbao_make_transit_keys=true"
+}
+transit_warning() { reports "$1" "$(transit_warning_text "$2")"; }
+no_transit_warning() { reports_not "$1" "$(transit_warning_text "$2")"; }
+# transit/ as keepbreath0 sees it: absent, or its type.
+transit_mount() {
+  api_expect 200 'sys/mounts read' GET sys/mounts admin_token
+  python3 -c 'import json,sys; m=json.load(open(sys.argv[1]))["data"].get("transit/"); print("absent" if m is None else m["type"])' "$work/api.json"
+}
+# A transit key as keepbreath0 reads it: its type and its deletion, export and plaintext backup
+# settings, or the status when the read isn't 200.
+key_state() {
+  local status
+  status=$(api GET "transit/keys/$1" admin_token)
+  if [[ $status != 200 ]]; then printf '%s\n' "$status"; return 0; fi
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))["data"]; print(d["type"], d["deletion_allowed"], d["exportable"], d["allow_plaintext_backup"])' "$work/api.json"
+}
+# The live ansible policy against a file: the same text, ignoring trailing newlines on both sides
+# when the second argument is "ignoring", or byte for byte otherwise.
+policy_matches() {
+  api_expect 200 'ansible policy read' GET sys/policies/acl/ansible admin_token
+  python3 - "$work/api.json" "$1" "${2:-exact}" <<'PY'
+import json, pathlib, sys
+live, wanted = json.load(open(sys.argv[1]))['data']['policy'], pathlib.Path(sys.argv[2]).read_text()
+if sys.argv[3] == 'ignoring':
+    live, wanted = live.rstrip('\n'), wanted.rstrip('\n')
+sys.exit(0 if live == wanted else 1)
+PY
+}
+policy_file=roles/openbao/files/ansible-policy.hcl
+# Write a policy file's text as the ansible policy, as keepbreath0.
+write_ansible_policy() {
+  api_expect 204 "write $1 as the ansible policy" POST sys/policies/acl/ansible admin_token \
+    "$(python3 -c 'import json,pathlib,sys; print(json.dumps({"policy": pathlib.Path(sys.argv[1]).read_text()}))' "$1")"
 }
 not_removed_folder() {
   local log=$1 folder=$2
@@ -362,6 +418,12 @@ grep -Fq 'missing required arguments: openbao_ansible_password' "$work/missing-p
 # Before any OpenBao exists: check mode reports both mounts, and a real run refuses.
 play role --check --diff
 reports_both_mounts "$last_play_log"
+# With a transit key listed, check mode also reports transit/ beside the two mounts.
+play role --check --diff -e '{"openbao_transit_keys":["tofu-durable"]}'
+reports "$last_play_log" 'openbao_config would enable transit/'
+reports "$last_play_log" 'openbao_config would enable secret/ as a version 2 key/value store'
+reports "$last_play_log" 'openbao_config would enable approle/'
+recap "$last_play_log" 3
 play role --check --diff -e "@$work/consumers.json"
 for name in testsvc othersvc; do
   for message in "openbao_config would write the policy $name" "openbao_config would write the AppRole $name" "openbao_config would issue a secret ID for $name and write its files"; do
@@ -370,6 +432,14 @@ for name in testsvc othersvc; do
 done
 play role --check --diff -e "@$restore_list"
 check_restore_report "$last_play_log"
+# With JWT roles listed, check mode also reports jwt/. Nothing contacts the issuer before OpenBao runs.
+play role --check --diff -e '{"openbao_transit_keys":["tofu-durable","tofu-short-lived"]}' -e "@$jwt_roles" \
+  -e openbao_jwt_audience=https://openbao.test -e openbao_jwt_issuer=http://127.0.0.1:1
+reports "$last_play_log" 'openbao_config would enable jwt/'
+reports "$last_play_log" 'openbao_config would enable transit/'
+reports "$last_play_log" 'openbao_config would enable secret/ as a version 2 key/value store'
+reports "$last_play_log" 'openbao_config would enable approle/'
+recap "$last_play_log" 4
 play_fails no-openbao role 'OpenBao must answer sys/health with 200 before openbao_config runs'
 
 # Start OpenBao through the openbao role.
@@ -1019,6 +1089,631 @@ if id -u bcother >/dev/null 2>&1; then fail 'the driver must remove bcother'; fi
 [[ ! -e /home/bcother ]] || fail "the driver must remove bcother's home"
 [[ ! -e /var/lib/systemd/linger/bcother ]] || fail 'the driver must leave bcother no lingering file'
 no_ansible_tokens '3.2d cases'
+
+# 3.5a: the role keeps the ansible policy equal to roles/openbao/files/ansible-policy.hcl, and
+# manages transit/ and the transit keys openbao_transit_keys lists (OpenBao on the hub decisions
+# 67 and 68). Every run applies the four consumers the last 3.2d run applied, so they never change.
+both_keys='{"openbao_transit_keys":["tofu-durable","tofu-short-lived"]}'
+good_key='aes256-gcm96 False False False'
+# The ten policy lines first-start.hcl.j2 wrote at 9d52a87, as a server born then holds them.
+old_policy=$work/old-ansible-policy.hcl
+cat >"$old_policy" <<'HCL'
+path "sys/mounts" { capabilities = ["read"] }
+path "sys/mounts/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "sys/auth" { capabilities = ["read"] }
+path "sys/auth/*" { capabilities = ["create", "read", "update", "delete", "sudo"] }
+path "sys/policies/acl" { capabilities = ["list"] }
+path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "auth/approle/role" { capabilities = ["list"] }
+path "auth/approle/role/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "secret/data/restore-check/*" { capabilities = ["create", "update"] }
+path "secret/metadata/restore-check/*" { capabilities = ["read"] }
+HCL
+
+# A server born from the first-start file already holds the file's policy, so nothing is
+# rewritten. This run lists no key, so transit/ stays absent.
+policy_matches "$policy_file" ignoring || fail 'a server born from the first-start file must hold the policy in ansible-policy.hcl'
+play role -e "@$full_list"
+recap "$last_play_log" 0
+[[ $(transit_mount) == absent ]] || fail 'a run that lists no transit key must not enable transit/'
+
+# A transit/ of another type is refused and left alone.
+api_expect 204 'enable a key/value engine at transit/' POST sys/mounts/transit admin_token '{"type":"kv"}'
+play_fails wrong-transit role 'transit/ must be a transit secrets engine' -e "@$full_list" -e "$both_keys"
+[[ $(transit_mount) == kv ]] || fail 'the role must leave an existing transit/ alone'
+api_expect 204 'disable the key/value engine at transit/' DELETE sys/mounts/transit admin_token
+[[ $(transit_mount) == absent ]] || fail 'transit/ must be absent after the wrong-type case'
+
+# Check mode before transit/ exists reports only the mount, even with the flag: the token's policy
+# isn't widened in check mode, so no key is read.
+play role --check --diff -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+reports "$last_play_log" 'openbao_config would enable transit/'
+recap "$last_play_log" 1
+for name in tofu-durable tofu-short-lived; do
+  reports_not "$last_play_log" "openbao_config would make the transit key $name"
+  no_transit_warning "$last_play_log" "$name"
+done
+[[ $(transit_mount) == absent ]] || fail 'check mode must not enable transit/'
+
+# A run without the flag enables transit/, makes no key and warns about each missing one.
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Enable transit/'
+[[ $(transit_mount) == transit ]] || fail 'the role must enable transit/ as a transit secrets engine'
+for name in tofu-durable tofu-short-lived; do
+  transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == 404 ]] || fail "a run without the flag must not make $name"
+done
+
+# Check mode with the flag reports each missing key and makes none. The recap counts the one
+# looped report task once, however many keys it reports.
+play role --check --diff -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 1
+for name in tofu-durable tofu-short-lived; do
+  reports "$last_play_log" "openbao_config would make the transit key $name"
+  no_transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == 404 ]] || fail "check mode must not make $name"
+done
+
+# The run with the flag makes both keys with OpenBao's defaults; later runs change nothing.
+play role -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Make each missing transit key'
+for name in tofu-durable tofu-short-lived; do
+  no_transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == "$good_key" ]] || fail "$name must be aes256-gcm96 with deletion, export and plaintext backup off"
+done
+play role -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 0
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 0
+play verify -e "@$full_list" -e "$both_keys"
+
+# Check mode on a server still holding the old policy reports the rewrite and leaves it.
+write_ansible_policy "$old_policy"
+play role --check --diff -e "@$full_list"
+reports "$last_play_log" 'openbao_config would rewrite the ansible policy'
+recap "$last_play_log" 1
+policy_matches "$old_policy" || fail 'check mode must leave the old ansible policy in place'
+
+# The upgrade: the role rewrites the old policy, and the same run reads the keys on its token.
+write_ansible_policy "$old_policy"
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Write the ansible policy'
+policy_matches "$policy_file" ignoring || fail 'the upgrade must leave the ansible policy equal to ansible-policy.hcl'
+for name in tofu-durable tofu-short-lived; do
+  no_transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == "$good_key" ]] || fail "the upgrade must leave $name unchanged"
+done
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 0
+
+# A rule added by hand fails verify, and the next run writes the file's policy back.
+api_expect 200 'read the ansible policy before the drift' GET sys/policies/acl/ansible admin_token
+python3 - "$work/api.json" "$work/drifted-ansible-policy.hcl" <<'PY'
+import json, pathlib, sys
+policy = json.load(open(sys.argv[1]))['data']['policy']
+pathlib.Path(sys.argv[2]).write_text(policy + 'path "probe/*" { capabilities = ["read"] }\n')
+PY
+write_ansible_policy "$work/drifted-ansible-policy.hcl"
+play_fails policy-drift verify 'the ansible policy must match roles/openbao/files/ansible-policy.hcl' -e "@$full_list" -e "$both_keys"
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Write the ansible policy'
+policy_matches "$policy_file" ignoring || fail 'the role must write the drifted ansible policy back'
+
+# A key that leaves the list stays in OpenBao.
+play role -e "@$full_list" -e '{"openbao_transit_keys":["tofu-durable"]}'
+recap "$last_play_log" 0
+[[ $(key_state tofu-short-lived) == "$good_key" ]] || fail 'a key dropped from the list must stay in OpenBao'
+
+# A listed key of another type fails verify, and the role leaves it as it is.
+api_expect 200 'make wrongtype as chacha20-poly1305' POST transit/keys/wrongtype admin_token '{"type":"chacha20-poly1305"}'
+play_fails wrong-type role 'transit key wrongtype must be aes256-gcm96 with deletion, export and plaintext backup off' \
+  -e "@$full_list" -e '{"openbao_transit_keys":["tofu-durable","tofu-short-lived","wrongtype"]}'
+[[ $(key_state wrongtype) == 'chacha20-poly1305 False False False' ]] || fail 'the role must not change a listed key of another type'
+
+# Decision 67's guards: the ansible login can't disable transit/, allow a key's deletion, delete a
+# key or ask it for a data key.
+login ansible TEST_ANSIBLE_PASSWORD ansible_token
+api_expect 403 'ansible disabling transit/' DELETE sys/mounts/transit ansible_token
+api_expect 403 "ansible allowing tofu-durable's deletion" POST transit/keys/tofu-durable/config ansible_token '{"deletion_allowed":true}'
+api_expect 403 'ansible deleting tofu-durable' DELETE transit/keys/tofu-durable ansible_token
+api_expect 403 'ansible asking tofu-durable for a data key' POST transit/datakey/plaintext/tofu-durable ansible_token
+api_expect 204 'ansible token revoke' POST auth/token/revoke-self ansible_token
+[[ $(transit_mount) == transit ]] || fail 'transit/ must survive the guard cases'
+[[ $(key_state tofu-durable) == "$good_key" ]] || fail 'tofu-durable must survive the guard cases unchanged'
+
+# Bad or repeated key names are refused before the role signs in.
+play_fails bad-key-name role 'openbao_transit_keys names must match ^[a-z][a-z0-9-]*$ and be unique' \
+  -e "@$full_list" -e '{"openbao_transit_keys":["Bad_Name"]}'
+play_fails duplicate-key role 'openbao_transit_keys names must match ^[a-z][a-z0-9-]*$ and be unique' \
+  -e "@$full_list" -e '{"openbao_transit_keys":["tofu-durable","tofu-durable"]}'
+
+# Check mode after the real runs plans nothing, with or without the flag, and no run touched the
+# unlisted key.
+play role --check --diff -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 0
+play role --check --diff -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 0
+[[ $(key_state wrongtype) == 'chacha20-poly1305 False False False' ]] || fail 'no run may touch a key the list does not name'
+api_expect 200 'read ansible policy after the transit cases' GET sys/policies/acl/ansible admin_token
+cp "$work/api.json" "$work/ansible-policy.json"
+no_ansible_tokens '3.5a cases'
+
+# 3.5b: JWT sign-in at jwt/ for Infrastructure as code's GitHub jobs (OpenBao on the hub decisions
+# 65, 66, 68 and 71). A stand-in issuer serves a discovery document and a key set over plain HTTP on
+# this machine's own address, which OpenBao in its rootless container on pasta reaches as
+# host.containers.internal. The driver signs its own tokens with GitHub's claim shape, keeps each
+# signed and issued token in a .token file for logs_clean, and never prints one.
+issuer_dir=$work/issuer
+mkdir -p "$issuer_dir/.well-known"
+issuer_address=$(ip -4 -o addr show scope global | awk 'NR == 1 { split($4, part, "/"); print part[1] }')
+[[ -n $issuer_address ]] || fail 'the stand-in issuer needs a global IPv4 address'
+issuer_port=$(python3 -c 'import socket,sys; s=socket.socket(); s.bind((sys.argv[1], 0)); print(s.getsockname()[1]); s.close()' "$issuer_address")
+issuer_url=http://host.containers.internal:$issuer_port
+for key in one two other; do openssl genrsa -out "$work/issuer-$key.pem" 2048 2>/dev/null; done
+# Publish the key set, each key under its own key ID given as KID:PEM, and the discovery document.
+publish_keys() {
+  python3 - "$issuer_dir/.well-known" "$issuer_url" "$@" <<'PY'
+import base64, json, pathlib, subprocess, sys
+folder, issuer, pairs = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3:]
+b64 = lambda data: base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+keys = []
+for pair in pairs:
+    kid, pem = pair.split(':', 1)
+    modulus = subprocess.run(['openssl', 'rsa', '-in', pem, '-noout', '-modulus'], capture_output=True,
+                             text=True, check=True).stdout.strip().split('=', 1)[1]
+    keys.append({'kty': 'RSA', 'alg': 'RS256', 'use': 'sig', 'kid': kid, 'n': b64(bytes.fromhex(modulus)), 'e': 'AQAB'})
+(folder / 'jwks').write_text(json.dumps({'keys': keys}))
+(folder / 'openid-configuration').write_text(json.dumps({
+    'issuer': issuer, 'jwks_uri': issuer + '/.well-known/jwks', 'id_token_signing_alg_values_supported': ['RS256'],
+    'response_types_supported': ['id_token'], 'subject_types_supported': ['public']}))
+PY
+}
+# The issuer always serves the same port, because the saved config holds its URL.
+issuer_pid=
+start_issuer() {
+  local attempt
+  python3 -m http.server "$issuer_port" --bind "$issuer_address" --directory "$issuer_dir" >>"$work/issuer.log" 2>&1 &
+  issuer_pid=$!
+  for ((attempt=0; attempt<50; attempt++)); do
+    if [[ $(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://$issuer_address:$issuer_port/.well-known/openid-configuration" || true) == 200 ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  fail 'the stand-in issuer must answer'
+}
+stop_issuer() {
+  if [[ -n $issuer_pid ]]; then
+    kill "$issuer_pid" 2>/dev/null || true
+    wait "$issuer_pid" 2>/dev/null || true
+    issuer_pid=
+  fi
+}
+undo_add 'stop the stand-in issuer' stop_issuer
+# Sign an RS256 token with GitHub's claim shape: the stand-in issuer, OpenBao's test audience, and
+# iat, nbf and exp 300 seconds on, then the role's claims, then the overrides. An override of null
+# drops that claim; "_expired" moves iat 900 and exp 600 seconds into the past. The token goes to
+# its own .token file, named in $token_file.
+token_index=0
+sign_token() {
+  local pem=$1 kid=$2 claims=$3 overrides=${4:-'{}'}
+  token_index=$((token_index + 1))
+  token_file=$work/signed-$token_index.token
+  python3 - "$pem" "$kid" "$issuer_url" "$claims" "$overrides" "$token_file" <<'PY'
+import base64, json, subprocess, sys, time
+pem, kid, issuer, base, overrides, out = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4]), json.loads(sys.argv[5]), sys.argv[6]
+now = int(time.time())
+claims = {'iss': issuer, 'aud': 'https://openbao.test', 'iat': now, 'nbf': now, 'exp': now + 300}
+if overrides.pop('_expired', False):
+    claims.update(iat=now - 900, nbf=now - 900, exp=now - 600)
+claims.update(base)
+claims.update(overrides)
+claims = {name: value for name, value in claims.items() if value is not None}
+b64 = lambda data: base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+signing_input = (b64(json.dumps({'alg': 'RS256', 'typ': 'JWT', 'kid': kid}, separators=(',', ':')).encode())
+                 + '.' + b64(json.dumps(claims, separators=(',', ':')).encode()))
+signature = subprocess.run(['openssl', 'dgst', '-sha256', '-sign', pem], input=signing_input.encode(),
+                           capture_output=True, check=True).stdout
+with open(out, 'w') as stream:
+    stream.write(signing_input + '.' + b64(signature))
+PY
+}
+# Sign in at jwt/ as a role with the last signed token and require the status and, for a refusal,
+# text in OpenBao's error. A sign-in that succeeds keeps its OpenBao token in the named variable and
+# a .token file. A mismatch prints only the status and OpenBao's errors, never a token.
+issued_index=0
+jwt_login() {
+  local role=$1 expected=$2 text=${3:-} token_name=${4:-} status
+  status=$(JWT_FILE=$token_file JWT_ROLE=$role python3 - "$work/jwt-login.json" <<'PY'
+import json, os, sys, urllib.error, urllib.request
+body = json.dumps({'role': os.environ['JWT_ROLE'], 'jwt': open(os.environ['JWT_FILE']).read()}).encode()
+request = urllib.request.Request('http://127.0.0.1:8200/v1/auth/jwt/login', data=body, method='POST',
+                                 headers={'X-Forwarded-For': '192.0.2.10', 'Content-Type': 'application/json'})
+try:
+    with urllib.request.urlopen(request, timeout=10) as response:
+        code, content = response.status, response.read()
+except urllib.error.HTTPError as error:
+    code, content = error.code, error.read()
+with open(sys.argv[1], 'wb') as stream:
+    stream.write(content)
+print(code)
+PY
+)
+  if [[ $status != "$expected" ]]; then
+    python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("errors"))' "$work/jwt-login.json" >&2 || true
+    fail "a $role sign-in must answer $expected, got $status"
+  fi
+  if [[ -n $text ]]; then
+    python3 - "$work/jwt-login.json" "$text" <<'PY' || fail "a $role sign-in must be refused with: $text"
+import json, sys
+errors = json.load(open(sys.argv[1])).get('errors') or []
+if not any(sys.argv[2] in error for error in errors):
+    print(errors, file=sys.stderr)
+    sys.exit(1)
+PY
+  fi
+  if [[ -n $token_name ]]; then
+    issued_index=$((issued_index + 1))
+    python3 -c 'import json,sys; open(sys.argv[2], "w").write(json.load(open(sys.argv[1]))["auth"]["client_token"])' \
+      "$work/jwt-login.json" "$work/issued-$issued_index.token"
+    printf -v "$token_name" '%s' "$(<"$work/issued-$issued_index.token")"
+  fi
+}
+# api_expect for calls whose answer may hold a token or a key: a mismatch prints only OpenBao's errors.
+api_quiet() {
+  local expected=$1 what=$2 status
+  shift 2
+  status=$(api "$@")
+  if [[ $status != "$expected" ]]; then
+    python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("errors"))' "$work/api.json" >&2 || true
+    fail "$what must answer $expected, got $status"
+  fi
+}
+# An issued token, looked up as itself: a service token holding only its role's policy, no
+# default, for 1800 seconds.
+jwt_token_is() {
+  local token_name=$1 policy=$2
+  api_quiet 200 "$policy token lookup-self" GET auth/token/lookup-self "$token_name"
+  python3 - "$work/api.json" "$policy" <<'PY' || fail "a $policy token must be a service token holding only the $policy policy for 1800 seconds"
+import json, sys
+data = json.load(open(sys.argv[1]))['data']
+got = {'policies': data['policies'], 'creation_ttl': data['creation_ttl'], 'type': data['type'], 'meta': data['meta']}
+wanted = {'policies': [sys.argv[2]], 'creation_ttl': 1800, 'type': 'service', 'meta': {'role': sys.argv[2]}}
+assert got == wanted, (got, wanted)
+PY
+}
+# Revoke an issued token by its accessor as keepbreath0, because without the default policy it
+# can't revoke itself.
+revoke_jwt_token() {
+  local token_name=$1 accessor
+  api_quiet 200 'issued token lookup-self' GET auth/token/lookup-self "$token_name"
+  accessor=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["accessor"])' "$work/api.json")
+  api_expect 204 'revoke the issued token by accessor' POST auth/token/revoke-accessor admin_token "{\"accessor\":\"$accessor\"}"
+}
+# jwt/ as keepbreath0 sees it: absent, or its type.
+jwt_mount() {
+  api_expect 200 'sys/auth read' GET sys/auth admin_token
+  python3 -c 'import json,sys; m=json.load(open(sys.argv[1]))["data"].get("jwt/"); print("absent" if m is None else m["type"])' "$work/api.json"
+}
+jwt_config_is() {
+  api_expect 200 'jwt/ config read' GET auth/jwt/config admin_token
+  python3 - "$work/api.json" "$issuer_url" <<'PY' || fail "jwt/'s config must name the stand-in issuer as its discovery URL and bound issuer"
+import json, sys
+data = json.load(open(sys.argv[1]))['data']
+got = [data['oidc_discovery_url'], data['bound_issuer']]
+assert got == [sys.argv[2], sys.argv[2]], got
+PY
+}
+# A JWT role read back as keepbreath0 holds exactly decision 65's fields with these bound claims.
+jwt_role_is() {
+  local name=$1 claims=$2
+  api_expect 200 "$name JWT role read" GET "auth/jwt/role/$name" admin_token
+  python3 - "$work/api.json" "$name" "$claims" <<'PY' || fail "the JWT role $name must read back exactly as decision 65 says"
+import json, sys
+data, name, claims = json.load(open(sys.argv[1]))['data'], sys.argv[2], json.loads(sys.argv[3])
+wanted = {'role_type': 'jwt', 'user_claim': 'sub', 'bound_audiences': ['https://openbao.test'],
+          'bound_claims_type': 'string', 'bound_claims': claims, 'token_policies': [name],
+          'token_no_default_policy': True, 'token_ttl': 1800, 'token_max_ttl': 1800}
+got = {key: data.get(key) for key in wanted}
+assert got == wanted, (got, wanted)
+PY
+}
+# A JWT role's policy is exactly decision 66's text: for each transit key in order, update on its
+# data key and decrypt paths, then read on lookup-self and on the role's own folder.
+jwt_policy_is() {
+  local name=$1
+  shift
+  api_expect 200 "$name policy read" GET "sys/policies/acl/$name" admin_token
+  python3 - "$work/api.json" "$name" "$@" <<'PY' || fail "the policy $name must be exactly decision 66's text"
+import json, sys
+live, name, keys = json.load(open(sys.argv[1]))['data']['policy'], sys.argv[2], sys.argv[3:]
+wanted = ''
+for key in keys:
+    wanted += (f'path "transit/datakey/plaintext/{key}" {{\n  capabilities = ["update"]\n}}\n'
+               f'path "transit/decrypt/{key}" {{\n  capabilities = ["update"]\n}}\n')
+wanted += (f'path "auth/token/lookup-self" {{\n  capabilities = ["read"]\n}}\n'
+           f'path "secret/data/{name}/*" {{\n  capabilities = ["read"]\n}}\n')
+assert live == wanted, (live, wanted)
+PY
+}
+# The four consumers' AppRole settings and policies, as data only.
+consumer_snapshot() {
+  local name
+  for name in testsvc othersvc restore-check openbao-snapshot; do
+    api_expect 200 "$name AppRole snapshot" GET "auth/approle/role/$name" admin_token
+    python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["data"], sort_keys=True))' "$work/api.json"
+    api_expect 200 "$name policy snapshot" GET "sys/policies/acl/$name" admin_token
+    python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["data"], sort_keys=True))' "$work/api.json"
+  done
+}
+# A looped task reported changed for at least one item, wherever that item falls in the loop.
+# changed_task reads only the first line under the task, which a skipped first item takes.
+changed_in_loop() {
+  local log=$1 title=$2
+  python3 - "$log" "$title" <<'PY' || fail "$title must report changed on localhost"
+import pathlib, re, sys
+log, title = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2]
+match = re.search(r'TASK \[openbao_config : ' + re.escape(title) + r'\][^\n]*\n(.*?)(?=\nTASK \[|\nPLAY RECAP)', log, re.S)
+assert match, 'no such task'
+assert re.search(r'^changed: \[localhost\]', match.group(1), re.M), match.group(1)
+PY
+}
+refused_before_sign_in() {
+  if grep -Fq 'TASK [openbao_config : OpenBao config | Sign in as ansible]' "$1"; then fail "$2 must be refused before the role signs in"; fi
+}
+
+short_ref=sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml
+plan_claims='{"sub":"repo:sh4i-yurei/keepbreathing-infra:pull_request","repository_id":"1368108961"}'
+durable_claims='{"sub":"repo:sh4i-yurei/keepbreathing-infra:environment:durable","repository_id":"1368108961","environment":"durable"}'
+short_claims="{\"sub\":\"repo:sh4i-yurei/keepbreathing:pull_request\",\"repository_id\":\"1305427147\",\"job_workflow_ref\":\"$short_ref@refs/heads/main\"}"
+jwt_settings=$work/jwt-settings.json
+printf '{"openbao_jwt_issuer":"%s","openbao_jwt_audience":"https://openbao.test"}\n' "$issuer_url" >"$jwt_settings"
+jwt_args=(-e "@$full_list" -e "$both_keys" -e "@$jwt_settings" -e "@$jwt_roles")
+publish_keys "one:$work/issuer-one.pem"
+start_issuer
+
+# A jwt/ of another type is refused and left alone.
+api_expect 204 'enable a userpass method at jwt/' POST sys/auth/jwt admin_token '{"type":"userpass"}'
+play_fails wrong-jwt role 'jwt/ must be a JWT auth method' "${jwt_args[@]}"
+[[ $(jwt_mount) == userpass ]] || fail 'the role must leave an existing jwt/ alone'
+api_expect 404 'the wrong-type case writes no JWT role policy' GET sys/policies/acl/test-plan admin_token
+api_expect 204 'disable the userpass method at jwt/' DELETE sys/auth/jwt admin_token
+[[ $(jwt_mount) == absent ]] || fail 'jwt/ must be absent after the wrong-type case'
+
+# Check mode before jwt/ exists reports it and the writes that follow, and creates nothing.
+play role --check --diff "${jwt_args[@]}"
+reports "$last_play_log" 'openbao_config would enable jwt/'
+changed_task "$last_play_log" 'OpenBao config | Report jwt/ in check mode'
+reports "$last_play_log" "openbao_config would write jwt/'s config"
+for name in test-plan test-durable test-short; do
+  reports "$last_play_log" "openbao_config would write the policy $name"
+  reports "$last_play_log" "openbao_config would write the JWT role $name"
+  api_expect 404 "check mode writes no policy $name" GET "sys/policies/acl/$name" admin_token
+done
+[[ $(jwt_mount) == absent ]] || fail 'check mode must not enable jwt/'
+
+# The first real run enables jwt/ and writes the config, the three policies and the three roles,
+# which read back exactly; a second run changes nothing.
+play role "${jwt_args[@]}"
+for title in 'Enable jwt/' "Write jwt/'s config" 'Write each JWT role policy' 'Write each JWT role'; do
+  changed_task "$last_play_log" "OpenBao config | $title"
+done
+[[ $(jwt_mount) == jwt ]] || fail 'the role must enable jwt/ as a JWT auth method'
+jwt_config_is
+jwt_role_is test-plan '{"repository_id":"1368108961"}'
+jwt_role_is test-durable '{"repository_id":"1368108961","environment":"durable"}'
+jwt_role_is test-short "{\"repository_id\":\"1305427147\",\"job_workflow_ref\":\"$short_ref@refs/heads/main\"}"
+jwt_policy_is test-plan tofu-durable
+jwt_policy_is test-durable tofu-durable
+jwt_policy_is test-short tofu-short-lived
+play role "${jwt_args[@]}"
+recap "$last_play_log" 0
+play verify "${jwt_args[@]}"
+
+# A test-plan token gets only its own policy, with OpenTofu's four rules allowed and the rest refused.
+for name in test-plan test-durable test-short; do
+  api_expect 200 "keepbreath0 writes a secret in $name/" POST "secret/data/$name/token" admin_token "{\"data\":{\"value\":\"$name\"}}"
+done
+sign_token "$work/issuer-one.pem" one "$plan_claims"
+jwt_login test-plan 200 '' plan_token
+jwt_token_is plan_token test-plan
+api_quiet 200 'a test-plan data key under tofu-durable' POST transit/datakey/plaintext/tofu-durable plan_token
+cp "$work/api.json" "$work/datakey.json"
+ciphertext_body=$(python3 -c 'import json,sys; print(json.dumps({"ciphertext": json.load(open(sys.argv[1]))["data"]["ciphertext"]}))' "$work/datakey.json")
+api_quiet 200 'a test-plan decrypt under tofu-durable' POST transit/decrypt/tofu-durable plan_token "$ciphertext_body"
+python3 - "$work/datakey.json" "$work/api.json" <<'PY' || fail 'the decrypted data key must equal the one OpenBao made'
+import json, sys
+made, decrypted = (json.load(open(path))['data']['plaintext'] for path in sys.argv[1:])
+assert made == decrypted
+PY
+api_quiet 200 'a test-plan read of its own secret' GET secret/data/test-plan/token plan_token
+api_quiet 403 'a test-plan data key under tofu-short-lived' POST transit/datakey/plaintext/tofu-short-lived plan_token
+api_quiet 403 'a test-plan decrypt under tofu-short-lived' POST transit/decrypt/tofu-short-lived plan_token "$ciphertext_body"
+api_quiet 403 'a test-plan encrypt under tofu-durable' POST transit/encrypt/tofu-durable plan_token '{"plaintext":"cHJvYmU="}'
+api_quiet 403 'a test-plan read of the key tofu-durable' GET transit/keys/tofu-durable plan_token
+api_quiet 403 'a test-plan read of the test-durable folder' GET secret/data/test-durable/token plan_token
+api_quiet 403 'a test-plan child token' POST auth/token/create plan_token '{}'
+revoke_jwt_token plan_token
+
+# Each refusal decision 65 lists, with OpenBao's own text.
+sign_token "$work/issuer-one.pem" one "$plan_claims" '{"aud":"https://github.com/sh4i-yurei"}'
+jwt_login test-plan 400 'invalid audience (aud) claim: audience claim does not match any expected audience'
+sign_token "$work/issuer-one.pem" one "$plan_claims" '{"repository_id":"9999"}'
+jwt_login test-plan 400 'claim "repository_id" does not match any associated bound claim values'
+sign_token "$work/issuer-one.pem" one "$plan_claims" '{"repository_id":1368108961}'
+jwt_login test-plan 400 'claim "repository_id" does not match any associated bound claim values'
+sign_token "$work/issuer-one.pem" one "$durable_claims" '{"environment":null}'
+jwt_login test-durable 400 'claim "environment" is missing'
+sign_token "$work/issuer-one.pem" one "$durable_claims" '{"environment":"staging"}'
+jwt_login test-durable 400 'claim "environment" does not match any associated bound claim values'
+sign_token "$work/issuer-one.pem" one "$plan_claims" '{"_expired":true}'
+jwt_login test-plan 400 'token is expired'
+sign_token "$work/issuer-other.pem" other "$plan_claims"
+jwt_login test-plan 400 'failed to verify id token signature'
+sign_token "$work/issuer-one.pem" one "$plan_claims" '{"iss":"https://token.actions.githubusercontent.com"}'
+jwt_login test-plan 400 'invalid issuer (iss) claim'
+
+# test-short needs both of its claims, and the workflow at main only (decision 71). The roles
+# refuse each other's tokens: where two bound claims fail at once, OpenBao names either one.
+sign_token "$work/issuer-one.pem" one "$short_claims" '{"repository_id":"1368108961"}'
+jwt_login test-short 400 'claim "repository_id" does not match any associated bound claim values'
+sign_token "$work/issuer-one.pem" one "$short_claims" '{"job_workflow_ref":null}'
+jwt_login test-short 400 'claim "job_workflow_ref" is missing'
+for ref in "$short_ref@refs/pull/1/merge" "$short_ref@0123456789abcdef0123456789abcdef01234567" \
+  'sh4i-yurei/keepbreathing-infra/.github/workflows/other.yml@refs/heads/main'; do
+  sign_token "$work/issuer-one.pem" one "$short_claims" "{\"job_workflow_ref\":\"$ref\"}"
+  jwt_login test-short 400 'claim "job_workflow_ref" does not match any associated bound claim values'
+done
+sign_token "$work/issuer-one.pem" one "$short_claims"
+jwt_login test-plan 400 'claim "repository_id" does not match any associated bound claim values'
+jwt_login test-durable 400 'error validating claims'
+sign_token "$work/issuer-one.pem" one "$plan_claims"
+jwt_login test-short 400 'error validating claims'
+sign_token "$work/issuer-one.pem" one "$durable_claims"
+jwt_login test-short 400 'error validating claims'
+jwt_login test-durable 200 '' durable_token
+jwt_token_is durable_token test-durable
+revoke_jwt_token durable_token
+sign_token "$work/issuer-one.pem" one "$short_claims"
+jwt_login test-short 200 '' short_token
+jwt_token_is short_token test-short
+api_quiet 200 'a test-short data key under tofu-short-lived' POST transit/datakey/plaintext/tofu-short-lived short_token
+api_quiet 200 'a test-short read of its own secret' GET secret/data/test-short/token short_token
+api_quiet 403 'a test-short data key under tofu-durable' POST transit/datakey/plaintext/tofu-durable short_token
+api_quiet 403 'a test-short read of the test-plan folder' GET secret/data/test-plan/token short_token
+api_quiet 403 'a test-short read of the test-durable folder' GET secret/data/test-durable/token short_token
+revoke_jwt_token short_token
+
+# A key the issuer adds later signs in without the config being rewritten. While the issuer is
+# down, a key OpenBao already fetched still signs in and an unknown key ID is refused.
+publish_keys "one:$work/issuer-one.pem" "two:$work/issuer-two.pem"
+sign_token "$work/issuer-two.pem" two "$plan_claims"
+jwt_login test-plan 200 '' rotated_token
+revoke_jwt_token rotated_token
+jwt_config_is
+stop_issuer
+sign_token "$work/issuer-one.pem" one "$plan_claims"
+jwt_login test-plan 200 '' cached_token
+revoke_jwt_token cached_token
+sign_token "$work/issuer-other.pem" unknown "$plan_claims"
+jwt_login test-plan 400 'fetching keys oidc: get keys failed'
+start_issuer
+
+# The JWT roles are the whole truth too. A dropped role is reported in check mode, then deleted
+# with its policy, and the AppRoles keep theirs; a dropped AppRole leaves the JWT roles' policies;
+# an empty list deletes every JWT role and leaves jwt/.
+jwt_roles_no_short=$work/jwt-roles-no-short.json
+three_consumers=$work/three-consumers.json
+python3 - "$jwt_roles" "$jwt_roles_no_short" <<'PY'
+import json, sys
+roles = json.load(open(sys.argv[1]))
+roles['openbao_jwt_roles'] = [role for role in roles['openbao_jwt_roles'] if role['name'] != 'test-short']
+json.dump(roles, open(sys.argv[2], 'w'))
+PY
+python3 - "$full_list" "$three_consumers" <<'PY'
+import json, sys
+consumers = json.load(open(sys.argv[1]))
+consumers['openbao_approles'] = [entry for entry in consumers['openbao_approles'] if entry['name'] != 'othersvc']
+json.dump(consumers, open(sys.argv[2], 'w'))
+PY
+consumer_snapshot >"$work/consumers-before-jwt-cleanup.json"
+play role --check --diff -e "@$full_list" -e "$both_keys" -e "@$jwt_settings" -e "@$jwt_roles_no_short"
+reports "$last_play_log" 'openbao_config would delete the JWT role test-short'
+reports "$last_play_log" 'openbao_config would delete the policy test-short'
+for name in test-plan test-durable; do
+  reports_not "$last_play_log" "openbao_config would delete the JWT role $name"
+  reports_not "$last_play_log" "openbao_config would delete the policy $name"
+done
+api_expect 200 'check mode keeps the JWT role test-short' GET auth/jwt/role/test-short admin_token
+api_expect 200 'check mode keeps the policy test-short' GET sys/policies/acl/test-short admin_token
+play role -e "@$full_list" -e "$both_keys" -e "@$jwt_settings" -e "@$jwt_roles_no_short"
+changed_task "$last_play_log" 'OpenBao config | Delete each JWT role not on the list'
+api_expect 404 'the JWT role test-short after removal' GET auth/jwt/role/test-short admin_token
+api_expect 404 'the policy test-short after removal' GET sys/policies/acl/test-short admin_token
+jwt_role_is test-plan '{"repository_id":"1368108961"}'
+jwt_role_is test-durable '{"repository_id":"1368108961","environment":"durable"}'
+consumer_snapshot >"$work/consumers-after-jwt-cleanup.json"
+cmp -s "$work/consumers-before-jwt-cleanup.json" "$work/consumers-after-jwt-cleanup.json" || fail 'removing a JWT role must leave the AppRoles and their policies unchanged'
+play role -e "@$three_consumers" -e "$both_keys" -e "@$jwt_settings" -e "@$jwt_roles"
+api_expect 404 'the AppRole othersvc after removal' GET auth/approle/role/othersvc admin_token
+api_expect 404 'the policy othersvc after removal' GET sys/policies/acl/othersvc admin_token
+jwt_policy_is test-plan tofu-durable
+jwt_policy_is test-durable tofu-durable
+jwt_policy_is test-short tofu-short-lived
+play role "${jwt_args[@]}" -e '{"openbao_jwt_roles":[]}'
+api_expect 404 'the JWT role list after the empty list' LIST auth/jwt/role admin_token
+[[ $(jwt_mount) == jwt ]] || fail 'jwt/ must stay when openbao_jwt_roles is empty'
+for name in test-plan test-durable test-short; do
+  api_expect 404 "the policy $name after the empty list" GET "sys/policies/acl/$name" admin_token
+done
+play role "${jwt_args[@]}"
+jwt_role_is test-plan '{"repository_id":"1368108961"}'
+jwt_role_is test-durable '{"repository_id":"1368108961","environment":"durable"}'
+jwt_role_is test-short "{\"repository_id\":\"1305427147\",\"job_workflow_ref\":\"$short_ref@refs/heads/main\"}"
+for name in testsvc othersvc restore-check openbao-snapshot; do
+  api_expect 200 "$name AppRole after the JWT cleanup cases" GET "auth/approle/role/$name" admin_token
+done
+play role "${jwt_args[@]}"
+recap "$last_play_log" 0
+
+# Bad JWT role entries are refused before the role signs in.
+bad_entry() { printf '{"openbao_jwt_roles":[{"name":"%s","bound_claims":%s,"transit_keys":%s}]}' "$1" "$2" "$3"; }
+play_fails jwt-bad-name role 'openbao_jwt_roles names must match ^[a-z][a-z0-9-]*$' \
+  "${jwt_args[@]}" -e "$(bad_entry Bad_Name '{"repository_id":"1"}' '[]')"
+refused_before_sign_in "$last_play_log" 'a badly shaped JWT role name'
+play_fails jwt-reserved-name role 'openbao_jwt_roles must not name ansible, keepbreath0, default or root' \
+  "${jwt_args[@]}" -e "$(bad_entry default '{"repository_id":"1"}' '[]')"
+refused_before_sign_in "$last_play_log" 'a reserved JWT role name'
+play_fails jwt-shared-name role 'openbao_approles and openbao_jwt_roles names must be unique across both, because each names a policy' \
+  "${jwt_args[@]}" -e "$(bad_entry testsvc '{"repository_id":"1"}' '[]')"
+refused_before_sign_in "$last_play_log" 'a JWT role name an AppRole also uses'
+play_fails jwt-no-claims role 'openbao_jwt_roles entry test-empty must bind at least one claim, and every claim value must be a string' \
+  "${jwt_args[@]}" -e "$(bad_entry test-empty '{}' '[]')"
+refused_before_sign_in "$last_play_log" 'a JWT role binding no claim'
+play_fails jwt-number-claim role 'openbao_jwt_roles entry test-number must bind at least one claim, and every claim value must be a string' \
+  "${jwt_args[@]}" -e "$(bad_entry test-number '{"repository_id":1368108961}' '[]')"
+refused_before_sign_in "$last_play_log" 'a JWT role claim that is not a string'
+play_fails jwt-unlisted-key role 'openbao_jwt_roles entry test-key may list only keys in openbao_transit_keys' \
+  "${jwt_args[@]}" -e "$(bad_entry test-key '{"repository_id":"1"}' '["tofu-other"]')"
+refused_before_sign_in "$last_play_log" 'a JWT role listing an unlisted transit key'
+
+# Verify reads the config, each role and each policy back, and the next run writes them back.
+api_expect 204 'keepbreath0 changes test-plan bound_claims' POST auth/jwt/role/test-plan admin_token \
+  '{"role_type":"jwt","user_claim":"sub","bound_audiences":["https://openbao.test"],"bound_claims_type":"string","bound_claims":{"repository_id":"1305427147"},"token_policies":["test-plan"],"token_no_default_policy":true,"token_ttl":1800,"token_max_ttl":1800}'
+play_fails jwt-role-drift verify 'JWT role test-plan must match openbao_jwt_roles' "${jwt_args[@]}"
+play role "${jwt_args[@]}"
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Write each JWT role'
+jwt_role_is test-plan '{"repository_id":"1368108961"}'
+api_expect 204 'keepbreath0 adds a rule to the test-durable policy' POST sys/policies/acl/test-durable admin_token \
+  '{"policy":"path \"secret/data/other/*\" {\n  capabilities = [\"read\"]\n}\n"}'
+play_fails jwt-policy-drift verify "JWT role test-durable's policy must match openbao_jwt_roles" "${jwt_args[@]}"
+play role "${jwt_args[@]}"
+recap "$last_play_log" 1
+changed_in_loop "$last_play_log" 'OpenBao config | Write each JWT role policy'
+jwt_policy_is test-durable tofu-durable
+api_expect 204 'keepbreath0 changes the bound issuer' POST auth/jwt/config admin_token \
+  "{\"oidc_discovery_url\":\"$issuer_url\",\"bound_issuer\":\"https://token.actions.githubusercontent.com\"}"
+play_fails jwt-config-drift verify "jwt/'s config must name $issuer_url as its discovery URL and bound issuer" "${jwt_args[@]}"
+play role "${jwt_args[@]}"
+recap "$last_play_log" 1
+changed_task "$last_play_log" "OpenBao config | Write jwt/'s config"
+jwt_config_is
+
+# Check mode after the real runs plans nothing.
+play role --check --diff "${jwt_args[@]}"
+recap "$last_play_log" 0
+
+# A JWT role without an audience is refused before the role signs in.
+play_fails jwt-no-audience role "openbao_jwt_audience must be set when openbao_jwt_roles isn't empty" \
+  "${jwt_args[@]}" -e '{"openbao_jwt_audience":""}'
+refused_before_sign_in "$last_play_log" 'a JWT role without an audience'
+stop_issuer
+no_ansible_tokens '3.5b cases'
 
 api_expect 204 'keepbreath0 token revoke' POST auth/token/revoke-self admin_token
 logs_clean

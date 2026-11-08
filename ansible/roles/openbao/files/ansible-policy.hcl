@@ -1,0 +1,16 @@
+path "sys/mounts" { capabilities = ["read"] }
+path "sys/mounts/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "sys/mounts/transit" { capabilities = ["read", "update"] }
+path "sys/auth" { capabilities = ["read"] }
+path "sys/auth/*" { capabilities = ["create", "read", "update", "delete", "sudo"] }
+path "sys/policies/acl" { capabilities = ["list"] }
+path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "auth/approle/role" { capabilities = ["list"] }
+path "auth/approle/role/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "auth/jwt/config" { capabilities = ["read", "update"] }
+path "auth/jwt/role" { capabilities = ["list"] }
+path "auth/jwt/role/*" { capabilities = ["create", "read", "update", "delete"] }
+path "transit/keys" { capabilities = ["list"] }
+path "transit/keys/+" { capabilities = ["read", "update"] }
+path "secret/data/restore-check/*" { capabilities = ["create", "update"] }
+path "secret/metadata/restore-check/*" { capabilities = ["read"] }

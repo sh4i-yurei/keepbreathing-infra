@@ -6,3 +6,25 @@ argument_specs:
       openbao_client_address:
         type: str
         description: The OpenBao address openbao-read signs in at, without a trailing /v1.
+  podman-account:
+    short_description: Make openbao-podman-secret an account's default Podman secret driver, after requiring its transient store
+    options:
+      openbao_client_podman_account:
+        type: str
+        required: true
+        description: The account whose containers take their secrets from OpenBao. Its own role must have made it and written its transient storage.
+  podman-secret:
+    short_description: Create, replace or remake one of an account's Podman secrets holding an OpenBao path, without reading its value
+    options:
+      openbao_client_podman_account:
+        type: str
+        required: true
+        description: The account that owns the Podman secret.
+      openbao_client_secret_name:
+        type: str
+        required: true
+        description: The Podman secret's name, matching ^[a-z][a-z0-9-]*$.
+      openbao_client_secret_path:
+        type: str
+        required: true
+        description: The OpenBao path <consumer>/<name> the secret holds, each part matching ^[a-z][a-z0-9-]*$.

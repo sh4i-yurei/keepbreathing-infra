@@ -2,8 +2,13 @@
 # Bootstrap step 4, minus the upgrade (Ansible decision #9: patching is patch.yml).
 # yum-utils provides needs-restarting, which the patch playbook's reboot check needs;
 # without it the check passes silently whether or not a reboot is due.
+# acl provides setfacl, which Ansible needs to work as another account when it connects as
+# keepbreath0: copy's file transfer shares its temporary file with that account through setfacl,
+# even with pipelining on (OpenBao on the hub decision 61).
 
 - name: packages | Install the packages the base image lacks
   ansible.builtin.dnf:
-    name: yum-utils
+    name:
+      - yum-utils
+      - acl
     state: present

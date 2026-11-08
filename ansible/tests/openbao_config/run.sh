@@ -935,6 +935,56 @@ done
 play role -e "@$testsvc_list"
 [[ ! -e $race_folder ]] || fail "bcother's testsvc folder must be removed once no link is in its path"
 
+# 3.2e: everything the role does inside a consumer's home runs as that account (decision 61).
+# Each link target is a root-owned folder of mode 0755 outside /home, so the account can read it
+# but not change it, as it can read /etc on a real machine.
+link_targets=()
+remove_link_targets() {
+  local target
+  for target in "${link_targets[@]}"; do rm -rf -- "$target"; done
+}
+undo_add 'remove the 3.2e link targets' remove_link_targets
+
+# A link planted at a consumer's folder before the run fails the run, and the folder it points
+# at keeps its root owner and mode.
+planted_target=$(mktemp -d)
+link_targets+=("$planted_target")
+chmod 0755 "$planted_target"
+mv -- "$approle_dir/testsvc" "$approle_dir/testsvc.moved"
+ln -s -- "$planted_target" "$approle_dir/testsvc"
+play_fails planted-link role 'chown failed' -e "@$testsvc_list"
+[[ $(stat -c '%U %a' "$planted_target") == 'root 755' ]] || fail "a link planted at $approle_dir/testsvc must leave $planted_target root's with mode 755"
+[[ ! -e $planted_target/role-id && ! -e $planted_target/secret-id ]] || fail "a link planted at $approle_dir/testsvc must not lead the role to write into $planted_target"
+rm -- "$approle_dir/testsvc"
+mv -- "$approle_dir/testsvc.moved" "$approle_dir/testsvc"
+play role -e "@$testsvc_list"
+consumer_state testsvc >"$work/testsvc-state-after-planted-link.json"
+cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-planted-link.json" || fail "testsvc's AppRole, policy and folder must be unchanged once the planted link is gone"
+rm -rf -- "$planted_target"
+
+# A link swapped in after the removal's stat check fails the removal, and the planted file under
+# the link's target survives.
+swap_target=$(mktemp -d)
+link_targets+=("$swap_target")
+chmod 0755 "$swap_target"
+install -d -m 0755 "$swap_target/testsvc"
+printf 'planted' >"$swap_target/testsvc/planted"
+install -d -o bcother -g bcother -m 0700 /home/bcother/.config /home/bcother/.config/openbao \
+  /home/bcother/.config/openbao/approle "$race_folder"
+RACE_AFTER='OpenBao config | Look at each stale folder and its parents up to .config without following links' \
+  RACE_SWAP=/home/bcother/.config/openbao/approle RACE_TARGET=$swap_target \
+  ANSIBLE_CALLBACK_PLUGINS=$PWD/tests/openbao_config/callback_plugins ANSIBLE_CALLBACKS_ENABLED=race_swap \
+  play_fails_contains race-after-stat role 'rmtree failed: [Errno 13] Permission denied' -e "@$testsvc_list"
+[[ -L /home/bcother/.config/openbao/approle ]] || fail 'the race_swap callback must have swapped /home/bcother/.config/openbao/approle for a link after the stat task'
+[[ -f $swap_target/testsvc/planted ]] || fail "a link swapped in after the stat check must not lead the removal to delete $swap_target/testsvc/planted"
+consumer_state testsvc >"$work/testsvc-state-after-race-after-stat.json"
+cmp -s "$work/testsvc-state-before.json" "$work/testsvc-state-after-race-after-stat.json" || fail "a link swapped in after the stat check must leave bctest's testsvc folder untouched"
+rm -- /home/bcother/.config/openbao/approle
+mv -- /home/bcother/.config/openbao/approle.moved /home/bcother/.config/openbao/approle
+play role -e "@$testsvc_list"
+[[ ! -e $race_folder ]] || fail "bcother's testsvc folder must be removed once the swapped link is gone"
+rm -rf -- "$swap_target"
+
 # A folder for an entry without files is removed.
 play role -e "@$full_list"
 install -d -o bctest -g bctest -m 0700 "$approle_dir/restore-check"

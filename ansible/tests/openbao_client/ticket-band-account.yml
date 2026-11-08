@@ -1,0 +1,12 @@
+---
+- name: Prepare tbclient through ticket_band's account part for the openbao_client tests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Make tbclient the way hub.yml makes the band's account, before openbao_config
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: account
+      vars:
+        ticket_band_user: tbclient

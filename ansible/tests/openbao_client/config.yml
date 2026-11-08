@@ -1,5 +1,5 @@
 ---
-- name: Give clientsvc and othersvc their AppRoles for the openbao_client tests
+- name: Give clientsvc, othersvc and tbsvc their AppRoles for the openbao_client tests
   hosts: localhost
   connection: local
   gather_facts: false
@@ -11,6 +11,8 @@
         account: bltest
       - name: othersvc
         account: blother
+      - name: tbsvc
+        account: tbclient
     openbao_approle_bound_cidrs: ["192.0.2.10/32", "2001:db8::10/128"]
     openbao_ansible_password: "{{ lookup('env', 'TEST_ANSIBLE_PASSWORD') }}"
   roles:

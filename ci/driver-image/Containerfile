@@ -1,7 +1,8 @@
 # The image ci/run_driver.py runs a driver job in. It stands in for GitHub's ubuntu-26.04 runner.
 # Two settings make it behave like that runner inside a rootless container:
-#   - only 65,536 user IDs exist inside the container, so new accounts get 31,000 subordinate
-#     IDs between 2000 and 65000 instead of 65,536 from 100000;
+#   - only 65,536 user IDs exist inside the container, so new accounts get 20,000 subordinate
+#     IDs between 2000 and 65000 instead of 65,536 from 100000, which leaves room for three such
+#     accounts at once, as the openbao-client driver's bltest, blother and tbclient need;
 #   - nothing in this image pulls in network-online.target, so it is wanted at boot here, and
 #     rootless Quadlet units that wait for it start as they do on the runner.
 FROM docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
@@ -11,10 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       nftables python3 python3-venv python3-pip uidmap \
     && rm -rf /var/lib/apt/lists/*
 RUN sed -i -e 's/^#\?SUB_UID_MIN.*/SUB_UID_MIN 2000/' -e 's/^#\?SUB_UID_MAX.*/SUB_UID_MAX 65000/' \
-      -e 's/^#\?SUB_UID_COUNT.*/SUB_UID_COUNT 31000/' -e 's/^#\?SUB_GID_MIN.*/SUB_GID_MIN 2000/' \
-      -e 's/^#\?SUB_GID_MAX.*/SUB_GID_MAX 65000/' -e 's/^#\?SUB_GID_COUNT.*/SUB_GID_COUNT 31000/' \
+      -e 's/^#\?SUB_UID_COUNT.*/SUB_UID_COUNT 20000/' -e 's/^#\?SUB_GID_MIN.*/SUB_GID_MIN 2000/' \
+      -e 's/^#\?SUB_GID_MAX.*/SUB_GID_MAX 65000/' -e 's/^#\?SUB_GID_COUNT.*/SUB_GID_COUNT 20000/' \
       /etc/login.defs \
-    && grep -q '^SUB_UID_COUNT 31000' /etc/login.defs
+    && grep -q '^SUB_UID_COUNT 20000' /etc/login.defs
 RUN ln -s /usr/lib/systemd/system/network-online.target \
       /etc/systemd/system/multi-user.target.wants/network-online.target
 # GitHub runs steps as runner (UID 1001) with password-free sudo. runner holds no subordinate

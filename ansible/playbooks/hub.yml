@@ -42,6 +42,10 @@
   roles:
     - access
 
+# The services play runs its roles before its tasks, and a roles: entry ignores tasks_from, so
+# everything from ticket_band's account part on is imported as tasks. openbao_config needs the
+# band's account to exist, and the band's service part needs openbao_config's AppRole files, so
+# the band is split around it (OpenBao on the hub decisions 55, 72 and 75).
 - name: Hub services
   hosts: hub
   force_handlers: true
@@ -50,12 +54,27 @@
     - hub
     - backup_server
     - openbao
-    - openbao_config
     - openbao_client
-    - ticket_band
-    - role: tailscale_service
-      tailscale_service_name: backup
-      tailscale_service_port: "{{ backup_server_port }}"
-    - role: tailscale_service
-      tailscale_service_name: openbao
-      tailscale_service_port: "{{ openbao_port }}"
+  tasks:
+    - name: Prepare the ticket band's account for OpenBao
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: account
+    - name: Manage what's inside OpenBao
+      ansible.builtin.import_role:
+        name: openbao_config
+    - name: Run the ticket band's service part
+      ansible.builtin.import_role:
+        name: ticket_band
+    - name: Serve the backup server on the tailnet
+      ansible.builtin.import_role:
+        name: tailscale_service
+      vars:
+        tailscale_service_name: backup
+        tailscale_service_port: "{{ backup_server_port }}"
+    - name: Serve OpenBao on the tailnet
+      ansible.builtin.import_role:
+        name: tailscale_service
+      vars:
+        tailscale_service_name: openbao
+        tailscale_service_port: "{{ openbao_port }}"

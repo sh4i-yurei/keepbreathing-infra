@@ -26,7 +26,7 @@ SCRIPT = (
     / "roles/openbao_client/files/openbao-podman-secret.py"
 )
 
-# Two IDs Podman 5.8.2 gave in the rehearsal of 2026-11-08.
+# Two IDs Podman gave in the rehearsal of 2026-11-08.
 FIRST = "a134b9626fd9d45bfbfe8df7d"
 SECOND = "acf83ffe43d222a9978743894"
 USAGE = "openbao-podman-secret: usage: openbao-podman-secret store|lookup|delete|list\n"

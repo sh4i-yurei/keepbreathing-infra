@@ -300,6 +300,11 @@ chmod 0600 /etc/openbao/client.json
 play_fails verify-mode verify '/etc/openbao (0755), /usr/local/bin/openbao-read (0755), /usr/local/bin/openbao-podman-secret (0755) and /etc/openbao/client.json (0644) must exist and be owned by root'
 play role
 recap "$last_play_log" 1
+# The same verify catches the driver program with the wrong mode; the role repairs it.
+chmod 0644 /usr/local/bin/openbao-podman-secret
+play_fails verify-driver-mode verify '/etc/openbao (0755), /usr/local/bin/openbao-read (0755), /usr/local/bin/openbao-podman-secret (0755) and /etc/openbao/client.json (0644) must exist and be owned by root'
+play role
+recap "$last_play_log" 1
 printf '%s\n' '{"server": "http://127.0.0.1:18300"}' >/etc/openbao/client.json
 play_fails verify-address verify '/etc/openbao/client.json must parse with an address'
 play role

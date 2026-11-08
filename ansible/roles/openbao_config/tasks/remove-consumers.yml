@@ -90,8 +90,11 @@
   when: not ansible_check_mode
   no_log: true
 
-# The role runs as root, so a folder is removed only when its path is exactly
-# /home/<account>/.config/openbao/approle/<name> and nothing from .config down to it is a link.
+# A folder is removed only when its path is exactly /home/<account>/.config/openbao/approle/<name>
+# and nothing from .config down to it is a link. The find and the stat checks run as root, because
+# they span every account and follow no link. The removal runs as the folder's account, taken from
+# the path, so a link swapped in after the checks can only lead it where that account could
+# already reach (OpenBao on the hub decision 61).
 # find ends each path with a NUL byte, because a folder name may itself hold a newline.
 - name: OpenBao config | List the consumer folders on the machine
   ansible.builtin.command:
@@ -181,4 +184,6 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
+  become: true
+  become_user: "{{ item.split('/')[2] }}"
   loop: "{{ openbao_config_removable_folders }}"

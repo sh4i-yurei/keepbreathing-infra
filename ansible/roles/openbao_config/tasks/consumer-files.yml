@@ -20,6 +20,8 @@
     owner: "{{ openbao_consumer.account }}"
     group: "{{ openbao_consumer.account }}"
     mode: "{{ item.mode | default(omit) }}"
+  become: true
+  become_user: "{{ openbao_consumer.account }}"
   loop:
     - path: "/home/{{ openbao_consumer.account }}/.config"
     - path: "/home/{{ openbao_consumer.account }}/.config/openbao"
@@ -32,18 +34,24 @@
 - name: OpenBao config | Read the consumer role ID file metadata
   ansible.builtin.stat:
     path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/role-id"
+  become: true
+  become_user: "{{ openbao_consumer.account }}"
   register: openbao_config_role_id_file
   changed_when: false
 
 - name: OpenBao config | Read the consumer secret ID file metadata
   ansible.builtin.stat:
     path: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/secret-id"
+  become: true
+  become_user: "{{ openbao_consumer.account }}"
   register: openbao_config_secret_id_file
   changed_when: false
 
 - name: OpenBao config | Read the existing role ID file
   ansible.builtin.slurp:
     src: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/role-id"
+  become: true
+  become_user: "{{ openbao_consumer.account }}"
   register: openbao_config_role_id_content
   when: ansible_check_mode and openbao_config_role_id_file.stat.exists
   no_log: true
@@ -55,12 +63,16 @@
     owner: "{{ openbao_consumer.account }}"
     group: "{{ openbao_consumer.account }}"
     mode: '0600'
+  become: true
+  become_user: "{{ openbao_consumer.account }}"
   when: not ansible_check_mode
   no_log: true
 
 - name: OpenBao config | Read the existing secret ID file
   ansible.builtin.slurp:
     src: "/home/{{ openbao_consumer.account }}/.config/openbao/approle/{{ openbao_consumer.name }}/secret-id"
+  become: true
+  become_user: "{{ openbao_consumer.account }}"
   register: openbao_config_secret_id_content
   when: openbao_config_secret_id_file.stat.exists and openbao_config_secret_id_file.stat.size > 0
   no_log: true
@@ -158,6 +170,8 @@
     owner: "{{ openbao_consumer.account }}"
     group: "{{ openbao_consumer.account }}"
     mode: '0600'
+  become: true
+  become_user: "{{ openbao_consumer.account }}"
   when: not ansible_check_mode
   no_log: true
 

@@ -12,6 +12,16 @@
     mode: "0700"
   no_log: true
 
+- name: Break-glass sheet | Write restore environment file for machine
+  ansible.builtin.copy:
+    dest: "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}.env"
+    content: |
+      AWS_ACCESS_KEY_ID={{ break_glass_sheet_new_key.json.applicationKeyId }}
+      AWS_SECRET_ACCESS_KEY={{ break_glass_sheet_new_key.json.applicationKey }}
+      RESTIC_PASSWORD={{ b2_copy_passwords[break_glass_sheet_target.machine].b2 }}
+    mode: "0600"
+  no_log: true
+
 - name: Break-glass sheet | Run sheet restore for machine
   ansible.builtin.command:
     argv:
@@ -20,12 +30,8 @@
       - --rm
       - --network
       - host
-      - -e
-      - "AWS_ACCESS_KEY_ID={{ break_glass_sheet_new_key.json.applicationKeyId }}"
-      - -e
-      - "AWS_SECRET_ACCESS_KEY={{ break_glass_sheet_new_key.json.applicationKey }}"
-      - -e
-      - "RESTIC_PASSWORD={{ b2_copy_passwords[break_glass_sheet_target.machine].b2 }}"
+      - --env-file
+      - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}.env"
       - -v
       - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}:/restore:Z"
       - "{{ restic_image }}"

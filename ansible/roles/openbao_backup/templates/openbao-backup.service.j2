@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/openbao_backup). Edits here are overwritten.
+[Unit]
+Description=Start and wait for the OpenBao snapshot backup
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ openbao_backup_timeout | int + 300 }}
+ExecStart=/usr/bin/systemctl --user --machine={{ openbao_backup_user }}@ start --wait openbao-backup-run.service

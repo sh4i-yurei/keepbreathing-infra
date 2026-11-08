@@ -1,0 +1,15 @@
+---
+- name: Reload OpenBao backup user manager
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: user
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ openbao_backup_uid.stdout }}"
+  when: not ansible_check_mode
+
+- name: Reload OpenBao backup system manager
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode

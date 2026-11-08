@@ -24,6 +24,7 @@ jobs:
       hub_backup_disk: ${{ steps.select.outputs.hub_backup_disk }}
       hub_pull: ${{ steps.select.outputs.hub_pull }}
       openbao: ${{ steps.select.outputs.openbao }}
+      openbao_backup: ${{ steps.select.outputs.openbao_backup }}
       openbao_client: ${{ steps.select.outputs.openbao_client }}
       openbao_config: ${{ steps.select.outputs.openbao_config }}
       ticket_band: ${{ steps.select.outputs.ticket_band }}
@@ -652,6 +653,67 @@ jobs:
           done
           sudo cmp /tmp/openbao-client-environment-before /etc/environment
           sudo systemctl show-environment | cmp /tmp/openbao-client-manager-before -
+
+  openbao-backup:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.openbao_backup == 'true') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y podman passt apache2-utils
+      - name: Existing account is preserved
+        run: |
+          sudo useradd -m bbtest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_backup/run.sh > /tmp/openbao-backup-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing account was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: bbtest already exists' /tmp/openbao-backup-existing.log
+          test -d /home/bbtest
+          id bbtest
+          sudo userdel -r bbtest
+      - name: openbao_backup role integration cases
+        run: |
+          sudo cp -p /etc/environment /tmp/openbao-backup-environment-before
+          sudo systemctl show-environment > /tmp/openbao-backup-manager-before
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_backup/run.sh > /tmp/openbao-backup-full.log 2>&1; then
+            cat /tmp/openbao-backup-full.log
+          else
+            tail -80 /tmp/openbao-backup-full.log
+            exit 1
+          fi
+          if test "$(tail -1 /tmp/openbao-backup-full.log)" != 'openbao_backup driver: all cases passed'; then
+            echo 'ASSERTION FAILED: openbao_backup driver success message was not its last line'
+            exit 1
+          fi
+      - name: Full driver cleans up
+        run: |
+          for account in bbbao bbtest; do
+            if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: full driver left $account"; exit 1; fi
+            if test -e "/home/$account"; then echo "ASSERTION FAILED: full driver left /home/$account"; exit 1; fi
+            if test -e "/var/lib/systemd/linger/$account"; then echo "ASSERTION FAILED: full driver left lingering for $account"; exit 1; fi
+          done
+          for path in /etc/systemd/system/openbao-backup*; do
+            if test -e "$path" || test -L "$path"; then echo "ASSERTION FAILED: full driver left $path"; exit 1; fi
+          done
+          for port in 8200 8082 18300 18301 18302; do
+            if test -n "$(ss -ltnH "sport = :$port")"; then echo "ASSERTION FAILED: full driver left a listener on $port"; exit 1; fi
+          done
+          sudo cmp /tmp/openbao-backup-environment-before /etc/environment
+          sudo systemctl show-environment | cmp /tmp/openbao-backup-manager-before -
 
   openbao-config:
     needs: changes

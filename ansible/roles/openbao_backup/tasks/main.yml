@@ -1,0 +1,180 @@
+---
+- name: OpenBao backup | Require the openbao-snapshot AppRole in the account
+  ansible.builtin.assert:
+    that: >-
+      openbao_approles | selectattr('name', 'equalto', 'openbao-snapshot')
+      | map(attribute='account', default='') | select('equalto', openbao_backup_user)
+      | list | length > 0
+    fail_msg: >-
+      openbao_backup needs the openbao-snapshot AppRole's files in {{ openbao_backup_user }}'s home;
+      set its account to {{ openbao_backup_user }} in openbao_approles
+    quiet: true
+
+- name: OpenBao backup | Check account lingering
+  ansible.builtin.stat:
+    path: "/var/lib/systemd/linger/{{ openbao_backup_user }}"
+  register: openbao_backup_linger
+
+- name: OpenBao backup | Require account lingering
+  ansible.builtin.assert:
+    that: openbao_backup_linger.stat.exists
+    fail_msg: "Account lingering is required; run the backup_server role first."
+    quiet: true
+
+- name: OpenBao backup | Read the account UID
+  ansible.builtin.command:
+    argv: [id, -u, "{{ openbao_backup_user }}"]
+  register: openbao_backup_uid
+  changed_when: false
+  check_mode: false
+
+# The AppRole's files exist only after a real openbao_config run, so a rehearsal skips this check.
+- name: OpenBao backup | Check the AppRole files
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_backup_user }}/.config/openbao/approle/openbao-snapshot/{{ item }}"
+  loop:
+    - role-id
+    - secret-id
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  register: openbao_backup_approle_files
+  when: not ansible_check_mode
+
+- name: OpenBao backup | Require the AppRole files
+  ansible.builtin.assert:
+    that: >-
+      openbao_backup_approle_files.results | map(attribute='stat')
+      | selectattr('isreg', 'defined') | selectattr('isreg') | list | length == 2
+    fail_msg: >-
+      openbao_backup needs /home/{{ openbao_backup_user }}/.config/openbao/approle/openbao-snapshot/role-id
+      and secret-id; run openbao_config first
+    quiet: true
+  when: not ansible_check_mode
+
+- name: OpenBao backup | Check file paths for the rehearsal
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "/home/{{ openbao_backup_user }}/.config/openbao-backup/restic.env"
+    - "/home/{{ openbao_backup_user }}/.config/openbao-backup/snapshot.sh"
+    - "/home/{{ openbao_backup_user }}/.config/systemd/user/openbao-backup-run.service"
+    - /etc/systemd/system/openbao-backup.service
+    - /etc/systemd/system/openbao-backup.timer
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  register: openbao_backup_file_plan
+  when: ansible_check_mode
+
+- name: OpenBao backup | Report files the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would write {{ item.item }}"
+  loop: "{{ openbao_backup_file_plan.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - ansible_check_mode
+    - not item.stat.exists
+
+- name: OpenBao backup | Check the account's folders for the rehearsal
+  ansible.builtin.stat:
+    path: "/home/{{ openbao_backup_user }}/{{ item }}"
+  loop:
+    - .config/systemd/user
+    - .config/openbao-backup
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  register: openbao_backup_folders
+  when: ansible_check_mode
+
+- name: OpenBao backup | Note whether a rehearsal can write into the folders
+  ansible.builtin.set_fact:
+    openbao_backup_can_write: "{{ not ansible_check_mode or (openbao_backup_folders.results | map(attribute='stat.exists') | min) }}"
+
+- name: OpenBao backup | Make the account's systemd user folder
+  ansible.builtin.file:
+    path: "/home/{{ openbao_backup_user }}/.config/systemd/user"
+    state: directory
+    mode: "0700"
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+
+- name: OpenBao backup | Make the account's openbao-backup folder
+  ansible.builtin.file:
+    path: "/home/{{ openbao_backup_user }}/.config/openbao-backup"
+    state: directory
+    mode: "0700"
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+
+- name: OpenBao backup | Write the private restic environment
+  ansible.builtin.copy:
+    content: |
+      RESTIC_REPOSITORY=rest:http://127.0.0.1:{{ backup_server_port }}/{{ openbao_backup_login }}/
+      RESTIC_REST_USERNAME={{ openbao_backup_login }}
+      RESTIC_REST_PASSWORD={{ openbao_backup_password }}
+      RESTIC_PASSWORD={{ openbao_backup_restic_password }}
+      BAO_ADDR={{ openbao_backup_address }}
+      OPENBAO_WAIT={{ openbao_backup_wait }}
+    dest: "/home/{{ openbao_backup_user }}/.config/openbao-backup/restic.env"
+    mode: "0600"
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  no_log: true
+  diff: false
+  when: openbao_backup_can_write | bool
+
+- name: OpenBao backup | Write the snapshot script
+  ansible.builtin.template:
+    src: snapshot.sh.j2
+    dest: "/home/{{ openbao_backup_user }}/.config/openbao-backup/snapshot.sh"
+    mode: "0500"
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  when: openbao_backup_can_write | bool
+
+- name: OpenBao backup | Write the account's run unit
+  ansible.builtin.template:
+    src: openbao-backup-run.service.j2
+    dest: "/home/{{ openbao_backup_user }}/.config/systemd/user/openbao-backup-run.service"
+    mode: "0644"
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  notify: Reload OpenBao backup user manager
+  when: openbao_backup_can_write | bool
+
+- name: OpenBao backup | Write system units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - openbao-backup.service
+    - openbao-backup.timer
+  notify: Reload OpenBao backup system manager
+
+- name: OpenBao backup | Pull the pinned OpenBao and restic images
+  containers.podman.podman_image:
+    name: "{{ item }}"
+  loop:
+    - "{{ openbao_backup_image }}"
+    - "{{ openbao_backup_restic_image }}"
+  become: true
+  become_user: "{{ openbao_backup_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ openbao_backup_uid.stdout }}"
+  when: not ansible_check_mode
+
+- name: OpenBao backup | Apply manager reloads before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: OpenBao backup | Enable and start the system timer
+  ansible.builtin.systemd_service:
+    name: openbao-backup.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Verify the OpenBao backup
+  ansible.builtin.import_tasks: verify.yml

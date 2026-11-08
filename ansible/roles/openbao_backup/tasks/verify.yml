@@ -1,0 +1,129 @@
+---
+- name: OpenBao backup verify | Run only on a real play
+  when: not ansible_check_mode
+  block:
+    - name: OpenBao backup verify | Check repository availability
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --security-opt
+          - label=disable
+          - --env-file
+          - "/home/{{ openbao_backup_user }}/.config/openbao-backup/restic.env"
+          - "{{ openbao_backup_restic_image }}"
+          - snapshots
+          - --json
+      become: true
+      become_user: "{{ openbao_backup_user }}"
+      environment: &openbao_backup_user_environment
+        XDG_RUNTIME_DIR: "/run/user/{{ openbao_backup_uid.stdout }}"
+      register: openbao_backup_repository_probe
+      changed_when: false
+      failed_when: false
+
+    - name: OpenBao backup verify | Require available or absent repository
+      ansible.builtin.assert:
+        that: openbao_backup_repository_probe.rc in [0, 10]
+        fail_msg: "{{ openbao_backup_repository_probe.stderr }}"
+        quiet: true
+
+    - name: OpenBao backup verify | Initialize the repository once
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --security-opt
+          - label=disable
+          - --env-file
+          - "/home/{{ openbao_backup_user }}/.config/openbao-backup/restic.env"
+          - "{{ openbao_backup_restic_image }}"
+          - init
+      become: true
+      become_user: "{{ openbao_backup_user }}"
+      environment: *openbao_backup_user_environment
+      when: openbao_backup_repository_probe.rc == 10
+      changed_when: false
+
+    - name: OpenBao backup verify | Count the snapshots before the run
+      ansible.builtin.set_fact:
+        openbao_backup_snapshots_before: >-
+          {{ (openbao_backup_repository_probe.stdout | from_json | length)
+             if openbao_backup_repository_probe.rc == 0 else 0 }}
+
+    - name: OpenBao backup verify | Start the same system service as the timer
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - start
+          - openbao-backup.service
+      changed_when: false
+
+    - name: OpenBao backup verify | Read the snapshots after the run
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --security-opt
+          - label=disable
+          - --env-file
+          - "/home/{{ openbao_backup_user }}/.config/openbao-backup/restic.env"
+          - "{{ openbao_backup_restic_image }}"
+          - snapshots
+          - --json
+      become: true
+      become_user: "{{ openbao_backup_user }}"
+      environment: *openbao_backup_user_environment
+      register: openbao_backup_snapshots_after
+      changed_when: false
+
+    - name: OpenBao backup verify | Require one new snapshot of exactly /openbao.snap
+      ansible.builtin.assert:
+        that:
+          - (openbao_backup_snapshots_after.stdout | from_json | length) == (openbao_backup_snapshots_before | int) + 1
+          - (openbao_backup_snapshots_after.stdout | from_json | sort(attribute='time') | last).paths == ['/openbao.snap']
+        fail_msg: "The run must add one snapshot whose paths are exactly ['/openbao.snap']."
+        quiet: true
+
+    - name: OpenBao backup verify | List the account's containers
+      ansible.builtin.command:
+        argv:
+          - podman
+          - ps
+          - -a
+          - --format
+          - json
+      become: true
+      become_user: "{{ openbao_backup_user }}"
+      environment: *openbao_backup_user_environment
+      register: openbao_backup_containers
+      changed_when: false
+
+    - name: OpenBao backup verify | Require no openbao-backup container left
+      ansible.builtin.assert:
+        that: "'openbao-backup' not in (openbao_backup_containers.stdout | from_json | map(attribute='Names') | flatten)"
+        fail_msg: "The run left a container named openbao-backup in {{ openbao_backup_user }}'s Podman."
+        quiet: true
+
+    - name: OpenBao backup verify | Read the timer
+      ansible.builtin.systemd_service:
+        name: openbao-backup.timer
+      register: openbao_backup_timer
+      changed_when: false
+
+    - name: OpenBao backup verify | Require the timer scheduled
+      ansible.builtin.assert:
+        that:
+          - openbao_backup_timer.status.UnitFileState == 'enabled'
+          - openbao_backup_timer.status.NextElapseUSecRealtime | default('') not in ['', 'n/a']
+        fail_msg: openbao-backup.timer must be enabled and scheduled
+        quiet: true

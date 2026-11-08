@@ -21,6 +21,7 @@ JOBS = {
     "hub-backup-disk",
     "hub-pull",
     "openbao",
+    "openbao-backup",
     "openbao-client",
     "openbao-config",
     "ticket-band",
@@ -70,7 +71,7 @@ DIFF_111 = [
         (
             ["ansible/roles/openbao/tasks/main.yml", "ansible/tests/openbao/run.sh"],
             False,
-            {"openbao", "openbao-client", "openbao-config"},
+            {"openbao", "openbao-backup", "openbao-client", "openbao-config"},
         ),
         (
             ["ansible/tests/lib/undo.sh"],
@@ -81,6 +82,7 @@ DIFF_111 = [
                 "break-glass-sheet",
                 "hub-pull",
                 "openbao",
+                "openbao-backup",
                 "openbao-client",
                 "openbao-config",
                 "ticket-band",
@@ -95,6 +97,7 @@ DIFF_111 = [
                 "backup-prune",
                 "backup-server",
                 "hub-pull",
+                "openbao-backup",
                 "vaultwarden-backup",
             },
         ),
@@ -123,6 +126,7 @@ DIFF_111 = [
                 "backup-prune",
                 "backup-server",
                 "hub-pull",
+                "openbao-backup",
                 "vaultwarden-backup",
             },
         ),
@@ -171,7 +175,7 @@ def test_new_driver_is_discovered(tmp_path):
     workflow_path.write_text(yaml.safe_dump(workflow))
     assert select_jobs(["ansible/roles/openbao/tasks/main.yml"], tmp_path) == (
         False,
-        {"openbao", "openbao-client", "openbao-config", "newdriver"},
+        {"openbao", "openbao-backup", "openbao-client", "openbao-config", "newdriver"},
     )
 
 
@@ -344,7 +348,7 @@ def test_main_outputs(
         ]
     else:
         assert lines == ["full=false"] + [
-            f"{job.replace('-', '_')}={'true' if job in {'openbao', 'openbao-client', 'openbao-config'} else 'false'}"
+            f"{job.replace('-', '_')}={'true' if job in {'openbao', 'openbao-backup', 'openbao-client', 'openbao-config'} else 'false'}"
             for job in sorted(JOBS)
         ]
 
@@ -374,7 +378,7 @@ def test_main_selects_readers_of_both_rename_paths(tmp_path, monkeypatch, capsys
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     main("push", "refs/heads/feature", repo)
     assert output.read_text().splitlines() == ["full=false"] + [
-        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'backup-prune', 'break-glass-sheet', 'hub-pull', 'openbao', 'openbao-client', 'openbao-config', 'ticket-band', 'vaultwarden-backup'} else 'false'}"
+        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'backup-prune', 'break-glass-sheet', 'hub-pull', 'openbao', 'openbao-backup', 'openbao-client', 'openbao-config', 'ticket-band', 'vaultwarden-backup'} else 'false'}"
         for job in sorted(JOBS)
     ]
     assert capsys.readouterr().out == output.read_text()
@@ -387,7 +391,7 @@ def test_main_selects_readers_of_both_rename_paths(tmp_path, monkeypatch, capsys
             "pull_request",
             "refs/pull/1/merge",
             "ansible/roles/openbao/tasks/verify.yml",
-            {"openbao", "openbao-client", "openbao-config"},
+            {"openbao", "openbao-backup", "openbao-client", "openbao-config"},
         ),
         ("pull_request", "refs/pull/1/merge", "ci/run_driver.py", set()),
         ("push", "refs/heads/feature", "ci/driver-image/Containerfile", set()),
@@ -470,7 +474,7 @@ def test_main_compares_commits_not_uncommitted_files(git_repo, tmp_path, monkeyp
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     main("push", "refs/heads/feature", git_repo)
     assert output.read_text().splitlines() == ["full=false"] + [
-        f"{job.replace('-', '_')}={'true' if job in {'openbao', 'openbao-client', 'openbao-config'} else 'false'}"
+        f"{job.replace('-', '_')}={'true' if job in {'openbao', 'openbao-backup', 'openbao-client', 'openbao-config'} else 'false'}"
         for job in sorted(JOBS)
     ]
 

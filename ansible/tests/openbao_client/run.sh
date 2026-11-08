@@ -416,7 +416,7 @@ stop_proxy
 start_proxy 192.0.2.10
 blother_uid=$(id -u blother)
 bltest_uid=$(id -u bltest)
-openbao_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("roles/openbao/defaults/main.yml"))["openbao_image"])')
+openbao_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["openbao_image"])')
 # Run a command as an account from /, with its run directory, the way its user manager would.
 as_account() {
   local account=$1

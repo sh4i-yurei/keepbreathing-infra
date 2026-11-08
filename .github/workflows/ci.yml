@@ -607,6 +607,13 @@ jobs:
           grep -Fx 'ASSERTION FAILED: /usr/local/bin/openbao-read already exists' /tmp/openbao-client-existing-helper.log
           test "$(cat /usr/local/bin/openbao-read)" = 'existing helper'
           sudo rm /usr/local/bin/openbao-read
+          printf 'existing driver program\n' | sudo tee /usr/local/bin/openbao-podman-secret > /dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-existing-program.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing driver program was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /usr/local/bin/openbao-podman-secret already exists' /tmp/openbao-client-existing-program.log
+          test "$(cat /usr/local/bin/openbao-podman-secret)" = 'existing driver program'
+          sudo rm /usr/local/bin/openbao-podman-secret
           sudo mkdir /etc/openbao
           printf 'existing config\n' | sudo tee /etc/openbao/keep > /dev/null
           if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-existing-folder.log 2>&1; then
@@ -638,6 +645,7 @@ jobs:
             if test -e "/var/lib/systemd/linger/$account"; then echo "ASSERTION FAILED: full driver left lingering for $account"; exit 1; fi
           done
           if test -e /usr/local/bin/openbao-read; then echo 'ASSERTION FAILED: full driver left /usr/local/bin/openbao-read'; exit 1; fi
+          if test -e /usr/local/bin/openbao-podman-secret; then echo 'ASSERTION FAILED: full driver left /usr/local/bin/openbao-podman-secret'; exit 1; fi
           if test -e /etc/openbao; then echo 'ASSERTION FAILED: full driver left /etc/openbao'; exit 1; fi
           for port in 8200 18300; do
             if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$port/" || true)" != 000; then echo "ASSERTION FAILED: full driver left a listener on $port"; exit 1; fi

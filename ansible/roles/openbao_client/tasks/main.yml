@@ -1,6 +1,8 @@
 ---
 # Install openbao-read, which signs in as the calling account's AppRole and prints one secret,
-# and the address it signs in at (OpenBao on the hub decision 58).
+# the address it signs in at (OpenBao on the hub decision 58), and openbao-podman-secret, the
+# Podman shell secret driver that keeps each secret's path and looks it up through openbao-read
+# (decision 62).
 - name: OpenBao client | Create the configuration folder
   ansible.builtin.file:
     path: /etc/openbao
@@ -13,6 +15,14 @@
   ansible.builtin.copy:
     src: openbao-read.py
     dest: /usr/local/bin/openbao-read
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: OpenBao client | Install the openbao-podman-secret driver program
+  ansible.builtin.copy:
+    src: openbao-podman-secret.py
+    dest: /usr/local/bin/openbao-podman-secret
     owner: root
     group: root
     mode: '0755'

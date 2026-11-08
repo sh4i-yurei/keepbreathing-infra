@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The openbao_client driver: installs openbao-read with its role, then runs the real helper as
-# test accounts against a real OpenBao set up by the openbao and openbao_config roles, through
-# a stand-in for Tailscale's proxy (OpenBao on the hub decisions 16, 17 and 58). Run as root
-# from ansible/.
+# The openbao_client driver: installs openbao-read and openbao-podman-secret with their role,
+# then runs both as test accounts against a real OpenBao set up by the openbao and
+# openbao_config roles, through a stand-in for Tailscale's proxy (OpenBao on the hub decisions
+# 16, 17, 58 and 62). Run as root from ansible/.
 set -euo pipefail
 
 source tests/lib/undo.sh
@@ -17,6 +17,9 @@ if id -u bltest >/dev/null 2>&1; then fail 'bltest already exists'; fi
 if id -u blother >/dev/null 2>&1; then fail 'blother already exists'; fi
 if [[ -e /usr/local/bin/openbao-read || -L /usr/local/bin/openbao-read ]]; then
   fail '/usr/local/bin/openbao-read already exists'
+fi
+if [[ -e /usr/local/bin/openbao-podman-secret || -L /usr/local/bin/openbao-podman-secret ]]; then
+  fail '/usr/local/bin/openbao-podman-secret already exists'
 fi
 if [[ -e /etc/openbao || -L /etc/openbao ]]; then fail '/etc/openbao already exists'; fi
 if listening 8200; then fail '127.0.0.1:8200 is already in use'; fi
@@ -44,8 +47,11 @@ undo_blother() { remove_account blother; }
 undo_add 'remove driver-created bltest' undo_bltest
 undo_add 'remove driver-created blother' undo_blother
 # The checks above proved neither existed, so whatever is there now is the role's.
-undo_client_files() { rm -f -- /usr/local/bin/openbao-read; rm -rf -- /etc/openbao; }
-undo_add 'remove /usr/local/bin/openbao-read and /etc/openbao' undo_client_files
+undo_client_files() {
+  rm -f -- /usr/local/bin/openbao-read /usr/local/bin/openbao-podman-secret
+  rm -rf -- /etc/openbao
+}
+undo_add 'remove /usr/local/bin/openbao-read, /usr/local/bin/openbao-podman-secret and /etc/openbao' undo_client_files
 
 proxy_pid=
 start_proxy() {
@@ -130,6 +136,7 @@ PY
 none_installed() {
   local label=$1
   [[ ! -e /usr/local/bin/openbao-read ]] || fail "$label must not install /usr/local/bin/openbao-read"
+  [[ ! -e /usr/local/bin/openbao-podman-secret ]] || fail "$label must not install /usr/local/bin/openbao-podman-secret"
   [[ ! -e /etc/openbao ]] || fail "$label must not create /etc/openbao"
 }
 installed() {
@@ -137,6 +144,8 @@ installed() {
   [[ $(stat -c '%U:%G %a %F' /usr/local/bin/openbao-read) == 'root:root 755 regular file' ]] || fail 'openbao-read must be root:root 0755'
   [[ $(stat -c '%U:%G %a %F' /etc/openbao/client.json) == 'root:root 644 regular file' ]] || fail 'client.json must be root:root 0644'
   cmp -s roles/openbao_client/files/openbao-read.py /usr/local/bin/openbao-read || fail 'openbao-read must be the role file'
+  [[ $(stat -c '%U:%G %a %F' /usr/local/bin/openbao-podman-secret) == 'root:root 755 regular file' ]] || fail 'openbao-podman-secret must be root:root 0755'
+  cmp -s roles/openbao_client/files/openbao-podman-secret.py /usr/local/bin/openbao-podman-secret || fail 'openbao-podman-secret must be the role file'
   python3 - <<'PY' || fail 'client.json must read {"address": "http://127.0.0.1:18300"}'
 import json
 assert json.load(open('/etc/openbao/client.json')) == {"address": "http://127.0.0.1:18300"}
@@ -222,6 +231,27 @@ helper_fails_with() {
     fail "$label must write one line starting: $prefix"
   }
 }
+# Run openbao-podman-secret as an account from /, the way Podman runs its shell driver: SECRET_ID
+# set unless it is empty, as for list, and the given text on standard input with no newline. The
+# results land where helper_exact reads them. With --unshare first, it runs through podman unshare,
+# inside the account's rootless user namespace, as Podman itself runs the driver.
+podman_secret_index=0
+podman_secret() {
+  local -a through=() environment=()
+  if [[ $1 == --unshare ]]; then
+    through=(env "XDG_RUNTIME_DIR=/run/user/$(id -u "$2")" podman unshare)
+    shift
+  fi
+  local account=$1 secret_id=$2 command=$3 input=${4-}
+  podman_secret_index=$((podman_secret_index + 1))
+  helper_out=$work/podman-secret-$podman_secret_index-out.log
+  helper_err=$work/podman-secret-$podman_secret_index-err.log
+  helper_status=0
+  if [[ -n $secret_id ]]; then environment=("SECRET_ID=$secret_id"); fi
+  printf '%s' "$input" |
+    (cd / && runuser -u "$account" -- "${through[@]}" /usr/bin/env -u SECRET_ID "${environment[@]}" /usr/local/bin/openbao-podman-secret "$command") \
+    >"$helper_out" 2>"$helper_err" || helper_status=$?
+}
 
 # No helper token may be left, and no ansible token. The driver revokes its own keepbreath0
 # token only after it counts.
@@ -257,16 +287,16 @@ for path in logs:
 PY
 }
 
-# Check mode on a machine where nothing exists reports both files and creates nothing.
+# Check mode on a machine where nothing exists reports every file and creates nothing.
 play role --check --diff
-recap "$last_play_log" 3
+recap "$last_play_log" 4
 changed_task "$last_play_log" 'OpenBao client | Install the openbao-read helper'
 changed_task "$last_play_log" 'OpenBao client | Write the address file'
 none_installed 'check mode'
 
-# The real run installs both, a second run and a check run change nothing.
+# The real run installs them all, a second run and a check run change nothing.
 play role
-recap "$last_play_log" 3
+recap "$last_play_log" 4
 installed
 printf '%s\n' '{"address": "http://127.0.0.1:18300"}' | cmp -s - /etc/openbao/client.json || fail 'client.json must hold exactly one line of JSON'
 play role
@@ -276,7 +306,12 @@ recap "$last_play_log" 0
 
 # The verify task file catches a wrong mode and a file without an address; the role repairs both.
 chmod 0600 /etc/openbao/client.json
-play_fails verify-mode verify '/etc/openbao (0755), /usr/local/bin/openbao-read (0755) and /etc/openbao/client.json (0644) must exist and be owned by root'
+play_fails verify-mode verify '/etc/openbao (0755), /usr/local/bin/openbao-read (0755), /usr/local/bin/openbao-podman-secret (0755) and /etc/openbao/client.json (0644) must exist and be owned by root'
+play role
+recap "$last_play_log" 1
+# The same verify catches the driver program with the wrong mode; the role repairs it.
+chmod 0644 /usr/local/bin/openbao-podman-secret
+play_fails verify-driver-mode verify '/etc/openbao (0755), /usr/local/bin/openbao-read (0755), /usr/local/bin/openbao-podman-secret (0755) and /etc/openbao/client.json (0644) must exist and be owned by root'
 play role
 recap "$last_play_log" 1
 printf '%s\n' '{"server": "http://127.0.0.1:18300"}' >/etc/openbao/client.json
@@ -330,6 +365,44 @@ helper_run runuser -u bltest -- env "XDG_RUNTIME_DIR=/run/user/$(id -u bltest)" 
 helper_exact 'bltest reading clientsvc/probe through podman unshare' 0 clientsvc-probe ''
 helper_run systemd-run --uid=bltest --setenv=HOME=/nonexistent --wait --pipe --quiet /usr/local/bin/openbao-read clientsvc/probe
 helper_exact 'a systemd-run unit as bltest with HOME=/nonexistent reading clientsvc/probe' 0 clientsvc-probe ''
+
+# Podman's secret driver as bltest keeps only the path and looks the value up through the real
+# openbao-read, at the hub's address again (decision 62). The ID is a fixed Podman-shaped one.
+podman_id=a134b9626fd9d45bfbfe8df7d
+podman_secrets=/home/bltest/.config/openbao/podman-secrets
+podman_secret bltest "$podman_id" store clientsvc/probe
+helper_exact 'bltest storing clientsvc/probe' 0 '' ''
+[[ $(stat -c '%U %a %F' "$podman_secrets") == 'bltest 700 directory' ]] || fail "$podman_secrets must be bltest's with mode 0700"
+[[ $(stat -c '%U %a %F' "$podman_secrets/$podman_id") == 'bltest 600 regular file' ]] || fail "the secret's file must be bltest's with mode 0600"
+printf '%s' clientsvc/probe | cmp -s - "$podman_secrets/$podman_id" || fail "the secret's file must hold exactly clientsvc/probe"
+podman_secret bltest "$podman_id" lookup
+helper_exact 'bltest looking up its Podman secret' 0 clientsvc-probe ''
+podman_secret bltest '' list
+helper_exact 'bltest listing its Podman secrets' 0 "$podman_id"$'\n' ''
+podman_secret bltest "$podman_id" delete
+helper_exact 'bltest deleting its Podman secret' 0 '' ''
+podman_secret bltest "$podman_id" delete
+helper_exact 'bltest deleting its Podman secret again' 0 '' ''
+[[ ! -e $podman_secrets/$podman_id ]] || fail "delete must remove the secret's file"
+podman_secret bltest "$podman_id" lookup
+helper_exact 'bltest looking up a deleted Podman secret' 1 '' "openbao-podman-secret: no secret stored for $podman_id"
+printf 'deleted Podman secret: %s\n' "$(cat "$helper_err")"
+
+# Inside Podman's rootless user namespace bltest is uid 0; the driver program still keeps its
+# paths in bltest's own home, with bltest's modes, and looks the value up (decision 63).
+rmdir "$podman_secrets"
+podman_secret --unshare bltest "$podman_id" store clientsvc/probe
+helper_exact 'bltest storing clientsvc/probe through podman unshare' 0 '' ''
+[[ $(stat -c '%U %a %F' "$podman_secrets") == 'bltest 700 directory' ]] || fail "$podman_secrets made through podman unshare must be bltest's with mode 0700"
+[[ $(stat -c '%U %a %F' "$podman_secrets/$podman_id") == 'bltest 600 regular file' ]] || fail "the secret's file stored through podman unshare must be bltest's with mode 0600"
+printf '%s' clientsvc/probe | cmp -s - "$podman_secrets/$podman_id" || fail "the secret's file stored through podman unshare must hold exactly clientsvc/probe"
+podman_secret --unshare bltest "$podman_id" lookup
+helper_exact 'bltest looking up its Podman secret through podman unshare' 0 clientsvc-probe ''
+podman_secret --unshare bltest '' list
+helper_exact 'bltest listing its Podman secrets through podman unshare' 0 "$podman_id"$'\n' ''
+podman_secret --unshare bltest "$podman_id" delete
+helper_exact 'bltest deleting its Podman secret through podman unshare' 0 '' ''
+[[ ! -e $podman_secrets/$podman_id ]] || fail "delete through podman unshare must remove the secret's file"
 stop_proxy
 
 no_leftover_tokens

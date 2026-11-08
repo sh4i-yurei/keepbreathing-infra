@@ -1,0 +1,81 @@
+"""The order of hub.yml's services play (OpenBao on the hub decisions 55, 72 and 75).
+
+openbao_config needs the band's account to exist, so ticket_band's account part runs before it,
+and the band's service part runs after it, once its AppRole files are written. openbao_client
+only installs and reads files, so it runs before both.
+"""
+
+import os
+from pathlib import Path
+import re
+import subprocess
+
+
+ANSIBLE = Path(__file__).resolve().parents[1]
+
+
+def list_tasks(playbook):
+    environment = {key: os.environ[key] for key in ("PATH", "HOME")}
+    environment.update(ANSIBLE_CONFIG=str(ANSIBLE / "ansible.cfg"), ANSIBLE_NOCOLOR="1")
+    result = subprocess.run(
+        ["ansible-playbook", playbook, "--list-tasks"],
+        cwd=ANSIBLE,
+        env=environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
+
+
+def play_tasks(output, name):
+    """The task names listed under one play, in order, without their tags."""
+    blocks = re.split(r"(?=^  play #\d+ )", output, flags=re.MULTILINE)[1:]
+    for block in blocks:
+        title = re.search(r"^  play #\d+ \([^)]*\): ([^\t\n]+)", block).group(1)
+        if title == name:
+            return [
+                line.strip().split("\t")[0]
+                for line in block.splitlines()[1:]
+                if line.startswith("      ")
+            ]
+    raise AssertionError(f"no play named {name}")
+
+
+def first(tasks, matches, what):
+    for index, task in enumerate(tasks):
+        if matches(task):
+            return index
+    raise AssertionError(f"Hub services lists no {what}")
+
+
+def test_hub_services_run_the_band_account_between_openbao_client_and_openbao_config():
+    tasks = play_tasks(list_tasks("playbooks/hub.yml"), "Hub services")
+    order = [
+        first(
+            tasks,
+            lambda task: task.startswith("openbao_client : "),
+            "openbao_client task",
+        ),
+        first(
+            tasks,
+            lambda task: task == "ticket_band : Ticket band | Create the account",
+            "ticket_band account task",
+        ),
+        first(
+            tasks,
+            lambda task: task.startswith("openbao_config : "),
+            "openbao_config task",
+        ),
+        first(
+            tasks,
+            lambda task: task == "ticket_band : Ticket band | Read account UID",
+            "ticket_band verify task",
+        ),
+        first(
+            tasks,
+            lambda task: task.startswith("tailscale_service : "),
+            "tailscale_service task",
+        ),
+    ]
+    assert order == sorted(order) and len(set(order)) == len(order), order

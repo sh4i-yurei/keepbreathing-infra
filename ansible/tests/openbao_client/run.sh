@@ -15,6 +15,7 @@ listening() { [[ $(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://1
 # Refuse to start over anything this driver makes or removes, and leave it alone.
 if id -u bltest >/dev/null 2>&1; then fail 'bltest already exists'; fi
 if id -u blother >/dev/null 2>&1; then fail 'blother already exists'; fi
+if id -u tbclient >/dev/null 2>&1; then fail 'tbclient already exists'; fi
 if [[ -e /usr/local/bin/openbao-read || -L /usr/local/bin/openbao-read ]]; then
   fail '/usr/local/bin/openbao-read already exists'
 fi
@@ -44,8 +45,10 @@ remove_account() {
 }
 undo_bltest() { remove_account bltest; }
 undo_blother() { remove_account blother; }
+undo_tbclient() { remove_account tbclient; }
 undo_add 'remove driver-created bltest' undo_bltest
 undo_add 'remove driver-created blother' undo_blother
+undo_add 'remove driver-created tbclient' undo_tbclient
 # The checks above proved neither existed, so whatever is there now is the role's.
 undo_client_files() {
   rm -f -- /usr/local/bin/openbao-read /usr/local/bin/openbao-podman-secret
@@ -281,7 +284,7 @@ secrets = [os.environ[name] for name in ('TEST_SEAL_KEY', 'TEST_ADMIN_PASSWORD',
 secrets += [path.read_text() for path in work.glob('*-id')]
 # The two Podman test values, read from their pattern files so no command line holds them.
 secrets += [(patterns / name).read_text().rstrip('\n') for name in ('pod-one', 'pod-two')]
-assert len(secrets) == 9, len(secrets)
+assert len(secrets) == 11, len(secrets)
 logs = sorted(work.glob('*.log'))
 assert len(logs) > 10, logs
 for path in logs:
@@ -332,15 +335,25 @@ healthy || fail 'the openbao role must start OpenBao'
 login_body=$(python3 -c 'import json,os; print(json.dumps({"password": os.environ["TEST_ADMIN_PASSWORD"]}))')
 api_expect 200 'keepbreath0 login' POST auth/userpass/login/keepbreath0 '' "$login_body"
 admin_token=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["auth"]["client_token"])' "$work/api.json")
+# tbclient is made the way hub.yml makes the band's account: ticket_band's account part runs
+# before openbao_config, which needs the account to exist (OpenBao on the hub decisions 55 and 75).
+play ticket-band-account
 play config
-for pair in clientsvc:bltest othersvc:blother; do
+for pair in clientsvc:bltest othersvc:blother tbsvc:tbclient; do
   name=${pair%%:*} account=${pair##*:}
   for file in role-id secret-id; do
     cp "/home/$account/.config/openbao/approle/$name/$file" "$work/$name-$file"
   done
 done
+for file in role-id secret-id; do
+  [[ $(stat -c '%U %a %F' "/home/tbclient/.config/openbao/approle/tbsvc/$file") == 'tbclient 600 regular file' ]] ||
+    fail "tbsvc's $file must be tbclient's regular file with mode 0600"
+done
+[[ -f /home/tbclient/.config/containers/containers.conf.d/openbao.conf ]] ||
+  fail "ticket_band's account part must write tbclient's openbao.conf"
 api_expect 200 'clientsvc probe write' POST secret/data/clientsvc/probe admin_token '{"data":{"value":"clientsvc-probe"}}'
 api_expect 200 'othersvc probe write' POST secret/data/othersvc/probe admin_token '{"data":{"value":"othersvc-probe"}}'
+api_expect 200 'tbsvc probe write' POST secret/data/tbsvc/probe admin_token '{"data":{"value":"tbsvc-probe"}}'
 
 # Through the proxy as the hub's address, each account reads its own consumer and only that.
 start_proxy 192.0.2.10
@@ -350,6 +363,8 @@ helper bltest othersvc/probe
 helper_exact 'bltest reading othersvc/probe' 1 '' 'openbao-read: no AppRole files for othersvc in /home/bltest/.config/openbao/approle/othersvc'
 helper blother othersvc/probe
 helper_exact 'blother reading othersvc/probe' 0 othersvc-probe ''
+helper tbclient tbsvc/probe
+helper_exact 'tbclient reading tbsvc/probe' 0 tbsvc-probe ''
 helper bltest clientsvc/missing
 helper_fails_with 'bltest reading clientsvc/missing' 'openbao-read: reading clientsvc/missing failed: 404'
 printf 'never-written path: %s\n' "$(cat "$helper_err")"

@@ -5,5 +5,12 @@
   gather_facts: false
   vars:
     ticket_band_user: tbtest
-  roles:
-    - ticket_band
+  tasks:
+    # The order hub.yml uses, without openbao_config between the two parts.
+    - name: Prepare the band's account
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: account
+    - name: Run the band's service part
+      ansible.builtin.import_role:
+        name: ticket_band

@@ -16,6 +16,8 @@ openbao_approles:
     extra_paths:
       - path: sys/storage/raft/snapshot
         capabilities: [read]
+  - name: ticket-band
+    account: "{{ ticket_band_user }}"
 openbao_approle_bound_cidrs:
   - "100.95.89.6/32"
   - "fd7a:115c:a1e0::6e31:5907/128"

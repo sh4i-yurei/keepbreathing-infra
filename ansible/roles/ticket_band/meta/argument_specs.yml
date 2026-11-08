@@ -1,7 +1,13 @@
 ---
 argument_specs:
   main:
-    short_description: Prepare the ticket band's rootless Podman account
+    short_description: Verify the ticket band's rootless Podman account, after openbao_config
+    options:
+      ticket_band_user:
+        type: str
+        required: true
+  account:
+    short_description: Prepare the ticket band's rootless Podman account and make openbao-podman-secret its default Podman secret driver
     options:
       ticket_band_user:
         type: str

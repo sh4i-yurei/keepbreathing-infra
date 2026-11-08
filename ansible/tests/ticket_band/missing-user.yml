@@ -3,5 +3,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  roles:
-    - ticket_band
+  tasks:
+    - name: Prepare the band's account without naming it
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: account

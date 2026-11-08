@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 from load_source import load_source
+from uid_map_cases import CASES
 
 helper = load_source("ansible/roles/openbao_client/files/openbao-read.py")
 SCRIPT = (
@@ -119,7 +120,9 @@ class StandIn:
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.address = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(
-            target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+            target=self.server.serve_forever,
+            kwargs={"poll_interval": 0.05},
+            daemon=True,
         ).start()
 
     def close(self):
@@ -406,6 +409,55 @@ def test_an_account_missing_from_the_password_database_fails(
     failed(
         run("--config", config, "clientsvc/probe"),
         f"openbao-read: uid {os.getuid()} has no entry in the password database\n",
+    )
+    assert stand_in.requests == []
+
+
+def as_uid(monkeypatch, tmp_path, uid, uid_map, account):
+    """Run as uid with uid_map as the namespace's map, or none, and account in the database.
+
+    UID_MAP is set with raising=False, so the cases also run against a helper without it.
+    """
+    path = tmp_path / "uid_map"
+    if uid_map is not None:
+        path.write_text(uid_map)
+    monkeypatch.setattr(helper, "UID_MAP", str(path), raising=False)
+    home = tmp_path / "home"
+
+    def getpwuid(asked):
+        if asked != account:
+            raise KeyError(f"getpwuid(): uid not found: {asked}")
+        return SimpleNamespace(pw_name="clienttest", pw_uid=account, pw_dir=str(home))
+
+    monkeypatch.setattr(pwd, "getpwuid", getpwuid)
+    monkeypatch.setattr(os, "getuid", lambda: uid)
+
+
+@pytest.mark.parametrize("case", CASES, ids=[case.name for case in CASES])
+def test_the_account_comes_from_the_namespace_s_uid_map(
+    case, monkeypatch, tmp_path, home, config, stand_in
+):
+    if isinstance(case.outcome, int):
+        as_uid(monkeypatch, tmp_path, case.uid, case.uid_map, case.outcome)
+        assert run("--config", config, "clientsvc/probe") == (0, VALUE, "")
+        assert stand_in.calls() == [LOGIN, READ, REVOKE]
+    else:
+        as_uid(monkeypatch, tmp_path, case.uid, case.uid_map, None)
+        failed(
+            run("--config", config, "clientsvc/probe"),
+            case.outcome.format(program="openbao-read") + "\n",
+        )
+        assert stand_in.requests == []
+
+
+def test_a_translated_uid_missing_from_the_password_database_names_that_uid(
+    monkeypatch, tmp_path, home, config, stand_in
+):
+    (podman,) = [case for case in CASES if case.outcome == 1002]
+    as_uid(monkeypatch, tmp_path, podman.uid, podman.uid_map, None)
+    failed(
+        run("--config", config, "clientsvc/probe"),
+        "openbao-read: uid 1002 has no entry in the password database\n",
     )
     assert stand_in.requests == []
 

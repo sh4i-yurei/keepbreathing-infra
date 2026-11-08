@@ -154,7 +154,42 @@ no_temp
 printf 'PASS check mode reports rotation without changing keys\n'
 
 clear_calls
+sampler=
+undo_sampler() { if [[ -n $sampler ]] && kill -0 "$sampler" 2>/dev/null; then kill "$sampler"; fi; }
+python3 - "$work/cmdline-hits.txt" <<'PY' &
+import glob, os, sys, time
+hits_path = sys.argv[1]
+secrets = (b"test-b2-password", b"test-glass-secret")
+own = f"/proc/{os.getpid()}/cmdline"
+seen = set()
+while True:
+    for path in glob.glob("/proc/[0-9]*/cmdline"):
+        if path == own:
+            continue
+        try:
+            with open(path, "rb") as source:
+                raw = source.read()
+        except OSError:
+            continue
+        line = raw.removesuffix(b"\0").replace(b"\0", b" ")
+        if line in seen or not any(secret in line for secret in secrets):
+            continue
+        seen.add(line)
+        with open(hits_path, "ab") as hits:
+            hits.write(line + b"\n")
+    time.sleep(0.05)
+PY
+sampler=$!
+undo_add 'stop command-line sampler' undo_sampler
 play passing || { tail -35 "$work/passing.log"; fail 'passing role play'; }
+sh -c 'sleep 1; true' test-b2-password
+kill "$sampler"
+wait "$sampler" || true
+sampler=
+control_line='sh -c sleep 1; true test-b2-password'
+grep -Fxqs -- "$control_line" "$work/cmdline-hits.txt" || fail 'the command-line sampler missed its control'
+leaked=$(grep -Fxv -- "$control_line" "$work/cmdline-hits.txt" | head -n 1) || true
+[[ -z $leaked ]] || fail "a command line showed a sheet secret: $leaked"
 grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/passing.log" || fail 'passing recap'
 assert_calls rotated
 python3 tests/break_glass_sheet/assertions.py sheet <"$work/passing.log" || fail 'exact printed sheet'

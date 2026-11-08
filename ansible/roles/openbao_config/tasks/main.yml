@@ -28,6 +28,55 @@
     fail_msg: openbao_transit_keys names must match ^[a-z][a-z0-9-]*$ and be unique
     quiet: true
 
+# Each JWT role names its own policy, as each consumer does (OpenBao on the hub decision 68).
+- name: OpenBao config | Require safe JWT role names
+  ansible.builtin.assert:
+    that: openbao_jwt_roles | map(attribute='name') | map('string') | select('match', '^[a-z][a-z0-9-]*$') | list | length == openbao_jwt_roles | length
+    fail_msg: openbao_jwt_roles names must match ^[a-z][a-z0-9-]*$
+    quiet: true
+
+- name: OpenBao config | Refuse reserved JWT role names
+  ansible.builtin.assert:
+    that: openbao_jwt_roles | map(attribute='name') | select('in', ['ansible', 'keepbreath0', 'default', 'root']) | list | length == 0
+    fail_msg: openbao_jwt_roles must not name ansible, keepbreath0, default or root
+    quiet: true
+
+- name: OpenBao config | Require names unique across consumers and JWT roles
+  ansible.builtin.assert:
+    that: >-
+      (openbao_approles + openbao_jwt_roles) | map(attribute='name') | unique | list | length
+      == (openbao_approles | length) + (openbao_jwt_roles | length)
+    fail_msg: openbao_approles and openbao_jwt_roles names must be unique across both, because each names a policy
+    quiet: true
+
+# A string binding refuses a claim sent as a number, so every bound value must be a string.
+- name: OpenBao config | Require each JWT role to bind string claims
+  ansible.builtin.assert:
+    that:
+      - item.bound_claims is mapping
+      - item.bound_claims | length > 0
+      - item.bound_claims | dict2items | map(attribute='value') | reject('string') | list | length == 0
+    fail_msg: "openbao_jwt_roles entry {{ item.name }} must bind at least one claim, and every claim value must be a string"
+    quiet: true
+  loop: "{{ openbao_jwt_roles }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: OpenBao config | Require each JWT role's transit keys to be listed
+  ansible.builtin.assert:
+    that: item.transit_keys | difference(openbao_transit_keys) | length == 0
+    fail_msg: "openbao_jwt_roles entry {{ item.name }} may list only keys in openbao_transit_keys"
+    quiet: true
+  loop: "{{ openbao_jwt_roles }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: OpenBao config | Require an audience for the JWT roles
+  ansible.builtin.assert:
+    that: openbao_jwt_roles | length == 0 or openbao_jwt_audience | length > 0
+    fail_msg: openbao_jwt_audience must be set when openbao_jwt_roles isn't empty
+    quiet: true
+
 - name: OpenBao config | Read consumer accounts
   ansible.builtin.getent:
     database: passwd
@@ -81,6 +130,12 @@
         msg: openbao_config would enable transit/
       changed_when: true
       when: openbao_transit_keys | length > 0
+
+    - name: OpenBao config | Report jwt/ while OpenBao isn't running
+      ansible.builtin.debug:
+        msg: openbao_config would enable jwt/
+      changed_when: true
+      when: openbao_jwt_roles | length > 0
 
     - name: OpenBao config | Report each consumer while OpenBao isn't running
       ansible.builtin.include_tasks: report-consumer.yml
@@ -261,6 +316,9 @@
 
     - name: OpenBao config | Manage transit/ and the listed transit keys
       ansible.builtin.include_tasks: transit.yml
+
+    - name: OpenBao config | Manage jwt/ and the listed JWT roles
+      ansible.builtin.include_tasks: jwt.yml
 
     - name: OpenBao config | Manage each consumer
       ansible.builtin.include_tasks: consumer.yml

@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/openbao_backup). Edits here are overwritten.
+[Unit]
+Description=Nightly OpenBao snapshot backup
+
+[Timer]
+OnCalendar={{ openbao_backup_schedule }}
+Persistent=true
+Unit=openbao-backup.service
+
+[Install]
+WantedBy=timers.target

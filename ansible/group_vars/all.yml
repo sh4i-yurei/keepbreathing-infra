@@ -21,3 +21,8 @@ b2_api_url: https://api.backblazeb2.com/b2api/v4/
 
 # AWS CLI 2.39.3
 aws_cli_image: docker.io/amazon/aws-cli@sha256:d557b3524475d70dd3104cf44d96568ee3188897b73a6ece2b37aa50e1af362f
+
+# OpenBao 2.7.2 multi-architecture index.
+openbao_image: quay.io/openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+# OpenBao's address through its Tailscale Service.
+openbao_address: "https://openbao.{{ tailnet_domain }}"

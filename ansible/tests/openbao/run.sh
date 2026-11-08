@@ -10,7 +10,7 @@ config=$home/.config/openbao/config
 seal=$home/.config/openbao/seal/seal.key
 first=$config/first-start.hcl
 quadlet=$home/.config/containers/systemd/openbao.container
-image=quay.io/openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["openbao_image"])')
 fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 
 if id -u "$user" >/dev/null 2>&1; then fail 'baotest already exists'; fi
@@ -41,6 +41,7 @@ runner_remove_account() {
 
 printf 'pasta version: %s\n' "$(pasta --version | head -1)"
 printf 'podman version: %s\n' "$(podman --version | head -1)"
+export TEST_OPENBAO_IMAGE=$image
 export TEST_SEAL_KEY TEST_ADMIN_PASSWORD TEST_ANSIBLE_PASSWORD
 TEST_SEAL_KEY=$(python3 -c 'import base64,secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())')
 TEST_ADMIN_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')

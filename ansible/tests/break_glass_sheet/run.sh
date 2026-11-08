@@ -183,7 +183,7 @@ sampler=$!
 undo_add 'stop command-line sampler' undo_sampler
 play passing || { tail -35 "$work/passing.log"; fail 'passing role play'; }
 sh -c 'sleep 1; true' test-b2-password
-kill "$sampler"
+kill "$sampler" 2>/dev/null || true
 wait "$sampler" || true
 sampler=
 control_line='sh -c sleep 1; true test-b2-password'

@@ -22,16 +22,7 @@ EOP
     path = "sys/policies/acl/ansible"
     data = {
       policy = <<EOP
-path "sys/mounts" { capabilities = ["read"] }
-path "sys/mounts/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "sys/auth" { capabilities = ["read"] }
-path "sys/auth/*" { capabilities = ["create", "read", "update", "delete", "sudo"] }
-path "sys/policies/acl" { capabilities = ["list"] }
-path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "auth/approle/role" { capabilities = ["list"] }
-path "auth/approle/role/*" { capabilities = ["create", "read", "update", "delete", "list"] }
-path "secret/data/restore-check/*" { capabilities = ["create", "update"] }
-path "secret/metadata/restore-check/*" { capabilities = ["read"] }
+{{ lookup('ansible.builtin.file', 'ansible-policy.hcl') }}
 EOP
     }
   }

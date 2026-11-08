@@ -42,3 +42,10 @@ argument_specs:
         type: list
         elements: str
         required: true
+      openbao_transit_keys:
+        type: list
+        elements: str
+        default: []
+      openbao_make_transit_keys:
+        type: bool
+        default: false

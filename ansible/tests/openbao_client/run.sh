@@ -233,18 +233,23 @@ helper_fails_with() {
 }
 # Run openbao-podman-secret as an account from /, the way Podman runs its shell driver: SECRET_ID
 # set unless it is empty, as for list, and the given text on standard input with no newline. The
-# results land where helper_exact reads them.
+# results land where helper_exact reads them. With --unshare first, it runs through podman unshare,
+# inside the account's rootless user namespace, as Podman itself runs the driver.
 podman_secret_index=0
 podman_secret() {
+  local -a through=() environment=()
+  if [[ $1 == --unshare ]]; then
+    through=(env "XDG_RUNTIME_DIR=/run/user/$(id -u "$2")" podman unshare)
+    shift
+  fi
   local account=$1 secret_id=$2 command=$3 input=${4-}
-  local -a environment=()
   podman_secret_index=$((podman_secret_index + 1))
   helper_out=$work/podman-secret-$podman_secret_index-out.log
   helper_err=$work/podman-secret-$podman_secret_index-err.log
   helper_status=0
   if [[ -n $secret_id ]]; then environment=("SECRET_ID=$secret_id"); fi
   printf '%s' "$input" |
-    (cd / && runuser -u "$account" -- /usr/bin/env -u SECRET_ID "${environment[@]}" /usr/local/bin/openbao-podman-secret "$command") \
+    (cd / && runuser -u "$account" -- "${through[@]}" /usr/bin/env -u SECRET_ID "${environment[@]}" /usr/local/bin/openbao-podman-secret "$command") \
     >"$helper_out" 2>"$helper_err" || helper_status=$?
 }
 
@@ -382,6 +387,22 @@ helper_exact 'bltest deleting its Podman secret again' 0 '' ''
 podman_secret bltest "$podman_id" lookup
 helper_exact 'bltest looking up a deleted Podman secret' 1 '' "openbao-podman-secret: no secret stored for $podman_id"
 printf 'deleted Podman secret: %s\n' "$(cat "$helper_err")"
+
+# Inside Podman's rootless user namespace bltest is uid 0; the driver program still keeps its
+# paths in bltest's own home, with bltest's modes, and looks the value up (decision 63).
+rmdir "$podman_secrets"
+podman_secret --unshare bltest "$podman_id" store clientsvc/probe
+helper_exact 'bltest storing clientsvc/probe through podman unshare' 0 '' ''
+[[ $(stat -c '%U %a %F' "$podman_secrets") == 'bltest 700 directory' ]] || fail "$podman_secrets made through podman unshare must be bltest's with mode 0700"
+[[ $(stat -c '%U %a %F' "$podman_secrets/$podman_id") == 'bltest 600 regular file' ]] || fail "the secret's file stored through podman unshare must be bltest's with mode 0600"
+printf '%s' clientsvc/probe | cmp -s - "$podman_secrets/$podman_id" || fail "the secret's file stored through podman unshare must hold exactly clientsvc/probe"
+podman_secret --unshare bltest "$podman_id" lookup
+helper_exact 'bltest looking up its Podman secret through podman unshare' 0 clientsvc-probe ''
+podman_secret --unshare bltest '' list
+helper_exact 'bltest listing its Podman secrets through podman unshare' 0 "$podman_id"$'\n' ''
+podman_secret --unshare bltest "$podman_id" delete
+helper_exact 'bltest deleting its Podman secret through podman unshare' 0 '' ''
+[[ ! -e $podman_secrets/$podman_id ]] || fail "delete through podman unshare must remove the secret's file"
 stop_proxy
 
 no_leftover_tokens

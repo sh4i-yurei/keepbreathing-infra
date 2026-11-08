@@ -6,7 +6,9 @@ Usage: openbao-podman-secret store|lookup|delete|list
 Podman runs each command with SECRET_ID set to the secret's 25-character hex ID, except list.
 store takes the secret's data on standard input, which must be an OpenBao path
 <consumer>/<name>, and keeps it in .config/openbao/podman-secrets/<SECRET_ID> under the account's
-home from the password database. lookup hands that path to openbao-read, whose output, errors
+home from the password database. Inside Podman's rootless user namespace the account appears
+as uid 0, so uid 0 is translated through /proc/self/uid_map, and an account that is still uid 0
+is refused (decision 63). lookup hands that path to openbao-read, whose output, errors
 and exit status go straight back to Podman. delete removes the file, and list prints the IDs.
 Every failure is one line on standard error and exit status 1, and no line holds a path or a
 value; only lookup prints a value, and openbao-read prints it (OpenBao on the hub decision 62).
@@ -26,6 +28,8 @@ SECRET_ID = re.compile(r"[0-9a-f]{25}")
 OPENBAO_PATH = re.compile(rb"[a-z][a-z0-9-]*/[a-z][a-z0-9-]*")
 FOLDER = ".config/openbao/podman-secrets"
 OPENBAO_READ = "/usr/local/bin/openbao-read"
+# The kernel's record of how this user namespace's uids map to its parent's (user_namespaces(7)).
+UID_MAP = "/proc/self/uid_map"
 
 
 class Failure(Exception):
@@ -40,9 +44,41 @@ def secret_id():
     return value
 
 
+def namespace_root():
+    """The uid in the parent namespace that this namespace's uid 0 stands for.
+
+    Its line in the map has three whitespace-separated fields, the first of them 0. Without a
+    readable map holding that line there is no account to find, so the driver fails rather than
+    use the raw uid.
+    """
+    try:
+        lines = Path(UID_MAP).read_text().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "0":
+            return int(fields[1])
+    raise Failure(f"{PROGRAM}: could not read this namespace's uid map")
+
+
+def account_uid():
+    """The calling account's uid, translated through the uid map when it appears as root.
+
+    Podman runs a secret driver's commands inside the account's rootless user namespace, where
+    the account is uid 0. Any other uid is the account's own.
+    """
+    uid = os.getuid()
+    if uid == 0:
+        uid = namespace_root()
+    if uid == 0:
+        raise Failure(f"{PROGRAM}: will not run as root")
+    return uid
+
+
 def folder():
     """The calling account's folder of paths, in its home from the password database."""
-    uid = os.getuid()
+    uid = account_uid()
     try:
         home = pwd.getpwuid(uid).pw_dir
     except KeyError:

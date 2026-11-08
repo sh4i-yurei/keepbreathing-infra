@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 from load_source import load_source
+from uid_map_cases import CASES
 
 driver = load_source("ansible/roles/openbao_client/files/openbao-podman-secret.py")
 SCRIPT = (
@@ -444,3 +445,77 @@ def test_an_unexpected_error_names_only_its_class(home, monkeypatch, execs, comm
         "openbao-podman-secret: unexpected error: RuntimeError\n",
     )
     assert "Traceback" not in errors
+
+
+def as_uid(monkeypatch, tmp_path, uid, uid_map, account):
+    """Run as uid with uid_map as the namespace's map, or none, and account in the database.
+
+    Returns the account's home, which exists only when the account does. UID_MAP is set with
+    raising=False, so the cases also run against a driver without it.
+    """
+    path = tmp_path / "uid_map"
+    if uid_map is not None:
+        path.write_text(uid_map)
+    monkeypatch.setattr(driver, "UID_MAP", str(path), raising=False)
+    home = tmp_path / "home"
+    if account is not None:
+        home.mkdir()
+
+    def getpwuid(asked):
+        if asked != account:
+            raise KeyError(f"getpwuid(): uid not found: {asked}")
+        return SimpleNamespace(pw_name="clienttest", pw_uid=account, pw_dir=str(home))
+
+    monkeypatch.setattr(pwd, "getpwuid", getpwuid)
+    monkeypatch.setattr(os, "getuid", lambda: uid)
+    return home
+
+
+@pytest.mark.parametrize("command", ["store", "lookup", "delete", "list"])
+@pytest.mark.parametrize("case", CASES, ids=[case.name for case in CASES])
+def test_every_command_finds_the_account_through_the_namespace_s_uid_map(
+    case, command, monkeypatch, tmp_path, execs
+):
+    decoy = tmp_path / "decoy"
+    decoy.mkdir()
+    monkeypatch.setenv("HOME", str(decoy))
+    monkeypatch.delenv("SECRET_ID", raising=False)
+    found = isinstance(case.outcome, int)
+    home = as_uid(
+        monkeypatch, tmp_path, case.uid, case.uid_map, case.outcome if found else None
+    )
+    if found:
+        folder_of(home).mkdir(mode=0o700, parents=True)
+        (folder_of(home) / SECOND).write_text("clientsvc/probe")
+    if command != "list":
+        monkeypatch.setenv("SECRET_ID", FIRST if command == "store" else SECOND)
+    feed(monkeypatch, b"clientsvc/other")
+    if not found:
+        message = case.outcome.format(program="openbao-podman-secret")
+        assert run(command) == (1, "", message + "\n")
+        assert not home.exists()
+        assert everything_under(decoy) == []
+    elif command == "lookup":
+        with pytest.raises(Exec) as handed:
+            run(command)
+        assert (handed.value.path, handed.value.args_given) == (
+            "/usr/local/bin/openbao-read",
+            ["openbao-read", "clientsvc/probe"],
+        )
+    elif command == "list":
+        assert run(command) == (0, f"{SECOND}\n", "")
+    elif command == "store":
+        assert run(command) == (0, "", "")
+        assert (folder_of(home) / FIRST).read_text() == "clientsvc/other"
+    else:
+        assert run(command) == (0, "", "")
+        assert not (folder_of(home) / SECOND).exists()
+
+
+def test_a_translated_uid_missing_from_the_password_database_names_that_uid(
+    monkeypatch, tmp_path
+):
+    (podman,) = [case for case in CASES if case.outcome == 1002]
+    as_uid(monkeypatch, tmp_path, podman.uid, podman.uid_map, None)
+    monkeypatch.delenv("SECRET_ID", raising=False)
+    assert run("list") == (1, "", "openbao-podman-secret: no home for uid 1002\n")

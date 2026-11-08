@@ -36,4 +36,6 @@ CASES = [
     MapCase("identity map", 0, "         0          0 4294967295\n", NOT_ROOT),
     MapCase("missing map", 0, None, NO_MAP),
     MapCase("no line for 0", 0, "         1       1002          1\n", NO_MAP),
+    # A line for 0 without exactly three fields doesn't count.
+    MapCase("short line for 0", 0, "         0       1002\n", NO_MAP),
 ]

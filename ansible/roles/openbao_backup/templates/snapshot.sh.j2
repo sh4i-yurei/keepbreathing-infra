@@ -1,0 +1,20 @@
+#!/bin/sh
+# Managed by Ansible (roles/openbao_backup). Edits here are overwritten.
+# restic runs this script and stores its standard output as /openbao.snap, so everything except
+# the snapshot goes to standard error or nowhere.
+set -eu
+PATH=/bao/usr/bin:$PATH
+
+deadline=$(( $(date +%s) + OPENBAO_WAIT ))
+until bao status >/dev/null 2>&1; do
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "openbao-backup: OpenBao at $BAO_ADDR did not answer unsealed within $OPENBAO_WAIT seconds" >&2
+    exit 3
+  fi
+  sleep 5
+done
+
+BAO_TOKEN=$(bao write -field=token auth/approle/login role_id=@/creds/role-id secret_id=@/creds/secret-id)
+export BAO_TOKEN
+trap 'bao token revoke -self >&2' EXIT
+bao operator raft snapshot save /dev/stdout

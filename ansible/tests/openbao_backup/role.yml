@@ -1,0 +1,24 @@
+---
+- name: Install OpenBao's nightly snapshot for the openbao_backup tests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  force_handlers: true
+  vars:
+    openbao_image: "{{ lookup('ansible.builtin.env', 'TEST_OPENBAO_IMAGE') }}"
+    restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
+    openbao_backup_user: bbtest
+    openbao_backup_login: testhub
+    openbao_backup_password: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
+    openbao_backup_restic_password: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"
+    backup_server_port: 8082
+    openbao_backup_address: http://127.0.0.1:18300
+    openbao_approles:
+      - name: openbao-snapshot
+        account: bbtest
+        extra_paths:
+          - path: sys/storage/raft/snapshot
+            capabilities: [read]
+  roles:
+    - openbao_backup

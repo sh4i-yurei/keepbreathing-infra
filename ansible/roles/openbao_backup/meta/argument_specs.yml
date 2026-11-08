@@ -1,0 +1,40 @@
+---
+argument_specs:
+  main:
+    short_description: Back up an OpenBao snapshot nightly from the backup server's account
+    options:
+      openbao_backup_user:
+        type: str
+        required: true
+      openbao_backup_login:
+        type: str
+        required: true
+      openbao_backup_password:
+        type: str
+        required: true
+        no_log: true
+      openbao_backup_restic_password:
+        type: str
+        required: true
+        no_log: true
+      backup_server_port:
+        type: int
+        required: true
+      openbao_approles:
+        type: list
+        elements: dict
+        required: true
+      openbao_backup_image:
+        type: str
+      openbao_backup_restic_image:
+        type: str
+      openbao_backup_address:
+        type: str
+      openbao_backup_schedule:
+        type: str
+      openbao_backup_lock_wait:
+        type: str
+      openbao_backup_timeout:
+        type: int
+      openbao_backup_wait:
+        type: int

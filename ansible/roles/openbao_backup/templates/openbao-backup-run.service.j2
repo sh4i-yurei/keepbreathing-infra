@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/openbao_backup). Edits here are overwritten.
+# When the run reaches TimeoutStartSec, systemd stops podman but the container keeps running, so
+# ExecStopPost removes it by name (Backups decision 72).
+[Unit]
+Description=Save an OpenBao snapshot into its restic repository
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ openbao_backup_timeout }}
+ExecStart=/usr/bin/podman run --rm --name openbao-backup --network host --security-opt label=disable \
+  --env-file /home/{{ openbao_backup_user }}/.config/openbao-backup/restic.env \
+  --mount type=image,source={{ openbao_backup_image }},destination=/bao \
+  -v /home/{{ openbao_backup_user }}/.config/openbao/approle/openbao-snapshot:/creds:ro \
+  -v /home/{{ openbao_backup_user }}/.config/openbao-backup/snapshot.sh:/snapshot.sh:ro \
+  {{ openbao_backup_restic_image }} backup --retry-lock {{ openbao_backup_lock_wait }} \
+  --stdin-filename openbao.snap --stdin-from-command -- /snapshot.sh
+ExecStopPost=/usr/bin/podman rm --force --ignore --time 0 openbao-backup

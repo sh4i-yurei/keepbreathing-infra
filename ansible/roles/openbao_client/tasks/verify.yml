@@ -1,5 +1,6 @@
 ---
-# Read back the helper and its address file. It also runs on its own.
+# Read back the helper, the Podman secret driver program and the address file. It also runs on
+# its own.
 - name: OpenBao client verify | Read the configuration folder
   ansible.builtin.stat:
     path: /etc/openbao
@@ -10,12 +11,17 @@
     path: /usr/local/bin/openbao-read
   register: openbao_client_verify_helper
 
+- name: OpenBao client verify | Read the driver program
+  ansible.builtin.stat:
+    path: /usr/local/bin/openbao-podman-secret
+  register: openbao_client_verify_driver
+
 - name: OpenBao client verify | Read the address file metadata
   ansible.builtin.stat:
     path: /etc/openbao/client.json
   register: openbao_client_verify_config
 
-- name: OpenBao client verify | Require root's folder, helper and address file
+- name: OpenBao client verify | Require root's folder, helper, driver program and address file
   ansible.builtin.assert:
     that:
       - openbao_client_verify_folder.stat.isdir | default(false)
@@ -24,10 +30,15 @@
       - openbao_client_verify_helper.stat.isreg | default(false)
       - openbao_client_verify_helper.stat.pw_name == 'root'
       - openbao_client_verify_helper.stat.mode == '0755'
+      - openbao_client_verify_driver.stat.isreg | default(false)
+      - openbao_client_verify_driver.stat.pw_name == 'root'
+      - openbao_client_verify_driver.stat.mode == '0755'
       - openbao_client_verify_config.stat.isreg | default(false)
       - openbao_client_verify_config.stat.pw_name == 'root'
       - openbao_client_verify_config.stat.mode == '0644'
-    fail_msg: /etc/openbao (0755), /usr/local/bin/openbao-read (0755) and /etc/openbao/client.json (0644) must exist and be owned by root
+    fail_msg: >-
+      /etc/openbao (0755), /usr/local/bin/openbao-read (0755), /usr/local/bin/openbao-podman-secret (0755)
+      and /etc/openbao/client.json (0644) must exist and be owned by root
     quiet: true
 
 - name: OpenBao client verify | Read the address file

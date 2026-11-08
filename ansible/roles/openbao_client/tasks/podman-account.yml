@@ -1,0 +1,101 @@
+---
+# Make openbao-podman-secret the account's default Podman secret driver, as a drop-in written
+# as the account (OpenBao on the hub decisions 61, 62 and 72). The account's own role includes
+# this after it writes its transient storage, because only that role knows when the account is
+# ready. Every task inside the home runs as the account, and every podman command with the
+# account's run directory, without which Podman's run root leaves /run/user (decision 72).
+- name: OpenBao client | Read the Podman account
+  ansible.builtin.getent:
+    database: passwd
+
+- name: OpenBao client | Find the Podman account in the password database
+  ansible.builtin.set_fact:
+    openbao_client_podman_entry: "{{ ansible_facts.getent_passwd[openbao_client_podman_account] | default(none) }}"
+
+- name: OpenBao client | Require the Podman account
+  ansible.builtin.assert:
+    that: openbao_client_podman_entry is not none
+    fail_msg: "openbao_client_podman_account {{ openbao_client_podman_account }} must exist"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: OpenBao client | Read the account's storage configuration
+  ansible.builtin.stat:
+    path: "{{ openbao_client_podman_entry[4] }}/.config/containers/storage.conf"
+  become: true
+  become_user: "{{ openbao_client_podman_account }}"
+  register: openbao_client_podman_storage
+  when: openbao_client_podman_entry is not none
+
+# In check mode an account its own role hasn't made yet, or hasn't given its storage yet, can't
+# be asked about its store, so this reports what it would write, the way ticket_band predicts.
+- name: OpenBao client | Predict the default Podman secret driver
+  ansible.builtin.debug:
+    msg: "openbao_client would make {{ openbao_client_podman_account }}'s default Podman secret driver openbao-podman-secret"
+  changed_when: true
+  when: >-
+    ansible_check_mode and
+    (openbao_client_podman_entry is none or not openbao_client_podman_storage.stat.exists)
+
+- name: OpenBao client | Make openbao-podman-secret the default Podman secret driver
+  when: >-
+    not ansible_check_mode or
+    (openbao_client_podman_entry is not none and openbao_client_podman_storage.stat.exists)
+  vars:
+    openbao_client_podman_uid: "{{ openbao_client_podman_entry[1] }}"
+    openbao_client_podman_home: "{{ openbao_client_podman_entry[4] }}"
+  block:
+    - name: OpenBao client | Read the account's Podman store
+      ansible.builtin.command:
+        argv: [podman, info, --format, json]
+      become: true
+      become_user: "{{ openbao_client_podman_account }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ openbao_client_podman_uid }}"
+      register: openbao_client_podman_info
+      changed_when: false
+      check_mode: false
+
+    # Decision 28 keeps every value Podman resolves in memory: the transient store puts the
+    # container's state under the run root, and the run root must be in /run/user.
+    - name: OpenBao client | Require the transient store with its run root under /run/user
+      ansible.builtin.assert:
+        that:
+          - openbao_client_podman_store.transientStore | default(false) is sameas true
+          - (openbao_client_podman_store.runRoot | default('')).startswith('/run/user/' ~ openbao_client_podman_uid ~ '/')
+        fail_msg: >-
+          {{ openbao_client_podman_account }} must use Podman's transient store, with its run root
+          under /run/user/{{ openbao_client_podman_uid }}/, before it takes secrets from OpenBao
+        quiet: true
+      vars:
+        openbao_client_podman_store: "{{ (openbao_client_podman_info.stdout | from_json).store | default({}) }}"
+
+    - name: OpenBao client | Create the account's Podman drop-in folder
+      ansible.builtin.file:
+        path: "{{ openbao_client_podman_home }}/.config/containers/containers.conf.d"
+        state: directory
+        owner: "{{ openbao_client_podman_account }}"
+        group: "{{ openbao_client_podman_account }}"
+        mode: '0700'
+      become: true
+      become_user: "{{ openbao_client_podman_account }}"
+
+    - name: OpenBao client | Write the OpenBao secret driver drop-in
+      ansible.builtin.copy:
+        content: |
+          # Written by openbao_client (OpenBao on the hub decision 72). Every Podman secret in this
+          # account keeps only an OpenBao path, and openbao-podman-secret looks the value up.
+          [secrets]
+          driver = "shell"
+
+          [secrets.opts]
+          delete = "/usr/local/bin/openbao-podman-secret delete"
+          list = "/usr/local/bin/openbao-podman-secret list"
+          lookup = "/usr/local/bin/openbao-podman-secret lookup"
+          store = "/usr/local/bin/openbao-podman-secret store"
+        dest: "{{ openbao_client_podman_home }}/.config/containers/containers.conf.d/openbao.conf"
+        owner: "{{ openbao_client_podman_account }}"
+        group: "{{ openbao_client_podman_account }}"
+        mode: '0600'
+      become: true
+      become_user: "{{ openbao_client_podman_account }}"

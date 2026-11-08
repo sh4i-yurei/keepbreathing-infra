@@ -60,6 +60,56 @@
         fail_msg: approle/ must be an AppRole auth method
         quiet: true
 
+    - name: OpenBao config verify | Read the ansible policy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/sys/policies/acl/ansible"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [200]
+        return_content: true
+      register: openbao_config_verify_ansible_policy
+      changed_when: false
+      no_log: true
+
+    - name: OpenBao config verify | Require the ansible policy to match its file, ignoring trailing newlines
+      ansible.builtin.assert:
+        that: >-
+          openbao_config_verify_ansible_policy.json.data.policy.rstrip('\n')
+          == lookup('ansible.builtin.file', role_path ~ '/../openbao/files/ansible-policy.hcl', rstrip=false).rstrip('\n')
+        fail_msg: the ansible policy must match roles/openbao/files/ansible-policy.hcl
+        quiet: true
+
+    # A listed key that doesn't exist passes here, because the run warned about it.
+    - name: OpenBao config verify | Read each listed transit key
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_port }}/v1/transit/keys/{{ item }}"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_self_address }}"
+          X-Vault-Token: "{{ openbao_config_verify_login.json.auth.client_token }}"
+        status_code: [200, 404]
+        return_content: true
+      loop: "{{ openbao_transit_keys }}"
+      register: openbao_config_verify_transit_keys
+      changed_when: false
+      no_log: true
+
+    - name: OpenBao config verify | Require each listed transit key that exists to be aes256-gcm96 with deletion, export and plaintext backup off
+      ansible.builtin.assert:
+        that: >-
+          openbao_config_verify_transit_key.status == 404
+          or (openbao_config_verify_transit_key.json.data.type == 'aes256-gcm96'
+              and openbao_config_verify_transit_key.json.data.deletion_allowed is false
+              and openbao_config_verify_transit_key.json.data.exportable is false
+              and openbao_config_verify_transit_key.json.data.allow_plaintext_backup is false)
+        fail_msg: "transit key {{ item }} must be aes256-gcm96 with deletion, export and plaintext backup off"
+        quiet: true
+      vars:
+        openbao_config_verify_transit_key: "{{ openbao_config_verify_transit_keys.results | selectattr('item', 'equalto', item) | first }}"
+      loop: "{{ openbao_transit_keys }}"
+
     - name: OpenBao config verify | Check each consumer
       ansible.builtin.include_tasks: verify-consumer.yml
       loop: "{{ openbao_approles }}"

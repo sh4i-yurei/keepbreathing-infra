@@ -279,6 +279,54 @@ messages = [json.loads(text) for text in re.findall(r'"msg": ("(?:[^"\\]|\\.)*")
 assert 'openbao_config warning: skipped ' + json.dumps(folder) + ', ' + reason in messages, messages
 PY
 }
+# Whether the play log holds this exact message, reading each msg as a JSON string.
+has_message() {
+  python3 - "$1" "$2" <<'PY'
+import json, pathlib, re, sys
+log, message = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2]
+messages = [json.loads(text) for text in re.findall(r'"msg": ("(?:[^"\\]|\\.)*")', log)]
+sys.exit(0 if message in messages else 1)
+PY
+}
+reports() { has_message "$1" "$2" || fail "the role must report: $2"; }
+reports_not() { if has_message "$1" "$2"; then fail "the role must not report: $2"; fi; }
+# The role warns that a listed transit key is missing, naming decision 27's restore and the flag.
+transit_warning_text() {
+  printf '%s' "openbao_config warning: transit key $1 is missing; restore OpenBao's snapshot (decision 27), or make it on purpose with -e openbao_make_transit_keys=true"
+}
+transit_warning() { reports "$1" "$(transit_warning_text "$2")"; }
+no_transit_warning() { reports_not "$1" "$(transit_warning_text "$2")"; }
+# transit/ as keepbreath0 sees it: absent, or its type.
+transit_mount() {
+  api_expect 200 'sys/mounts read' GET sys/mounts admin_token
+  python3 -c 'import json,sys; m=json.load(open(sys.argv[1]))["data"].get("transit/"); print("absent" if m is None else m["type"])' "$work/api.json"
+}
+# A transit key as keepbreath0 reads it: its type and its deletion, export and plaintext backup
+# settings, or the status when the read isn't 200.
+key_state() {
+  local status
+  status=$(api GET "transit/keys/$1" admin_token)
+  if [[ $status != 200 ]]; then printf '%s\n' "$status"; return 0; fi
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))["data"]; print(d["type"], d["deletion_allowed"], d["exportable"], d["allow_plaintext_backup"])' "$work/api.json"
+}
+# The live ansible policy against a file: the same text, ignoring trailing newlines on both sides
+# when the second argument is "ignoring", or byte for byte otherwise.
+policy_matches() {
+  api_expect 200 'ansible policy read' GET sys/policies/acl/ansible admin_token
+  python3 - "$work/api.json" "$1" "${2:-exact}" <<'PY'
+import json, pathlib, sys
+live, wanted = json.load(open(sys.argv[1]))['data']['policy'], pathlib.Path(sys.argv[2]).read_text()
+if sys.argv[3] == 'ignoring':
+    live, wanted = live.rstrip('\n'), wanted.rstrip('\n')
+sys.exit(0 if live == wanted else 1)
+PY
+}
+policy_file=roles/openbao/files/ansible-policy.hcl
+# Write a policy file's text as the ansible policy, as keepbreath0.
+write_ansible_policy() {
+  api_expect 204 "write $1 as the ansible policy" POST sys/policies/acl/ansible admin_token \
+    "$(python3 -c 'import json,pathlib,sys; print(json.dumps({"policy": pathlib.Path(sys.argv[1]).read_text()}))' "$1")"
+}
 not_removed_folder() {
   local log=$1 folder=$2
   if grep -Fq "(item=$folder)" "$log"; then fail "the folder task must not report $folder"; fi
@@ -360,6 +408,12 @@ grep -Fq 'missing required arguments: openbao_ansible_password' "$work/missing-p
 # Before any OpenBao exists: check mode reports both mounts, and a real run refuses.
 play role --check --diff
 reports_both_mounts "$last_play_log"
+# With a transit key listed, check mode also reports transit/ beside the two mounts.
+play role --check --diff -e '{"openbao_transit_keys":["tofu-durable"]}'
+reports "$last_play_log" 'openbao_config would enable transit/'
+reports "$last_play_log" 'openbao_config would enable secret/ as a version 2 key/value store'
+reports "$last_play_log" 'openbao_config would enable approle/'
+recap "$last_play_log" 3
 play role --check --diff -e "@$work/consumers.json"
 for name in testsvc othersvc; do
   for message in "openbao_config would write the policy $name" "openbao_config would write the AppRole $name" "openbao_config would issue a secret ID for $name and write its files"; do
@@ -1017,6 +1071,158 @@ if id -u bcother >/dev/null 2>&1; then fail 'the driver must remove bcother'; fi
 [[ ! -e /home/bcother ]] || fail "the driver must remove bcother's home"
 [[ ! -e /var/lib/systemd/linger/bcother ]] || fail 'the driver must leave bcother no lingering file'
 no_ansible_tokens '3.2d cases'
+
+# 3.5a: the role keeps the ansible policy equal to roles/openbao/files/ansible-policy.hcl, and
+# manages transit/ and the transit keys openbao_transit_keys lists (OpenBao on the hub decisions
+# 67 and 68). Every run applies the four consumers the last 3.2d run applied, so they never change.
+both_keys='{"openbao_transit_keys":["tofu-durable","tofu-short-lived"]}'
+good_key='aes256-gcm96 False False False'
+# The ten policy lines first-start.hcl.j2 wrote at 9d52a87, as a server born then holds them.
+old_policy=$work/old-ansible-policy.hcl
+cat >"$old_policy" <<'HCL'
+path "sys/mounts" { capabilities = ["read"] }
+path "sys/mounts/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "sys/auth" { capabilities = ["read"] }
+path "sys/auth/*" { capabilities = ["create", "read", "update", "delete", "sudo"] }
+path "sys/policies/acl" { capabilities = ["list"] }
+path "sys/policies/acl/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "auth/approle/role" { capabilities = ["list"] }
+path "auth/approle/role/*" { capabilities = ["create", "read", "update", "delete", "list"] }
+path "secret/data/restore-check/*" { capabilities = ["create", "update"] }
+path "secret/metadata/restore-check/*" { capabilities = ["read"] }
+HCL
+
+# A server born from the first-start file already holds the file's policy, so nothing is
+# rewritten. This run lists no key, so transit/ stays absent.
+policy_matches "$policy_file" ignoring || fail 'a server born from the first-start file must hold the policy in ansible-policy.hcl'
+play role -e "@$full_list"
+recap "$last_play_log" 0
+[[ $(transit_mount) == absent ]] || fail 'a run that lists no transit key must not enable transit/'
+
+# A transit/ of another type is refused and left alone.
+api_expect 204 'enable a key/value engine at transit/' POST sys/mounts/transit admin_token '{"type":"kv"}'
+play_fails wrong-transit role 'transit/ must be a transit secrets engine' -e "@$full_list" -e "$both_keys"
+[[ $(transit_mount) == kv ]] || fail 'the role must leave an existing transit/ alone'
+api_expect 204 'disable the key/value engine at transit/' DELETE sys/mounts/transit admin_token
+[[ $(transit_mount) == absent ]] || fail 'transit/ must be absent after the wrong-type case'
+
+# Check mode before transit/ exists reports only the mount, even with the flag: the token's policy
+# isn't widened in check mode, so no key is read.
+play role --check --diff -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+reports "$last_play_log" 'openbao_config would enable transit/'
+recap "$last_play_log" 1
+for name in tofu-durable tofu-short-lived; do
+  reports_not "$last_play_log" "openbao_config would make the transit key $name"
+  no_transit_warning "$last_play_log" "$name"
+done
+[[ $(transit_mount) == absent ]] || fail 'check mode must not enable transit/'
+
+# A run without the flag enables transit/, makes no key and warns about each missing one.
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Enable transit/'
+[[ $(transit_mount) == transit ]] || fail 'the role must enable transit/ as a transit secrets engine'
+for name in tofu-durable tofu-short-lived; do
+  transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == 404 ]] || fail "a run without the flag must not make $name"
+done
+
+# Check mode with the flag reports each missing key and makes none. The recap counts the one
+# looped report task once, however many keys it reports.
+play role --check --diff -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 1
+for name in tofu-durable tofu-short-lived; do
+  reports "$last_play_log" "openbao_config would make the transit key $name"
+  no_transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == 404 ]] || fail "check mode must not make $name"
+done
+
+# The run with the flag makes both keys with OpenBao's defaults; later runs change nothing.
+play role -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Make each missing transit key'
+for name in tofu-durable tofu-short-lived; do
+  no_transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == "$good_key" ]] || fail "$name must be aes256-gcm96 with deletion, export and plaintext backup off"
+done
+play role -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 0
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 0
+play verify -e "@$full_list" -e "$both_keys"
+
+# Check mode on a server still holding the old policy reports the rewrite and leaves it.
+write_ansible_policy "$old_policy"
+play role --check --diff -e "@$full_list"
+reports "$last_play_log" 'openbao_config would rewrite the ansible policy'
+recap "$last_play_log" 1
+policy_matches "$old_policy" || fail 'check mode must leave the old ansible policy in place'
+
+# The upgrade: the role rewrites the old policy, and the same run reads the keys on its token.
+write_ansible_policy "$old_policy"
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Write the ansible policy'
+policy_matches "$policy_file" ignoring || fail 'the upgrade must leave the ansible policy equal to ansible-policy.hcl'
+for name in tofu-durable tofu-short-lived; do
+  no_transit_warning "$last_play_log" "$name"
+  [[ $(key_state "$name") == "$good_key" ]] || fail "the upgrade must leave $name unchanged"
+done
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 0
+
+# A rule added by hand fails verify, and the next run writes the file's policy back.
+api_expect 200 'read the ansible policy before the drift' GET sys/policies/acl/ansible admin_token
+python3 - "$work/api.json" "$work/drifted-ansible-policy.hcl" <<'PY'
+import json, pathlib, sys
+policy = json.load(open(sys.argv[1]))['data']['policy']
+pathlib.Path(sys.argv[2]).write_text(policy + 'path "probe/*" { capabilities = ["read"] }\n')
+PY
+write_ansible_policy "$work/drifted-ansible-policy.hcl"
+play_fails policy-drift verify 'the ansible policy must match roles/openbao/files/ansible-policy.hcl' -e "@$full_list" -e "$both_keys"
+play role -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 1
+changed_task "$last_play_log" 'OpenBao config | Write the ansible policy'
+policy_matches "$policy_file" ignoring || fail 'the role must write the drifted ansible policy back'
+
+# A key that leaves the list stays in OpenBao.
+play role -e "@$full_list" -e '{"openbao_transit_keys":["tofu-durable"]}'
+recap "$last_play_log" 0
+[[ $(key_state tofu-short-lived) == "$good_key" ]] || fail 'a key dropped from the list must stay in OpenBao'
+
+# A listed key of another type fails verify, and the role leaves it as it is.
+api_expect 200 'make wrongtype as chacha20-poly1305' POST transit/keys/wrongtype admin_token '{"type":"chacha20-poly1305"}'
+play_fails wrong-type role 'transit key wrongtype must be aes256-gcm96 with deletion, export and plaintext backup off' \
+  -e "@$full_list" -e '{"openbao_transit_keys":["tofu-durable","tofu-short-lived","wrongtype"]}'
+[[ $(key_state wrongtype) == 'chacha20-poly1305 False False False' ]] || fail 'the role must not change a listed key of another type'
+
+# Decision 67's guards: the ansible login can't disable transit/, allow a key's deletion, delete a
+# key or ask it for a data key.
+login ansible TEST_ANSIBLE_PASSWORD ansible_token
+api_expect 403 'ansible disabling transit/' DELETE sys/mounts/transit ansible_token
+api_expect 403 "ansible allowing tofu-durable's deletion" POST transit/keys/tofu-durable/config ansible_token '{"deletion_allowed":true}'
+api_expect 403 'ansible deleting tofu-durable' DELETE transit/keys/tofu-durable ansible_token
+api_expect 403 'ansible asking tofu-durable for a data key' POST transit/datakey/plaintext/tofu-durable ansible_token
+api_expect 204 'ansible token revoke' POST auth/token/revoke-self ansible_token
+[[ $(transit_mount) == transit ]] || fail 'transit/ must survive the guard cases'
+[[ $(key_state tofu-durable) == "$good_key" ]] || fail 'tofu-durable must survive the guard cases unchanged'
+
+# Bad or repeated key names are refused before the role signs in.
+play_fails bad-key-name role 'openbao_transit_keys names must match ^[a-z][a-z0-9-]*$ and be unique' \
+  -e "@$full_list" -e '{"openbao_transit_keys":["Bad_Name"]}'
+play_fails duplicate-key role 'openbao_transit_keys names must match ^[a-z][a-z0-9-]*$ and be unique' \
+  -e "@$full_list" -e '{"openbao_transit_keys":["tofu-durable","tofu-durable"]}'
+
+# Check mode after the real runs plans nothing, with or without the flag, and no run touched the
+# unlisted key.
+play role --check --diff -e "@$full_list" -e "$both_keys" -e openbao_make_transit_keys=true
+recap "$last_play_log" 0
+play role --check --diff -e "@$full_list" -e "$both_keys"
+recap "$last_play_log" 0
+[[ $(key_state wrongtype) == 'chacha20-poly1305 False False False' ]] || fail 'no run may touch a key the list does not name'
+api_expect 200 'read ansible policy after the transit cases' GET sys/policies/acl/ansible admin_token
+cp "$work/api.json" "$work/ansible-policy.json"
+no_ansible_tokens '3.5a cases'
 
 api_expect 204 'keepbreath0 token revoke' POST auth/token/revoke-self admin_token
 logs_clean

@@ -1,2 +1,4 @@
 ---
 openbao_restore_check_value: restore-check-test # noqa: var-naming[no-role-prefix] - handoff interface
+openbao_transit_keys: [] # noqa: var-naming[no-role-prefix] - handoff interface
+openbao_make_transit_keys: false # noqa: var-naming[no-role-prefix] - handoff interface

@@ -19,6 +19,7 @@ openbao_approles:
 openbao_approle_bound_cidrs:
   - "100.95.89.6/32"
   - "fd7a:115c:a1e0::6e31:5907/128"
+openbao_transit_keys: [tofu-durable, tofu-short-lived]
 openbao_seal_key_id: hub-1
 openbao_seal_key: "{{ lookup('vault_secret', 'openbao seal (hub)') }}"
 openbao_keepbreath0_password: "{{ lookup('vault_secret', 'openbao keepbreath0 (hub)') }}"

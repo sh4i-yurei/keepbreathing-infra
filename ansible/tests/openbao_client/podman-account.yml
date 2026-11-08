@@ -1,0 +1,10 @@
+---
+- name: Exercise openbao_client's podman-account entry point on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Set the account up to take its containers' secrets from OpenBao
+      ansible.builtin.include_role:
+        name: openbao_client
+        tasks_from: podman-account

@@ -12,7 +12,7 @@ openbao_approles:
   - name: restore-check
     files: false
   - name: openbao-snapshot
-    account: "{{ openbao_user }}"
+    account: "{{ backup_server_user }}"
     extra_paths:
       - path: sys/storage/raft/snapshot
         capabilities: [read]
@@ -49,6 +49,8 @@ b2_buckets:
     name: keepbreathing-web-backup
   - machine: mail
     name: keepbreathing-mail-backup
+  - machine: hub
+    name: keepbreathing-hub-backup
 b2_copy_user: "{{ backup_server_user }}"
 b2_copy_repository_root: "{{ backup_server_mount_point }}/restic"
 backup_prune_user: "{{ backup_server_user }}"
@@ -63,6 +65,9 @@ b2_copy_passwords:
   mail:
     hub: "{{ lookup('vault_secret', 'rclone mail (hub)', field='restic') }}"
     b2: "{{ lookup('vault_secret', 'rclone mail (hub)', field='b2_restic') }}"
+  hub:
+    hub: "{{ lookup('vault_secret', 'rclone hub (hub)', field='restic') }}"
+    b2: "{{ lookup('vault_secret', 'rclone hub (hub)', field='b2_restic') }}"
 backup_server_port: 8082
 backup_server_logins:
   - name: verify
@@ -73,6 +78,8 @@ backup_server_logins:
     bcrypt: "{{ lookup('vault_secret', 'rclone web (hub)', field='bcrypt') }}"
   - name: mail
     bcrypt: "{{ lookup('vault_secret', 'rclone mail (hub)', field='bcrypt') }}"
+  - name: hub
+    bcrypt: "{{ lookup('vault_secret', 'rclone hub (hub)', field='bcrypt') }}"
 # The hub pulls each droplet's export nightly through its forced-command account (Backups
 # decisions 64 to 66). Each droplet's host key comes from its own file, read by playbooks/hub-pull.yml.
 hub_pull_user: "{{ backup_server_user }}"
@@ -90,6 +97,12 @@ hub_pull_logins:
   mail: "{{ lookup('vault_secret', 'rclone mail (hub)') }}"
 backup_server_verify_password: "{{ lookup('vault_secret', 'rclone verify (hub)') }}"
 backup_server_verify_restic_password: "{{ lookup('vault_secret', 'rclone verify (hub)', field='restic') }}"
+# OpenBao's nightly snapshot goes into the hub's own repository from the backup account, through
+# the hub's login on the backup server (Backups decisions 72 and 74).
+openbao_backup_user: "{{ backup_server_user }}"
+openbao_backup_login: hub
+openbao_backup_password: "{{ lookup('vault_secret', 'rclone hub (hub)') }}"
+openbao_backup_restic_password: "{{ lookup('vault_secret', 'rclone hub (hub)', field='restic') }}"
 
 # The account the hub's containers run under (Notification service decision #12). The hub
 # role creates it; baseline sets it up for rootless Podman.

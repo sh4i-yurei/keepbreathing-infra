@@ -591,6 +591,8 @@ VAULT_VALUES = {
         "backup_server_logins",
         "backup_server_verify_password",
         "backup_server_verify_restic_password",
+        "openbao_backup_password",
+        "openbao_backup_restic_password",
         "b2_master_key_id",
         "b2_master_key",
     ],
@@ -634,6 +636,7 @@ def fixture_items():
         "Backblaze master key",
         "rclone web (hub)",
         "rclone mail (hub)",
+        "rclone hub (hub)",
     ]
     return {
         name: {

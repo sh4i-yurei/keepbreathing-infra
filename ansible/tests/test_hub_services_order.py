@@ -14,11 +14,11 @@ import subprocess
 ANSIBLE = Path(__file__).resolve().parents[1]
 
 
-def list_tasks(playbook):
+def list_tasks(playbook, extra_arguments=()):
     environment = {key: os.environ[key] for key in ("PATH", "HOME")}
     environment.update(ANSIBLE_CONFIG=str(ANSIBLE / "ansible.cfg"), ANSIBLE_NOCOLOR="1")
     result = subprocess.run(
-        ["ansible-playbook", playbook, "--list-tasks"],
+        ["ansible-playbook", playbook, "--list-tasks", *extra_arguments],
         cwd=ANSIBLE,
         env=environment,
         capture_output=True,
@@ -74,6 +74,55 @@ def test_hub_services_run_the_band_account_between_openbao_client_and_openbao_co
         ),
         first(
             tasks,
+            lambda task: task.startswith("tailscale_service : "),
+            "tailscale_service task",
+        ),
+    ]
+    assert order == sorted(order) and len(set(order)) == len(order), order
+
+
+def is_openbao_backup(task):
+    return task.startswith("openbao_backup : ")
+
+
+def test_hub_services_run_openbao_backup_last_after_tailscale_service():
+    tasks = play_tasks(list_tasks("playbooks/hub.yml"), "Hub services")
+    backup = first(tasks, is_openbao_backup, "openbao_backup task")
+    served = first(
+        tasks,
+        lambda task: task.startswith("tailscale_service : "),
+        "tailscale_service task",
+    )
+    assert served < backup, (served, backup)
+    assert all(is_openbao_backup(task) for task in tasks[backup:]), tasks[backup:]
+
+
+def test_skipping_the_openbao_backup_tag_drops_only_its_tasks():
+    unskipped = play_tasks(list_tasks("playbooks/hub.yml"), "Hub services")
+    skipped = play_tasks(
+        list_tasks("playbooks/hub.yml", ["--skip-tags", "openbao_backup"]),
+        "Hub services",
+    )
+    assert any(is_openbao_backup(task) for task in unskipped), unskipped
+    assert not any(is_openbao_backup(task) for task in skipped), skipped
+    order = [
+        first(
+            skipped,
+            lambda task: task == "ticket_band : Ticket band | Create the account",
+            "ticket_band account task",
+        ),
+        first(
+            skipped,
+            lambda task: task.startswith("openbao_config : "),
+            "openbao_config task",
+        ),
+        first(
+            skipped,
+            lambda task: task == "ticket_band : Ticket band | Read account UID",
+            "ticket_band verify task",
+        ),
+        first(
+            skipped,
             lambda task: task.startswith("tailscale_service : "),
             "tailscale_service task",
         ),

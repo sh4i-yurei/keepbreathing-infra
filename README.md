@@ -12,7 +12,7 @@ secrets in it, and its issues are a live feed of weak moments.
 ## Layout
 
 ```
-tailscale/policy.hujson      the tailnet policy file, as it is in the admin console
+tailscale/policy.hujson      the tailnet policy file, as it is live in the tailnet
 ansible/ansible.cfg          runs from the laptop; inventory below
 ansible/inventory.ini        five machines: three on the tailnet, web and mail through the jump server
 ansible/group_vars/          what every machine shares, including the sudo password lookup
@@ -33,5 +33,5 @@ workstation/vm-autostart/    starts and stops the workstation's VMs with Windows
   later reverted. Secrets are read at run time: today through `bw` from Vaultwarden, and
   from OpenBao on the hub once it exists, which is where machine secrets belong.
 - No Terraform state. It lives in MinIO on the hub; `.gitignore` refuses it.
-- The policy file here is the record, the admin console is the live copy. Change it
-  here first, then paste it there, until Terraform owns that step.
+- The policy file here is the record. After each merge it goes live through Tailscale's
+  API, validated first and read back (OpenBao on the hub decision #70).

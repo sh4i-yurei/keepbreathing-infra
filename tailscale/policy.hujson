@@ -1,5 +1,5 @@
-// Tailnet policy file for keepbreath.ing. This is the record; the admin console is the
-// live copy. Edit here, then paste there, until Terraform owns that step.
+// Tailnet policy file for keepbreath.ing. This is the record; after each merge it goes live
+// through Tailscale's API, validated first and read back (OpenBao on the hub decision #70).
 //
 // Machines are tagged, people are members. Tailscale SSH is the way into every tagged
 // machine, as keepbreath0, in check mode: tailnet identity plus a fresh browser
@@ -55,6 +55,13 @@
 		// OpenBao: the hub itself, for the services that run on it. OpenBao on the hub decision #16.
 		{
 			"src": ["tag:hub"],
+			"dst": ["svc:openbao"],
+			"ip":  ["443"],
+		},
+
+		// OpenBao: Infrastructure as code's jobs, wherever they run. OpenBao on the hub decision #70.
+		{
+			"src": ["tag:iac-runner"],
 			"dst": ["svc:openbao"],
 			"ip":  ["443"],
 		},
@@ -151,6 +158,9 @@
 
 		// bastion-server
 		"tag:bastion": ["autogroup:admin"],
+
+		// Infrastructure as code's job runners. OpenBao on the hub decision #70.
+		"tag:iac-runner": ["autogroup:admin"],
 	},
 
 	// Machines tagged tag:hub are approved automatically to serve the hub's Services, so a

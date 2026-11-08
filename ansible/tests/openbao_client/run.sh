@@ -183,16 +183,20 @@ healthy() {
   return 1
 }
 
-# Run openbao-read as an account from /, which every account can enter. Its output goes to
-# files that logs_clean also checks, and its exit status to $helper_status.
+# Run a command that calls openbao-read from /, which every account can enter. Its output goes
+# to files that logs_clean also checks, and its exit status to $helper_status.
 helper_index=0
-helper() {
-  local account=$1 path=$2
+helper_run() {
   helper_index=$((helper_index + 1))
   helper_out=$work/helper-$helper_index-out.log
   helper_err=$work/helper-$helper_index-err.log
   helper_status=0
-  (cd / && runuser -u "$account" -- /usr/local/bin/openbao-read "$path") >"$helper_out" 2>"$helper_err" || helper_status=$?
+  (cd / && "$@") >"$helper_out" 2>"$helper_err" || helper_status=$?
+}
+# Run openbao-read as an account.
+helper() {
+  local account=$1 path=$2
+  helper_run runuser -u "$account" -- /usr/local/bin/openbao-read "$path"
 }
 helper_report() {
   printf 'status %s\nstdout:\n%s\nstderr:\n%s\n' "$helper_status" "$(cat "$helper_out")" "$(cat "$helper_err")" >&2
@@ -317,6 +321,15 @@ start_proxy 198.51.100.7
 helper bltest clientsvc/probe
 helper_fails_with 'bltest reading clientsvc/probe from 198.51.100.7' 'openbao-read: sign-in as clientsvc failed: 400 source address "198.51.100.7" unauthorized by CIDR restrictions on the role'
 printf 'unbound address: %s\n' "$(cat "$helper_err")"
+stop_proxy
+
+# Inside Podman's rootless user namespace bltest is uid 0, and a systemd unit can carry another
+# HOME; openbao-read still finds bltest's own home in both (decisions 58 and 63).
+start_proxy 192.0.2.10
+helper_run runuser -u bltest -- env "XDG_RUNTIME_DIR=/run/user/$(id -u bltest)" podman unshare /usr/local/bin/openbao-read clientsvc/probe
+helper_exact 'bltest reading clientsvc/probe through podman unshare' 0 clientsvc-probe ''
+helper_run systemd-run --uid=bltest --setenv=HOME=/nonexistent --wait --pipe --quiet /usr/local/bin/openbao-read clientsvc/probe
+helper_exact 'a systemd-run unit as bltest with HOME=/nonexistent reading clientsvc/probe' 0 clientsvc-probe ''
 stop_proxy
 
 no_leftover_tokens

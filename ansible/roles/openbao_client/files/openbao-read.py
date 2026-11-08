@@ -5,6 +5,8 @@ Usage: openbao-read [--config PATH] <consumer>/<name>
 
 The consumer names the AppRole, whose role-id and secret-id files live under
 ~/.config/openbao/approle/<consumer>/ in the account's home from the password database.
+Inside Podman's rootless user namespace the account appears as uid 0, so uid 0 is translated
+through /proc/self/uid_map, and an account that is still uid 0 is refused (decision 63).
 The value of secret/data/<consumer>/<name> goes to standard output with no newline. Every
 failure is one line on standard error and exit status 1, and no line ever holds a role ID,
 secret ID, token or secret value (OpenBao on the hub decision 58).
@@ -26,6 +28,8 @@ from pathlib import Path
 
 NAME = re.compile(r"[a-z][a-z0-9-]*")
 DEFAULT_CONFIG = "/etc/openbao/client.json"
+# The kernel's record of how this user namespace's uids map to its parent's (user_namespaces(7)).
+UID_MAP = "/proc/self/uid_map"
 # Seconds to wait on OpenBao for each connection and each read, so a stuck server fails the
 # caller instead of hanging it.
 TIMEOUT = 10
@@ -54,9 +58,41 @@ def parse_path(path):
     return parts
 
 
+def namespace_root():
+    """The uid in the parent namespace that this namespace's uid 0 stands for.
+
+    Its line in the map has three whitespace-separated fields, the first of them 0. Without a
+    readable map holding that line there is no account to find, so the helper fails rather than
+    use the raw uid.
+    """
+    try:
+        lines = Path(UID_MAP).read_text().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) == 3 and fields[0] == "0":
+            return int(fields[1])
+    raise Failure("openbao-read: could not read this namespace's uid map")
+
+
+def account_uid():
+    """The calling account's uid, translated through the uid map when it appears as root.
+
+    Podman runs a secret driver's commands, and podman unshare, inside the account's rootless
+    user namespace, where the account is uid 0. Any other uid is the account's own.
+    """
+    uid = os.getuid()
+    if uid == 0:
+        uid = namespace_root()
+    if uid == 0:
+        raise Failure("openbao-read: will not run as root")
+    return uid
+
+
 def approle_files(consumer):
     """Read the consumer's role ID and secret ID from the account's own home."""
-    uid = os.getuid()
+    uid = account_uid()
     try:
         home = pwd.getpwuid(uid).pw_dir
     except KeyError:

@@ -92,11 +92,16 @@
     fail_msg: "Hub pull for {{ hub_pull_target.machine }} left no snapshot of /{{ hub_pull_target.stream }}."
     quiet: true
 
-- name: "Hub pull | Require the timer scheduled for {{ hub_pull_target.machine }}"
-  ansible.builtin.command:
-    argv: [systemctl, show, "hub-pull@{{ hub_pull_target.machine }}.timer", -p, UnitFileState, -p, NextElapseUSecRealtime, --value]
+- name: "Hub pull | Read the timer for {{ hub_pull_target.machine }}"
+  ansible.builtin.systemd_service:
+    name: "hub-pull@{{ hub_pull_target.machine }}.timer"
   register: hub_pull_timer
   changed_when: false
-  failed_when: >-
-    hub_pull_timer.stdout_lines | length < 2 or hub_pull_timer.stdout_lines[0] != 'enabled'
-    or hub_pull_timer.stdout_lines[1] in ['', 'n/a']
+
+- name: "Hub pull | Require the timer scheduled for {{ hub_pull_target.machine }}"
+  ansible.builtin.assert:
+    that:
+      - hub_pull_timer.status.UnitFileState == 'enabled'
+      - hub_pull_timer.status.NextElapseUSecRealtime | default('') not in ['', 'n/a']
+    fail_msg: "hub-pull@{{ hub_pull_target.machine }}.timer must be enabled and scheduled"
+    quiet: true

@@ -1,4 +1,4 @@
 ---
 # Services on the hub reach OpenBao through its Tailscale Service, so the proxy adds the hub's
 # address (OpenBao on the hub decisions 16 and 58).
-openbao_client_address: "https://openbao.{{ tailnet_domain }}"
+openbao_client_address: "{{ openbao_address }}"

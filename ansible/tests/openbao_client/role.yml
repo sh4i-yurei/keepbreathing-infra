@@ -4,6 +4,6 @@
   connection: local
   gather_facts: false
   vars:
-    openbao_client_address: "http://127.0.0.1:18300"
+    openbao_address: "http://127.0.0.1:18300"
   roles:
     - openbao_client

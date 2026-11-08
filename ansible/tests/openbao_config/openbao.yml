@@ -11,5 +11,6 @@
     openbao_seal_key: "{{ lookup('env', 'TEST_SEAL_KEY') }}"
     openbao_keepbreath0_password: "{{ lookup('env', 'TEST_ADMIN_PASSWORD') }}"
     openbao_ansible_password: "{{ lookup('env', 'TEST_ANSIBLE_PASSWORD') }}"
+    openbao_image: "{{ lookup('env', 'TEST_OPENBAO_IMAGE') }}"
   roles:
     - openbao

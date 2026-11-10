@@ -1,11 +1,32 @@
 ---
 argument_specs:
   main:
-    short_description: Verify the ticket band's rootless Podman account, after openbao_config
+    short_description: Verify the ticket band's account and run its receiver pod, after openbao_config
     options:
       ticket_band_user:
         type: str
         required: true
+      ticket_band_receiver_port:
+        type: int
+        required: false
+        description: The port nginx listens on inside the receiver's pod, published on 127.0.0.1 only.
+      ticket_band_app_id:
+        type: int
+        required: true
+        description: The ID of the GitHub App the receiver opens issues as.
+      ticket_band_installation_id:
+        type: int
+        required: true
+        description: The ID of the App's installation, which reaches only the tickets repository.
+      ticket_band_app_key_path:
+        type: str
+        required: true
+        description: The OpenBao path <consumer>/<name> of the App's private key, which the Podman secret ticket-band-app-key holds.
+      ticket_band_receiver_password_hash:
+        type: str
+        required: true
+        description: The bcrypt hash of Alertmanager's password, for nginx's user file.
+        no_log: true
   account:
     short_description: Prepare the ticket band's rootless Podman account and make openbao-podman-secret its default Podman secret driver
     options:

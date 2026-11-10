@@ -25,6 +25,7 @@ fi
 if [[ -e /etc/openbao || -L /etc/openbao ]]; then fail '/etc/openbao already exists'; fi
 if listening 8200; then fail '127.0.0.1:8200 is already in use'; fi
 if listening 18300; then fail '127.0.0.1:18300 is already in use'; fi
+if listening 18083; then fail '127.0.0.1:18083 is already in use'; fi
 
 work=$(mktemp -d)
 undo_add 'remove openbao_client driver work' undo_work
@@ -284,7 +285,11 @@ secrets = [os.environ[name] for name in ('TEST_SEAL_KEY', 'TEST_ADMIN_PASSWORD',
 secrets += [path.read_text() for path in work.glob('*-id')]
 # The two Podman test values, read from their pattern files so no command line holds them.
 secrets += [(patterns / name).read_text().rstrip('\n') for name in ('pod-one', 'pod-two')]
-assert len(secrets) == 11, len(secrets)
+# The receiver's App key, one entry per base64 body line, so a log holding any one line is caught.
+key_lines = (patterns / 'app-key-body').read_text().splitlines()
+assert len(key_lines) > 20, len(key_lines)
+secrets += key_lines
+assert len(secrets) == 11 + len(key_lines), len(secrets)
 logs = sorted(work.glob('*.log'))
 assert len(logs) > 10, logs
 for path in logs:
@@ -681,6 +686,245 @@ as_account blother systemctl --user restart podread.service
 wait_for_journal len=22 1
 as_account blother systemctl --user stop podread.service
 [[ $(journalctl --no-pager -o verbose | count_matching "$patterns/both") == 0 ]] || fail 'no journal line may hold either value'
+stop_proxy
+
+# The ticket band's receiver pod for tbclient (OpenBao on the hub 4.3b, decisions 23, 24, 28, 36,
+# 43, 72 and 76): pfnet takes the App's key from OpenBao through tbclient's Podman secret, behind
+# nginx in one Quadlet pod. The key is a fresh one GitHub has never seen, so pfnet starts and
+# serves /metrics, and a post that gets past nginx answers 500 from pfnet's failed GitHub call.
+# The key's file and its base64 body lines, the pattern file the leak checks read, sit in the
+# pattern folder under /run, outside /tmp and every home.
+start_proxy 192.0.2.10
+tb_uid=$(id -u tbclient)
+receiver=http://127.0.0.1:18083
+pod_unit=ticket-receiver-pod.service
+pfnet_unit=ticket-pfnet.service
+nginx_unit=ticket-nginx.service
+cleanup_unit=podman-boot-cleanup.service
+openssl genrsa -out "$patterns/app-key.pem" 2048 2>/dev/null
+grep -v -e '-----' "$patterns/app-key.pem" >"$patterns/app-key-body"
+app_key_write=$(python3 -c 'import json, sys; print(json.dumps({"data": {"value": open(sys.argv[1]).read()}}))' "$patterns/app-key.pem")
+api_expect 200 'tbsvc app-key write' POST secret/data/tbsvc/app-key admin_token "$app_key_write"
+unset app_key_write
+tb_show() { as_account tbclient systemctl --user show "$1" -p "$2" --value; }
+tb_active() { as_account tbclient systemctl --user is-active "$1" || true; }
+# The HTTP status of one request; curl prints 000 when nothing answers.
+http_code() { curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$@" || true; }
+wait_active() {
+  local unit=$1 seconds=$2 attempt
+  for ((attempt=0; attempt<seconds; attempt++)); do
+    [[ $(tb_active "$unit") == active ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+metrics_within() {
+  local seconds=$1 attempt
+  for ((attempt=0; attempt<seconds; attempt++)); do
+    [[ $(http_code "$receiver/metrics") == 200 ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+receiver_up() {
+  local unit
+  for unit in "$pod_unit" "$pfnet_unit" "$nginx_unit"; do
+    wait_active "$unit" 60 || fail "$unit must be active as tbclient; it is $(tb_active "$unit")"
+  done
+  metrics_within 60 || fail "GET $receiver/metrics must answer 200"
+}
+
+# The pod playbook starts the pod and both containers, and pfnet answers /metrics through nginx.
+play ticket-band-pod
+receiver_up
+printf 'receiver pod: %s, %s and %s active; GET /metrics answered 200\n' "$pod_unit" "$pfnet_unit" "$nginx_unit"
+# A second run and a check run change nothing.
+play ticket-band-pod
+recap "$last_play_log" 0
+play ticket-band-pod --check --diff
+recap "$last_play_log" 0
+
+# Only nginx's port is published, so pfnet's own port can't be reached from the runner.
+[[ $(http_code http://127.0.0.1:8080/metrics) == 000 ]] || fail "pfnet's port 8080 must not answer from the runner"
+
+# pfnet's environment holds the App's settings, and the ID template survives Ansible's templating
+# and Quadlet's Environment= quoting character for character.
+pfnet_env=$(as_account tbclient podman inspect --format '{{json .Config.Env}}' ticket-pfnet) ||
+  fail 'podman inspect ticket-pfnet must succeed as tbclient'
+PFNET_ENV=$pfnet_env python3 - <<'PY' || fail "ticket-pfnet's environment must hold the App's settings and the exact ID template"
+import json, os
+env = dict(entry.split('=', 1) for entry in json.loads(os.environ['PFNET_ENV']))
+expected = {
+    'ATG_GITHUB_APP_ID': '1',
+    'ATG_GITHUB_APP_INSTALLATION_ID': '1',
+    'ATG_LABELS': 'ticket',
+    'ATG_AUTO_CLOSE_RESOLVED_ISSUES': 'true',
+    'ATG_ALERT_ID_TEMPLATE': '{{ range $k, $v := .Payload.CommonLabels }}{{ $k }}={{ $v }};{{ end }}',
+}
+found = {name: env.get(name) for name in expected}
+assert found == expected, found
+print('ATG_ALERT_ID_TEMPLATE=' + found['ATG_ALERT_ID_TEMPLATE'])
+PY
+unset pfnet_env
+
+# nginx's gate: only POST /v1/webhook with Alertmanager's password reaches pfnet, with the fixed
+# owner and repository whatever query the post carries, and GET /metrics needs no password.
+alert_body=$work/alert.json
+cat >"$alert_body" <<'JSON'
+{"receiver": "ticket", "status": "firing", "alerts": [{"status": "firing", "labels": {"alertname": "TicketBandDriver", "severity": "warning"}, "annotations": {"summary": "openbao_client driver test alert"}, "startsAt": "2026-11-10T00:00:00Z", "endsAt": "0001-01-01T00:00:00Z", "generatorURL": "http://127.0.0.1:9093/graph", "fingerprint": "5f1e4b0a3d2c1b09"}], "groupLabels": {"alertname": "TicketBandDriver"}, "commonLabels": {"alertname": "TicketBandDriver", "severity": "warning"}, "commonAnnotations": {"summary": "openbao_client driver test alert"}, "externalURL": "http://127.0.0.1:9093", "version": "4", "groupKey": "{}:{alertname=\"TicketBandDriver\"}", "truncatedAlerts": 0}
+JSON
+gate() {
+  local expected=$1 what=$2 status
+  shift 2
+  status=$(http_code "$@")
+  [[ $status == "$expected" ]] || fail "$what must answer $expected, got $status"
+  printf '%s: %s\n' "$what" "$status"
+}
+post_alert() { http_code -X POST -H 'Content-Type: application/json' --data-binary "@$alert_body" "$@"; }
+# pfnet's request lines come from gin's logger, which pads the method to a fixed width, so one or
+# more spaces sit between POST and the quoted path. The fixed form ends at the closing quote, so a
+# query appended after it doesn't match.
+pfnet_lines() { as_account tbclient podman logs ticket-pfnet 2>&1 | grep -cE -e "$1" || [[ $? == 1 ]]; }
+pfnet_posts() { as_account tbclient podman logs ticket-pfnet 2>&1 | grep -E -e "$any_post" | tail -"$1"; }
+fixed_post='POST[[:space:]]+"/v1/webhook\?owner=sh4i-yurei&repo=platform-tickets"'
+any_post='POST[[:space:]]+"/v1/webhook'
+posts_before=$(pfnet_lines "$any_post")
+fixed_before=$(pfnet_lines "$fixed_post")
+gate 401 'POST /v1/webhook without a password' -X POST --data-binary "@$alert_body" "$receiver/v1/webhook"
+gate 401 'POST /v1/webhook with a wrong password' -X POST -u alertmanager:wrong-pass --data-binary "@$alert_body" "$receiver/v1/webhook"
+gate 403 'GET /v1/webhook with the password' -u alertmanager:tb-driver-pass "$receiver/v1/webhook"
+gate 403 'POST /metrics' -X POST "$receiver/metrics"
+gate 404 'GET /' "$receiver/"
+status=$(post_alert -u alertmanager:tb-driver-pass "$receiver/v1/webhook")
+[[ $status == 500 ]] || fail "POST /v1/webhook with the password and no query must answer 500 from pfnet, got $status"
+printf 'POST /v1/webhook with the password and no query: %s\n' "$status"
+status=$(post_alert -u alertmanager:tb-driver-pass "$receiver/v1/webhook?owner=evil&repo=x&labels=bug")
+[[ $status == 500 ]] || fail "POST /v1/webhook with the password and a forged query must answer 500 from pfnet, got $status"
+printf 'POST /v1/webhook with the password and a forged query: %s\n' "$status"
+for ((attempt=0; attempt<20; attempt++)); do
+  (( $(pfnet_lines "$any_post") - posts_before >= 2 )) && break
+  sleep 1
+done
+(( $(pfnet_lines "$any_post") - posts_before == 2 )) || {
+  as_account tbclient podman logs ticket-pfnet 2>&1 | tail -20
+  fail 'pfnet must log exactly the two posts nginx let through'
+}
+(( $(pfnet_lines "$fixed_post") - fixed_before == 2 )) || {
+  pfnet_posts 5
+  fail 'pfnet must log both posts as exactly POST "/v1/webhook?owner=sh4i-yurei&repo=platform-tickets"'
+}
+pfnet_posts 2
+
+# While pfnet runs, the App's key is in its environment and its runtime files under tbclient's
+# run directory, and nowhere else the cases look (decision 28).
+pfnet_pid=$(as_account tbclient podman inspect --format '{{.State.Pid}}' ticket-pfnet) ||
+  fail 'podman inspect ticket-pfnet must succeed as tbclient'
+[[ -n $(files_holding "$patterns/app-key-body" "/run/user/$tb_uid") ]] || fail "a file under /run/user/$tb_uid must hold the App's key while pfnet runs"
+[[ -n $(grep -lsaF -f "$patterns/app-key-body" "/proc/$pfnet_pid/environ" || true) ]] || fail "pfnet's environment must hold the App's key"
+held=$(files_holding "$patterns/app-key-body" /home/tbclient)
+[[ -z $held ]] || fail "no file under tbclient's home may hold the App's key: $held"
+[[ $(journalctl --no-pager -o verbose | count_matching "$patterns/app-key-body") == 0 ]] || fail "no journal line may hold the App's key"
+inspected=$(as_account tbclient podman inspect ticket-pfnet)
+[[ $(printf '%s' "$inspected" | count_matching "$patterns/app-key-body") == 0 ]] || fail "podman inspect ticket-pfnet must not hold the App's key"
+held=$(grep -lsaF -f "$patterns/app-key-body" /proc/[0-9]*/cmdline || true)
+[[ -z $held ]] || fail "no process command line may hold the App's key: $held"
+conmon_pids=$(pgrep -u "$tb_uid" -x conmon || true)
+[[ -n $conmon_pids ]] || fail 'conmon must run for the receiver pod'
+for pid in $conmon_pids; do
+  [[ -z $(grep -lsaF -f "$patterns/app-key-body" "/proc/$pid/environ" || true) ]] || fail "conmon's environment must not hold the App's key"
+done
+printf "App key: found under /run/user/%s and in pfnet's environment, nowhere else\n" "$tb_uid"
+
+# With OpenBao out of reach pfnet can't read its key: its start fails and systemd tries again
+# every 30 seconds, and once OpenBao answers pfnet comes up by itself (decision 24).
+stop_proxy
+as_account tbclient systemctl --user restart "$pfnet_unit" >/dev/null 2>&1 || true
+failed_at=$(date +%s)
+[[ $(tb_active "$pfnet_unit") != active ]] || fail "$pfnet_unit must fail while its secret can't be read"
+[[ $(tb_show "$pfnet_unit" Result) != success ]] || fail "$pfnet_unit must record a failed start"
+restarts=$(tb_show "$pfnet_unit" NRestarts)
+for ((attempt=0; attempt<60; attempt++)); do
+  (( $(tb_show "$pfnet_unit" NRestarts) > restarts )) && break
+  sleep 1
+done
+waited=$(($(date +%s) - failed_at))
+(( $(tb_show "$pfnet_unit" NRestarts) > restarts )) || fail "systemd must restart $pfnet_unit while its secret can't be read"
+(( waited >= 25 && waited <= 40 )) || fail "systemd must restart $pfnet_unit about 30 seconds after it fails; saw $waited seconds"
+printf 'pfnet without OpenBao: NRestarts %s -> %s after %ss\n' "$restarts" "$(tb_show "$pfnet_unit" NRestarts)" "$waited"
+start_proxy 192.0.2.10
+proxy_back=$(date +%s)
+until [[ $(tb_active "$pfnet_unit") == active && $(http_code "$receiver/metrics") == 200 ]]; do
+  (( $(date +%s) - proxy_back < 45 )) || fail "$pfnet_unit must be active and /metrics must answer 200 within 45 seconds of OpenBao answering"
+  sleep 1
+done
+printf 'pfnet with OpenBao back: active and /metrics 200 after %ss\n' "$(($(date +%s) - proxy_back))"
+
+# The pod's Wants= and After= on the boot cleanup run the cleanup again whenever the pod starts,
+# and the pod starts only once it has ended (decisions 36 and 50). The microsecond timestamps
+# are compared, because the cleanup usually ends within the second the pod stopped.
+as_account tbclient systemctl --user stop "$pod_unit"
+pod_stopped=$(tb_show "$pod_unit" InactiveEnterTimestampMonotonic)
+as_account tbclient systemctl --user start "$pod_unit"
+cleanup_ended=$(tb_show "$cleanup_unit" InactiveEnterTimestampMonotonic)
+pod_started=$(tb_show "$pod_unit" ActiveEnterTimestampMonotonic)
+(( pod_stopped > 0 && cleanup_ended > 0 && pod_started > 0 )) ||
+  fail "the timestamps must all be set: pod stopped $pod_stopped, cleanup ended $cleanup_ended, pod started $pod_started"
+(( cleanup_ended > pod_stopped )) || fail "the cleanup must run again between the pod's stop ($pod_stopped) and start; it last ended at $cleanup_ended"
+(( cleanup_ended <= pod_started )) || fail "the cleanup must end ($cleanup_ended) no later than the pod starts ($pod_started)"
+printf 'boot cleanup order: pod stopped %s, cleanup ended %s, pod started %s\n' "$pod_stopped" "$cleanup_ended" "$pod_started"
+receiver_up
+
+# A hung cleanup holds the pod back until systemd kills it at 300 seconds, and then the pod starts
+# and the receiver answers (decisions 43 and 50).
+hang_dropin=/home/tbclient/.config/systemd/user/$cleanup_unit.d/hang.conf
+install -d -m 0755 -o tbclient -g tbclient "${hang_dropin%/*}"
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/sleep infinity\n' >"$hang_dropin"
+chown tbclient:tbclient "$hang_dropin"
+as_account tbclient systemctl --user daemon-reload
+as_account tbclient systemctl --user stop "$pod_unit"
+hang_start=$(date +%s)
+as_account tbclient systemctl --user start --no-block "$pod_unit"
+held_back=false
+for ((attempt=0; attempt<175; attempt++)); do
+  cleanup_state=$(tb_show "$cleanup_unit" ActiveState)
+  cleanup_result=$(tb_show "$cleanup_unit" Result)
+  pod_state=$(tb_show "$pod_unit" ActiveState)
+  if [[ $cleanup_state == activating ]]; then
+    [[ $pod_state == inactive ]] || fail "the pod must stay inactive while the cleanup is activating; it was $pod_state"
+    held_back=true
+  fi
+  [[ $cleanup_result == timeout && $cleanup_state != activating ]] && break
+  sleep 2
+done
+hang_elapsed=$(($(date +%s) - hang_start))
+[[ $cleanup_result == timeout ]] || fail "the hung cleanup must end with Result=timeout; saw Result=$cleanup_result"
+$held_back || fail 'the pod must have been seen inactive while the cleanup was activating'
+((hang_elapsed >= 300 && hang_elapsed < 330)) || fail "the hung cleanup must time out 300 to 329 seconds after the start; saw $hang_elapsed"
+wait_active "$pod_unit" 30 || fail "the pod must start once the hung cleanup is killed; it is $(tb_active "$pod_unit")"
+pod_active_at=$(date +%s)
+cleanup_ended=$(tb_show "$cleanup_unit" InactiveEnterTimestampMonotonic)
+pod_started=$(tb_show "$pod_unit" ActiveEnterTimestampMonotonic)
+(( cleanup_ended > 0 && pod_started >= cleanup_ended )) || fail "the pod must start ($pod_started) after the cleanup is killed ($cleanup_ended)"
+metrics_within 60 || fail "GET $receiver/metrics must answer 200 within 60 seconds of the pod starting"
+printf 'hung cleanup: Result=%s after %ss; the pod started after it, /metrics 200 after %ss more\n' \
+  "$cleanup_result" "$hang_elapsed" "$(($(date +%s) - pod_active_at))"
+rm -f -- "$hang_dropin"
+as_account tbclient systemctl --user daemon-reload
+as_account tbclient systemctl --user reset-failed "$cleanup_unit"
+receiver_up
+
+# The role's verify asks only what holds while OpenBao is down: the pod is active and nginx
+# refuses a post without the password (decision 76). pfnet is restarted with the proxy stopped, so
+# it can't read its key and is down while verify runs. Without nginx verify fails with its message.
+stop_proxy
+as_account tbclient systemctl --user restart "$pfnet_unit" >/dev/null 2>&1 || true
+[[ $(tb_active "$pfnet_unit") != active ]] || fail "$pfnet_unit must be down while its secret can't be read"
+play ticket-band-verify-pod
+as_account tbclient systemctl --user stop "$nginx_unit"
+play_fails verify-pod-without-nginx ticket-band-verify-pod 'The receiver pod must be active and nginx must refuse a post without the password'
+start_proxy 192.0.2.10
+as_account tbclient systemctl --user start "$nginx_unit"
+receiver_up
 stop_proxy
 
 no_leftover_tokens

@@ -6,6 +6,17 @@ backup_server_mount_point: "{{ hub_backup_mount_point }}"
 backup_server_user: keepbreath6
 openbao_user: keepbreath7
 ticket_band_user: keepbreath8
+# The ticket receiver's pod (OpenBao on the hub decision 76): its port, the App
+# keepbreath-ticket-band, its installation on platform-tickets and its key's OpenBao path. The
+# Vaultwarden item "ticket receiver (hub)" holds Alertmanager's password for the receiver and its
+# bcrypt hash: ticket_band writes the hash into nginx's user file, and the hub role writes the
+# password into Alertmanager's password file.
+ticket_band_receiver_port: 8083
+ticket_band_app_id: 5670133
+ticket_band_installation_id: 179920588
+ticket_band_app_key_path: ticket-band/app-key
+ticket_band_receiver_password_hash: "{{ lookup('vault_secret', 'ticket receiver (hub)', field='bcrypt') }}"
+hub_ticket_receiver_password: "{{ lookup('vault_secret', 'ticket receiver (hub)') }}"
 openbao_port: 8200
 openbao_self_address: "100.95.89.6"
 openbao_approles:

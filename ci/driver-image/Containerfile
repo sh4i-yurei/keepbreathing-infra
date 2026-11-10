@@ -1,25 +1,20 @@
 # The image ci/run_driver.py runs a driver job in. It stands in for GitHub's ubuntu-26.04 runner.
-# Two settings make it behave like that runner inside a rootless container:
-#   - only 65,536 user IDs exist inside the container, so new accounts get 20,000 subordinate
-#     IDs between 2000 and 65000 instead of 65,536 from 100000, which leaves room for three such
-#     accounts at once, as the openbao-client driver's bltest, blother and tbclient need;
-#   - nothing in this image pulls in network-online.target, so it is wanted at boot here, and
-#     rootless Quadlet units that wait for it start as they do on the runner.
+# Each test account gets Ubuntu's default 65,536 subordinate IDs, as on GitHub's runner, because
+# pfnet's image runs as user 65532. The first starts at 165536 in this image, because the base
+# image's ubuntu user holds 100000:65536, so the openbao-client driver's bltest, blother and
+# tbclient reach 362143, and the host must give its user subordinate IDs reaching past that; the
+# laptop's 1,000,000 do. Nothing in this image pulls in network-online.target, so it is wanted at
+# boot here, and rootless Quadlet units that wait for it start as they do on the runner.
 FROM docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus sudo ca-certificates curl jq git iproute2 procps \
       nftables python3 python3-venv python3-pip uidmap \
     && rm -rf /var/lib/apt/lists/*
-RUN sed -i -e 's/^#\?SUB_UID_MIN.*/SUB_UID_MIN 2000/' -e 's/^#\?SUB_UID_MAX.*/SUB_UID_MAX 65000/' \
-      -e 's/^#\?SUB_UID_COUNT.*/SUB_UID_COUNT 20000/' -e 's/^#\?SUB_GID_MIN.*/SUB_GID_MIN 2000/' \
-      -e 's/^#\?SUB_GID_MAX.*/SUB_GID_MAX 65000/' -e 's/^#\?SUB_GID_COUNT.*/SUB_GID_COUNT 20000/' \
-      /etc/login.defs \
-    && grep -q '^SUB_UID_COUNT 20000' /etc/login.defs
 RUN ln -s /usr/lib/systemd/system/network-online.target \
       /etc/systemd/system/multi-user.target.wants/network-online.target
 # GitHub runs steps as runner (UID 1001) with password-free sudo. runner holds no subordinate
-# IDs, so the drivers' test accounts get the whole range between them.
+# IDs, so they stay free for the drivers' test accounts.
 RUN useradd -K SUB_UID_COUNT=0 -K SUB_GID_COUNT=0 -u 1001 -M -d /home/runner -s /bin/bash runner \
     && echo 'runner ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/runner \
     && chmod 0440 /etc/sudoers.d/runner

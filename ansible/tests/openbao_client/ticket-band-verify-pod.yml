@@ -1,0 +1,13 @@
+---
+- name: Verify the ticket band's receiver pod for tbclient
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ticket_band_user: tbclient
+    ticket_band_receiver_port: 18083
+  tasks:
+    - name: Check the pod and nginx's refusal of a post without the password
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: verify-pod

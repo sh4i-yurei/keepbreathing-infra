@@ -1,0 +1,29 @@
+# Managed by Ansible (roles/ticket_band). Edits here are overwritten.
+# The receiver's gate (OpenBao on the hub decisions 23, 24 and 76). Only POST /v1/webhook with
+# Alertmanager's password reaches pfnet, and the rewrite's trailing ? replaces whatever query the
+# post carries with the fixed owner and repository. GET /metrics needs no password. Everything
+# else is refused.
+server {
+    listen {{ ticket_band_receiver_port }};
+
+    location = /v1/webhook {
+        limit_except POST {
+            deny all;
+        }
+        auth_basic "ticket receiver";
+        auth_basic_user_file /etc/nginx/htpasswd;
+        rewrite ^ /v1/webhook?owner=sh4i-yurei&repo=platform-tickets? break;
+        proxy_pass http://127.0.0.1:8080;
+    }
+
+    location = /metrics {
+        limit_except GET {
+            deny all;
+        }
+        proxy_pass http://127.0.0.1:8080;
+    }
+
+    location / {
+        return 404;
+    }
+}

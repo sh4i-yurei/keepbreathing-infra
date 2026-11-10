@@ -1,0 +1,22 @@
+---
+# Run only with --check --diff. The account part and then the main tasks, in hub.yml's order,
+# without openbao_config between them, for an account the run reports instead of making.
+- name: Rehearse the ticket band on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ticket_band_user: tbtest
+    ticket_band_app_id: 1
+    ticket_band_installation_id: 1
+    ticket_band_app_key_path: tbsvc/app-key
+    # The bcrypt hash of the fixed test password tb-driver-pass.
+    ticket_band_receiver_password_hash: "$2b$10$07OvoxxQhWf/2H3y8DTwH.EzEWrwoMrzUKB8PyEyjIwfJ5o6Mwxj."
+  tasks:
+    - name: Prepare the band's account
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: account
+    - name: Run the band's service part
+      ansible.builtin.import_role:
+        name: ticket_band

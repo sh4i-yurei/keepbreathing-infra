@@ -1,0 +1,26 @@
+# Managed by Ansible (roles/ticket_band). Edits here are overwritten.
+# pfnet's alertmanager-to-github in the receiver's pod. The App's key reaches it from OpenBao
+# through the Podman secret ticket-band-app-key when the container is created, and a start that
+# can't read it fails and is retried every 30 seconds with no start limit (OpenBao on the hub
+# decisions 12, 17, 20, 24 and 76).
+[Unit]
+Description=alertmanager-to-github, the ticket receiver
+StartLimitIntervalSec=0
+
+[Container]
+ContainerName=ticket-pfnet
+Image={{ ticket_band_receiver_image }}
+Pod=ticket-receiver.pod
+LogDriver=journald
+Exec=start
+Secret=ticket-band-app-key,type=env,target=ATG_GITHUB_APP_PRIVATE_KEY
+Environment=ATG_GITHUB_APP_ID={{ ticket_band_app_id }}
+Environment=ATG_GITHUB_APP_INSTALLATION_ID={{ ticket_band_installation_id }}
+Environment=ATG_LABELS=ticket
+Environment=ATG_AUTO_CLOSE_RESOLVED_ISSUES=true
+# Each issue's ID is built from the alert's labels in sorted key order.
+Environment="ATG_ALERT_ID_TEMPLATE={% raw %}{{ range $k, $v := .Payload.CommonLabels }}{{ $k }}={{ $v }};{{ end }}{% endraw %}"
+
+[Service]
+Restart=always
+RestartSec=30

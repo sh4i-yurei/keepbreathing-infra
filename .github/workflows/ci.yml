@@ -658,7 +658,7 @@ jobs:
           if test -e /usr/local/bin/openbao-read; then echo 'ASSERTION FAILED: full driver left /usr/local/bin/openbao-read'; exit 1; fi
           if test -e /usr/local/bin/openbao-podman-secret; then echo 'ASSERTION FAILED: full driver left /usr/local/bin/openbao-podman-secret'; exit 1; fi
           if test -e /etc/openbao; then echo 'ASSERTION FAILED: full driver left /etc/openbao'; exit 1; fi
-          for port in 8200 18300; do
+          for port in 8200 18300 18083; do
             if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$port/" || true)" != 000; then echo "ASSERTION FAILED: full driver left a listener on $port"; exit 1; fi
           done
           sudo cmp /tmp/openbao-client-environment-before /etc/environment

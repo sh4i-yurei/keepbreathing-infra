@@ -1,0 +1,7 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# Every container in this account asks Tailscale's resolver first and falls back to pasta's DNS
+# forwarder, whatever /etc/resolv.conf held when the container started (Ansible configuration
+# management decision 56).
+[containers]
+dns_servers = ["100.100.100.100", "169.254.1.1"]
+dns_searches = ["{{ hub_tailnet_domain }}"]

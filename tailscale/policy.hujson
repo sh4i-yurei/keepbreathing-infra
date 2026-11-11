@@ -161,6 +161,10 @@
 
 		// Infrastructure as code's job runners. OpenBao on the hub decision #70.
 		"tag:iac-runner": ["autogroup:admin"],
+
+		// Infrastructure as code's short-lived staging machines. The runners mint their keys,
+		// so tag:iac-runner owns the tag. Infrastructure as code decision #63.
+		"tag:staging": ["tag:iac-runner"],
 	},
 
 	// Machines tagged tag:hub are approved automatically to serve the hub's Services, so a

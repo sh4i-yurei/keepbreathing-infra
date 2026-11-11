@@ -37,8 +37,14 @@
 - name: Check ntfy is in the state the role claims
   ansible.builtin.import_tasks: ntfy-verify.yml
 
+- name: Point the container account's containers at Tailscale's resolver
+  ansible.builtin.import_tasks: container-dns-setup.yml
+
 - name: Run Gatus
   ansible.builtin.import_tasks: gatus-setup.yml
+
+- name: Check Gatus asks Tailscale's resolver
+  ansible.builtin.import_tasks: container-dns-verify.yml
 
 - name: Check Gatus is in the state the role claims
   ansible.builtin.import_tasks: gatus-verify.yml

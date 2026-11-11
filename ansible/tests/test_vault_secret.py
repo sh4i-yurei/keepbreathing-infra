@@ -40,6 +40,7 @@ def vault(tmp_path, monkeypatch):
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 with Path(os.environ['FAKE_BW_LOG']).open('a') as log:
@@ -56,12 +57,31 @@ if failure:
 if os.environ.get('FAKE_BW_BAD_JSON'):
     print('HOSTILE-STDOUT')
     sys.exit(0)
+if 'FAKE_BW_STDOUT' in os.environ:
+    print(os.environ['FAKE_BW_STDOUT'], end='')
+    sys.exit(0)
 items = json.loads(os.environ['FAKE_BW_ITEMS'])
-item = items[sys.argv[3]]
-if sys.argv[1:3] == ['get', 'item']:
-    print(json.dumps(item))
-elif sys.argv[1:3] == ['get', 'password']:
-    print(item['login']['password'])
+term = sys.argv[3]
+def search(term):
+    words = term.lower().split()
+    return [item for item in items if all(
+        word in item.get('name', '').lower()
+        or word in (item.get('login') if isinstance(item.get('login'), dict) else {}).get('username', '').lower()
+        for word in words
+    )]
+if sys.argv[1:3] == ['list', 'items'] and sys.argv[3] == '--search':
+    print(json.dumps(search(sys.argv[4])))
+elif sys.argv[1:3] == ['get', 'item']:
+    if re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', term):
+        matches = [item for item in items if item.get('id') == term]
+    else:
+        matches = search(term)
+    if len(matches) == 1:
+        print(json.dumps(matches[0]))
+    else:
+        print('More than one result was found. Try getting a specific object by `id` instead.'
+              if matches else 'Not found.', file=sys.stderr)
+        sys.exit(1)
 else:
     sys.exit(1)
 """
@@ -73,6 +93,7 @@ else:
     monkeypatch.delenv("BW_SESSION", raising=False)
     monkeypatch.delenv("BW_NOINTERACTION", raising=False)
     monkeypatch.delenv("FAKE_BW_FAILURE", raising=False)
+    monkeypatch.delenv("FAKE_BW_STDOUT", raising=False)
     item = {
         "object": "item",
         "name": ITEM,
@@ -82,7 +103,7 @@ else:
             {"name": "token", "value": "token-1", "type": 1},
         ],
     }
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps({ITEM: item}))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([item]))
     lookup_loader.add_directory(str(ANSIBLE / "lookup_plugins"))
     return {"runtime": runtime, "log": log, "item": item}
 
@@ -124,12 +145,153 @@ def session_file(vault, value="key-file-1"):
     (vault["runtime"] / "bw-session").write_text(value)
 
 
+def foreign_item(name, tag, username=None):
+    return {
+        "object": "item",
+        "id": f"foreign-{tag}-{name}",
+        "name": name,
+        "login": {
+            "username": username or f"FOREIGN-{tag}-username",
+            "password": f"FOREIGN-{tag}-password",
+        },
+        "fields": [{"name": "hash", "value": f"FOREIGN-{tag}-field"}],
+    }
+
+
+def assert_no_foreign(error, capfd, *tags):
+    shown = str(error.value) + "".join(traceback.format_exception(error.value))
+    captured = capfd.readouterr()
+    shown += captured.out + captured.err
+    for tag in tags:
+        for suffix in ("username", "password", "field"):
+            assert f"FOREIGN-{tag}-{suffix}" not in shown
+
+
+def test_rclone_hub_exact_among_five(vault, monkeypatch):
+    session_file(vault)
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(list(fixture_items().values())))
+    assert call("rclone hub (hub)", field="bcrypt") == "fixture-bcrypt-18"
+    assert call("rclone hub (hub)") == "fixture-password-18"
+
+
+def test_foreign_username_match_is_ignored(vault, monkeypatch, capfd):
+    session_file(vault)
+    foreign = foreign_item("unrelated login", "USER", "keepbreath0-sudo-(hub)")
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([vault["item"], foreign]))
+    assert call() == "pw-hub-1"
+    assert call(field="hash") == HASH
+    with pytest.raises(AnsibleLookupError) as error:
+        call(field="absent")
+    assert (
+        str(error.value)
+        == f"Vault lookup failed for item {ITEM!r} field 'absent' using runtime session file; run vu."
+    )
+    assert_no_foreign(error, capfd, "USER")
+
+
+def test_foreign_name_matches_are_ignored(vault, monkeypatch, capfd):
+    session_file(vault)
+    items = [
+        foreign_item(f"{ITEM} old", "BEFORE"),
+        vault["item"],
+        foreign_item(f"archive {ITEM}", "AFTER"),
+    ]
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(items))
+    assert call() == "pw-hub-1"
+    assert call(login="username") == "prom-user-1"
+    with pytest.raises(AnsibleLookupError) as error:
+        call(field="absent")
+    assert (
+        str(error.value)
+        == f"Vault lookup failed for item {ITEM!r} field 'absent' using runtime session file; run vu."
+    )
+    assert_no_foreign(error, capfd, "BEFORE", "AFTER")
+
+
+def test_duplicate_exact_name_is_refused(vault, monkeypatch, capfd):
+    session_file(vault)
+    monkeypatch.setenv(
+        "FAKE_BW_ITEMS", json.dumps([vault["item"], foreign_item(ITEM, "DUP")])
+    )
+    with pytest.raises(AnsibleLookupError) as error:
+        call()
+    assert (
+        str(error.value)
+        == f"Vault lookup failed for item {ITEM!r} using runtime session file; run vu."
+    )
+    assert "pw-hub-1" not in str(error.value)
+    assert_no_foreign(error, capfd, "DUP")
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["KEEPBREATH0 SUDO (HUB)", f" {ITEM}", f"{ITEM} ", "keepbreath0  sudo (hub)"],
+)
+def test_name_must_match_exactly(vault, name):
+    session_file(vault)
+    with pytest.raises(AnsibleLookupError) as error:
+        call(name)
+    assert (
+        str(error.value)
+        == f"Vault lookup failed for item {name!r} using runtime session file; run vu."
+    )
+    assert "pw-hub-1" not in str(error.value)
+
+
+def test_no_matching_name(vault):
+    session_file(vault)
+    name = "keepbreath0 sudo (nowhere)"
+    with pytest.raises(AnsibleLookupError) as error:
+        call(name)
+    assert (
+        str(error.value)
+        == f"Vault lookup failed for item {name!r} using runtime session file; run vu."
+    )
+    assert "pw-hub-1" not in str(error.value)
+
+
+def test_name_shaped_like_id(vault, monkeypatch):
+    session_file(vault)
+    name = "72fad98f-5786-4792-9075-1d3143b513c0"
+    monkeypatch.setenv(
+        "FAKE_BW_ITEMS", json.dumps([vault["item"] | {"name": name, "id": "other-id"}])
+    )
+    assert call(name) == "pw-hub-1"
+
+
+def test_non_list_output_is_refused(vault, monkeypatch, capfd):
+    session_file(vault)
+    foreign = foreign_item(ITEM, "OBJECT")
+    monkeypatch.setenv("FAKE_BW_STDOUT", json.dumps(foreign))
+    with pytest.raises(AnsibleLookupError) as error:
+        call()
+    assert (
+        str(error.value)
+        == f"Vault lookup failed for item {ITEM!r} using runtime session file; run vu."
+    )
+    assert_no_foreign(error, capfd, "OBJECT")
+
+
+def test_non_object_entries_are_skipped(vault, monkeypatch):
+    session_file(vault)
+    entries = [
+        "text",
+        3,
+        None,
+        [ITEM],
+        {"login": {"password": "FOREIGN-MISSING-password"}},
+        vault["item"],
+    ]
+    monkeypatch.setenv("FAKE_BW_STDOUT", json.dumps(entries))
+    assert call() == "pw-hub-1"
+
+
 def test_password_from_session_file(vault):
     session_file(vault)
     assert call() == "pw-hub-1"
     assert calls(vault) == [
         {
-            "argv": ["get", "item", ITEM],
+            "argv": ["list", "items", "--search", ITEM],
             "session": "key-file-1",
             "nointeraction": "true",
         }
@@ -152,7 +314,11 @@ def test_environment_session_precedes_file(vault, monkeypatch):
     monkeypatch.setenv("BW_SESSION", "key-env-1")
     assert call() == "pw-hub-1"
     assert calls(vault) == [
-        {"argv": ["get", "item", ITEM], "session": "key-env-1", "nointeraction": "true"}
+        {
+            "argv": ["list", "items", "--search", ITEM],
+            "session": "key-env-1",
+            "nointeraction": "true",
+        }
     ]
 
 
@@ -168,7 +334,11 @@ def test_stale_environment_session_does_not_retry_file(vault, monkeypatch):
     )
     assert "key-env-1" not in shown and "key-file-1" not in shown
     assert calls(vault) == [
-        {"argv": ["get", "item", ITEM], "session": "key-env-1", "nointeraction": "true"}
+        {
+            "argv": ["list", "items", "--search", ITEM],
+            "session": "key-env-1",
+            "nointeraction": "true",
+        }
     ]
 
 
@@ -209,7 +379,7 @@ def test_cli_refusals_are_redacted(vault, monkeypatch, failure):
 def test_missing_or_duplicate_field(vault, monkeypatch, fields):
     session_file(vault)
     item = vault["item"] | {"fields": fields}
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps({ITEM: item}))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([item]))
     with pytest.raises(AnsibleLookupError) as error:
         call(field="hash")
     assert ITEM in str(error.value) and "hash" in str(error.value)
@@ -222,7 +392,7 @@ def test_missing_or_duplicate_field(vault, monkeypatch, fields):
 def test_field_lookup_when_item_omits_fields(vault, monkeypatch):
     session_file(vault)
     item = {key: value for key, value in vault["item"].items() if key != "fields"}
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps({ITEM: item}))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([item]))
     with pytest.raises(AnsibleLookupError) as error:
         call(field="hash")
     assert str(error.value) == (
@@ -236,7 +406,7 @@ def test_field_lookup_when_item_omits_fields(vault, monkeypatch):
 def test_missing_password(vault, monkeypatch):
     session_file(vault)
     item = vault["item"] | {"login": {"username": "prom-user-1"}}
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps({ITEM: item}))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([item]))
     with pytest.raises(AnsibleLookupError) as error:
         call()
     assert ITEM in str(error.value)
@@ -245,7 +415,7 @@ def test_missing_password(vault, monkeypatch):
 def test_malformed_login_is_a_safe_lookup_error(vault, monkeypatch):
     session_file(vault)
     item = vault["item"] | {"login": "malformed-login"}
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps({ITEM: item}))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([item]))
     with pytest.raises(AnsibleLookupError) as error:
         call()
     assert str(error.value) == (
@@ -262,7 +432,7 @@ def test_login_username(vault):
 def test_missing_login_username(vault, monkeypatch):
     session_file(vault)
     item = vault["item"] | {"login": {"password": "pw-hub-1"}}
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps({ITEM: item}))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([item]))
     with pytest.raises(AnsibleLookupError) as error:
         call(login="username")
     assert (
@@ -354,7 +524,11 @@ def run_become_play(vault, tmp_path, monkeypatch, *, verbose=False):
             "login": {"username": "admin", "password": f"pw-{host}-1"},
             "fields": [{"name": "hash", "value": "hash-1", "type": 1}],
         }
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(items))
+    foreign = [
+        foreign_item(f"keepbreath0 sudo ({host}) old", "PLAY")
+        for host in ("alpha", "beta")
+    ]
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps([*items.values(), *foreign]))
     play = tmp_path / "play.yml"
     play.write_text(
         "- name: Fetch the become password\n"
@@ -405,11 +579,19 @@ def test_become_play_reads_once_per_host_and_redacts(
     assert result.returncode == 0, shown
     assert "failed=0" in shown
     assert all(
-        value not in shown for value in ["pw-alpha-1", "pw-beta-1", "key-file-1"]
+        value not in shown
+        for value in [
+            "pw-alpha-1",
+            "pw-beta-1",
+            "key-file-1",
+            "FOREIGN-PLAY-password",
+            "FOREIGN-PLAY-username",
+            "FOREIGN-PLAY-field",
+        ]
     )
     assert sorted(entry["argv"] for entry in calls(vault)) == [
-        ["get", "item", "keepbreath0 sudo (alpha)"],
-        ["get", "item", "keepbreath0 sudo (beta)"],
+        ["list", "items", "--search", "keepbreath0 sudo (alpha)"],
+        ["list", "items", "--search", "keepbreath0 sudo (beta)"],
     ]
 
 
@@ -441,7 +623,7 @@ def run_scope_play(vault, tmp_path, monkeypatch, *, hosts="alpha:beta", flags=()
             "login": {"username": "admin", "password": f"pw-{host}-1"},
             "fields": [],
         }
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(items))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(list(items.values())))
     session_file(vault)
     play = tmp_path / "play.yml"
     play.write_text(
@@ -505,7 +687,8 @@ def test_become_play_scope(
         for host in expected:
             assert f"reached {host}" in shown
         assert sorted(entry["argv"] for entry in calls(vault)) == sorted(
-            ["get", "item", f"keepbreath0 sudo ({host})"] for host in expected
+            ["list", "items", "--search", f"keepbreath0 sudo ({host})"]
+            for host in expected
         )
         assert all(f"pw-{host}-1" not in shown for host in ("alpha", "beta", "gamma"))
         for host in ("alpha", "beta", "gamma"):
@@ -665,7 +848,7 @@ def fixture_items():
 
 def _render_context(vault, monkeypatch):
     session_file(vault)
-    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(fixture_items()))
+    monkeypatch.setenv("FAKE_BW_ITEMS", json.dumps(list(fixture_items().values())))
 
     def lookup(plugin, term, **options):
         if plugin == "ansible.builtin.pipe":

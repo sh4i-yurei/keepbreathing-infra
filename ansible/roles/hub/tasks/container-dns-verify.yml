@@ -1,0 +1,34 @@
+---
+- name: container-dns-verify | Only on a real run
+  when: not ansible_check_mode
+  block:
+    - name: container-dns-verify | Read the running Gatus container
+      containers.podman.podman_container_info:
+        name: gatus
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ hub_container_account.uid }}"
+      register: hub_dns_gatus
+
+    - name: container-dns-verify | Read Gatus's resolv.conf
+      ansible.builtin.slurp:
+        src: "{{ hub_dns_gatus.containers[0].ResolvConfPath }}"
+      become: true
+      become_user: "{{ hub_container_user }}"
+      register: hub_dns_resolv
+
+    - name: container-dns-verify | Gatus asks Tailscale's resolver first
+      ansible.builtin.assert:
+        that:
+          - hub_dns_gatus.containers | length == 1
+          - >-
+            hub_dns_resolv.content | b64decode ==
+            'search ' ~ hub_tailnet_domain ~ '\n' ~
+            'nameserver 100.100.100.100\n' ~
+            'nameserver 169.254.1.1\n'
+        fail_msg: |
+          Gatus's resolv.conf must be exactly:
+          search {{ hub_tailnet_domain }}
+          nameserver 100.100.100.100
+          nameserver 169.254.1.1

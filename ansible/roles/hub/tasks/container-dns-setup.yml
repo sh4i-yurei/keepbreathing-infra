@@ -1,0 +1,21 @@
+---
+- name: container-dns-setup | Create the folders the container account's Podman drop-in lives in
+  ansible.builtin.file:
+    path: "/home/{{ hub_container_user }}/{{ item }}"
+    state: directory
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0700"
+  loop:
+    - .config
+    - .config/containers
+    - .config/containers/containers.conf.d
+
+- name: container-dns-setup | Write the container account's Podman DNS drop-in
+  ansible.builtin.template:
+    src: tailnet-dns.conf.j2
+    dest: "/home/{{ hub_container_user }}/.config/containers/containers.conf.d/tailnet-dns.conf"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0644"
+  notify: Restart gatus

@@ -128,3 +128,9 @@ flowchart TB
   certificate exchanges named in the table above, and `roles/openbao/files/ansible-policy.hcl`,
   the `ansible` login's policy, which the `openbao` role's first-start file and `openbao_config`
   both read (OpenBao on the hub decision 68).
+- **Each Podman drop-in in an account has one owner.** A role writes only its own named file in an
+  account's `~/.config/containers/containers.conf.d/` and sets only the fields it needs, because
+  Podman reads every file there and a later file overrides an earlier one field by field.
+  `roles/hub` writes `tailnet-dns.conf` for `hub_container_user`, which points that account's
+  containers at Tailscale's resolver (Ansible configuration management decision 56), and
+  `openbao_client` writes `openbao.conf` for each account it is given.

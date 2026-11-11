@@ -4,6 +4,10 @@
 
 - name: alertmanager-verify | Only on a real run
   when: not ansible_check_mode
+  vars:
+    hub_alertmanager_login:
+      username: "{{ lookup('vault_secret', 'alertmanager prometheus (hub)', login='username') }}"
+      password: "{{ lookup('vault_secret', 'alertmanager prometheus (hub)') }}"
 
   block:
     - name: alertmanager-verify | Wait for Alertmanager to refuse a request with no password
@@ -21,14 +25,27 @@
         url_username: "{{ hub_alertmanager_login.username }}"
         url_password: "{{ hub_alertmanager_login.password }}"
         force_basic_auth: true
-      vars:
-        hub_alertmanager_login:
-          username: "{{ lookup('vault_secret', 'alertmanager prometheus (hub)', login='username') }}"
-          password: "{{ lookup('vault_secret', 'alertmanager prometheus (hub)') }}"
       register: hub_alertmanager_status
       failed_when: >-
         hub_alertmanager_status.status != 200
         or hub_alertmanager_status.json.cluster.status != 'disabled'
+      no_log: true
+
+    # Without receiver-name-in-metrics the counters carry no receiver_name (OpenBao on the hub
+    # decision 77). ntfy-tickets has a route before and after 4.6's cutover; Alertmanager builds no
+    # receiver that no route sends to, so the ticket receiver has no counters until then.
+    - name: alertmanager-verify | Every delivery counter carries its receiver's name
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ hub_alertmanager_port }}/metrics"
+        url_username: "{{ hub_alertmanager_login.username }}"
+        url_password: "{{ hub_alertmanager_login.password }}"
+        force_basic_auth: true
+        return_content: true
+      register: hub_alertmanager_metrics
+      failed_when: >-
+        hub_alertmanager_metrics.status != 200
+        or hub_alertmanager_metrics.content is not search(
+        '^alertmanager_notifications_total[{][^}]*receiver_name="ntfy-tickets"', multiline=true)
       no_log: true
 
     - name: alertmanager-verify | Read the running Alertmanager container

@@ -10,7 +10,7 @@ UserNS=keep-id:uid=65534,gid=65534
 PublishPort=127.0.0.1:{{ hub_alertmanager_port }}:9093
 Volume=/home/{{ hub_container_user }}/.config/alertmanager:/etc/alertmanager:ro,Z
 Volume=/home/{{ hub_container_user }}/alertmanager:/alertmanager:Z
-Exec=--config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager --web.config.file=/etc/alertmanager/web.yml --cluster.listen-address=
+Exec=--config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager --web.config.file=/etc/alertmanager/web.yml --cluster.listen-address= --enable-feature=receiver-name-in-metrics
 
 [Service]
 Restart=always

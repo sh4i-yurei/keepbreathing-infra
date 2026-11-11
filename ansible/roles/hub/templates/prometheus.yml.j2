@@ -60,6 +60,13 @@ scrape_configs:
       password_file: /etc/prometheus/grafana-password
     static_configs:
       - targets: ["{{ hub_host_loopback }}:{{ hub_grafana_port }}"]
+
+  # The ticket band's receiver, through nginx in its pod, which lets GET /metrics through with no
+  # password (OpenBao on the hub decision 24). TargetDown leaves this job out; its alert is
+  # TicketDeliveryDown.
+  - job_name: ticket-receiver
+    static_configs:
+      - targets: ["{{ hub_host_loopback }}:{{ hub_ticket_receiver_port }}"]
 {% for host in groups['droplets'] %}
 
   # node_exporter on {{ host }}, over HTTPS with its own password (decisions #26, #29 and #32).

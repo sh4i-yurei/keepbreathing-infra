@@ -3,6 +3,8 @@
 This role runs the hub's rootless Quadlet services under `hub_container_user`: ntfy, Gatus,
 Alertmanager, the Podman exporter, Prometheus and Grafana. It also keeps the hub's own subnet ahead
 of accepted tailnet routes and publishes ntfy and Grafana as Tailscale Services.
+It writes the container account's Podman DNS drop-in and checks Gatus's resolv.conf (Ansible
+configuration management decision 56).
 
 ## Prometheus
 

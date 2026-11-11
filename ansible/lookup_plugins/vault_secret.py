@@ -57,7 +57,7 @@ class LookupModule(LookupBase):
             environment["BW_NOINTERACTION"] = "true"
             try:
                 result = subprocess.run(
-                    ["bw", "get", "item", name],
+                    ["bw", "list", "items", "--search", name],
                     env=environment,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
@@ -67,14 +67,24 @@ class LookupModule(LookupBase):
             except OSError:
                 result = None
 
-            item = None
+            found = None
             if result is not None and result.returncode == 0:
                 try:
-                    item = json.loads(result.stdout)
+                    found = json.loads(result.stdout)
                 except (TypeError, ValueError):
                     pass
-            if not isinstance(item, dict):
+            matches = (
+                [
+                    entry
+                    for entry in found
+                    if isinstance(entry, dict) and entry.get("name") == name
+                ]
+                if isinstance(found, list)
+                else []
+            )
+            if len(matches) != 1:
                 raise AnsibleLookupError(message)
+            item = matches[0]
 
             if selected_field:
                 fields = item.get("fields")

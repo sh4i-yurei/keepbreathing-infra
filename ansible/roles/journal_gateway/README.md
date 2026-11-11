@@ -20,7 +20,7 @@ The rendered role templates are
 `templates/systemd-journal-gatewayd.service.conf.j2`. Render them with
 `journal_gateway_listen_address=100.116.219.6:19531` and
 `journal_gateway_verify_client=false`. The rendered socket drop-in must
-contain `ListenStream=100.116.219.6:19531`. The service drop-in must load the
+contain `ListenStream=100.116.219.6:19531` and `FreeBind=yes`. The service drop-in must load the
 server key and certificate, with `--cert` and `--key`, and omit the hub client
 certificate credential and `--trust`.
 

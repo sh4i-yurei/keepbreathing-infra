@@ -1,0 +1,28 @@
+---
+# What the main tasks would write for an account that doesn't exist yet, in check mode.
+- name: Ticket band | Download the receiver pod's images
+  ansible.builtin.debug:
+    msg: "Would download {{ item }} into {{ ticket_band_user }}'s storage"
+  changed_when: true
+  loop:
+    - "{{ ticket_band_receiver_image }}"
+    - "{{ ticket_band_nginx_image }}"
+
+- name: Ticket band | Write nginx's configuration
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ ticket_band_user }}/.config/ticket-nginx/default.conf"
+  changed_when: true
+
+- name: Ticket band | Write nginx's user file
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ ticket_band_user }}/.config/ticket-nginx/htpasswd"
+  changed_when: true
+
+- name: Ticket band | Write the receiver pod's Quadlet files
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ ticket_band_user }}/.config/containers/systemd/{{ item }}"
+  changed_when: true
+  loop:
+    - ticket-receiver.pod
+    - ticket-pfnet.container
+    - ticket-nginx.container

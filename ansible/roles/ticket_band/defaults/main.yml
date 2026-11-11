@@ -1,0 +1,11 @@
+---
+# pfnet-research's alertmanager-to-github, the ticket receiver, pinned to the index digest of its
+# v0.3.2 tag (OpenBao on the hub decision 12). The version is only readable from this comment.
+ticket_band_receiver_image: ghcr.io/pfnet-research/alertmanager-to-github@sha256:f509dde2b1ec5d1cdddc9a73a426a0cb35a3384bf9e7ec98777a19c1e2874c3c
+
+# nginx in front of the receiver, the alpine image the site runs (decision 76).
+ticket_band_nginx_image: docker.io/library/nginx:alpine@sha256:1d40e3eb3bf4f138de1d67193f2aa5309fcaf343eb5ffadbf5e9439de1eb1ebb
+
+# The port nginx listens on inside the receiver's pod, which the pod publishes on 127.0.0.1 only
+# (decision 76).
+ticket_band_receiver_port: 8083

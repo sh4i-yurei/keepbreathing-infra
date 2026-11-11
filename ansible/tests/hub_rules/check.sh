@@ -45,7 +45,12 @@ for file in prometheus-rules.yml container-missing-rules.yml \
   promtool check rules "$file"
 done
 promtool test rules prometheus-rules-test.yml
-amtool check-config alertmanager.yml
+amtool check-config alertmanager.yml | tee "$scratch/check-config.txt"
+# nowhere, ntfy-pages, ntfy-tickets and the ticket receiver (OpenBao on the hub decision 76).
+grep -Fxq ' - 4 receivers' "$scratch/check-config.txt" || {
+  echo 'ASSERTION FAILED: amtool check-config must find 4 receivers' >&2
+  exit 1
+}
 
 amtool config routes test --config.file=alertmanager.yml \
   --verify.receivers=ntfy-tickets severity=warning

@@ -1,0 +1,15 @@
+# Managed by Ansible (roles/ticket_band). Edits here are overwritten.
+# The ticket receiver's pod: pfnet and nginx share its network, and only nginx's port is
+# published. Wants= and After= start the pod after the boot cleanup ends, whether or not the
+# cleanup succeeded (OpenBao on the hub decisions 23, 36 and 76).
+[Unit]
+Description=The ticket receiver's pod
+Wants=podman-boot-cleanup.service
+After=podman-boot-cleanup.service
+
+[Pod]
+PodName=ticket-receiver
+PublishPort=127.0.0.1:{{ ticket_band_receiver_port }}:{{ ticket_band_receiver_port }}
+
+[Install]
+WantedBy=default.target

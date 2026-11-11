@@ -50,7 +50,8 @@ hub_prometheus_image: quay.io/prometheus/prometheus@sha256:87861b8cf91579109319e
 # The port Prometheus is published on, on 127.0.0.1 only.
 hub_prometheus_port: 9090
 
-# The address inside Prometheus's container that pasta maps to the hub's loopback (decision #24).
+# The address inside Prometheus's and Alertmanager's containers that pasta maps to the hub's
+# loopback (decision #24).
 # Podman already uses 169.254.1.1 for DNS and 169.254.1.2 for host.containers.internal.
 hub_host_loopback: 169.254.1.3
 

@@ -6,11 +6,16 @@
   vars:
     ticket_band_user: tbtest
   tasks:
-    # The order hub.yml uses, without openbao_config between the two parts.
+    # The account part and then the account's own checks. This job has no OpenBao, no
+    # openbao-podman-secret and no passt, so the main tasks, which start the receiver pod, run
+    # here only in check mode, from check-mode.yml.
     - name: Prepare the band's account
       ansible.builtin.import_role:
         name: ticket_band
         tasks_from: account
-    - name: Run the band's service part
+    # verify's commands skip in check mode, and its asserts would then parse empty output.
+    - name: Verify the band's account
       ansible.builtin.import_role:
         name: ticket_band
+        tasks_from: verify
+      when: not ansible_check_mode

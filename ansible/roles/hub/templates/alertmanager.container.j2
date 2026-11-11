@@ -5,6 +5,7 @@ Description=Alertmanager, the hub's alert router
 [Container]
 ContainerName=alertmanager
 Image={{ hub_alertmanager_image }}
+Network=pasta:--map-host-loopback,{{ hub_host_loopback }}
 UserNS=keep-id:uid=65534,gid=65534
 PublishPort=127.0.0.1:{{ hub_alertmanager_port }}:9093
 Volume=/home/{{ hub_container_user }}/.config/alertmanager:/etc/alertmanager:ro,Z

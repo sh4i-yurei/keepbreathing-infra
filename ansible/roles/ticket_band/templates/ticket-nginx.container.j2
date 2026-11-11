@@ -1,0 +1,15 @@
+# Managed by Ansible (roles/ticket_band). Edits here are overwritten.
+# nginx in the receiver's pod, the only way in to pfnet (OpenBao on the hub decisions 23 and 76).
+[Unit]
+Description=nginx in front of the ticket receiver
+
+[Container]
+ContainerName=ticket-nginx
+Image={{ ticket_band_nginx_image }}
+Pod=ticket-receiver.pod
+LogDriver=journald
+Volume=/home/{{ ticket_band_user }}/.config/ticket-nginx/default.conf:/etc/nginx/conf.d/default.conf:ro,Z
+Volume=/home/{{ ticket_band_user }}/.config/ticket-nginx/htpasswd:/etc/nginx/htpasswd:ro,Z
+
+[Service]
+Restart=always

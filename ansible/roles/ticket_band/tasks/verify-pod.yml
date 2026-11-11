@@ -1,0 +1,38 @@
+---
+# What holds while OpenBao is down (OpenBao on the hub decision 76): the receiver's pod is active
+# for the account, and nginx refuses a post without the password. pfnet's /metrics is left out,
+# because pfnet can't start until OpenBao answers, and it retries until then (decision 24).
+- name: Ticket band | Read the account from the password database
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ ticket_band_user }}"
+
+- name: Ticket band | Check the receiver pod
+  block:
+    - name: Ticket band | Read whether the receiver pod is active
+      ansible.builtin.command:
+        argv: [systemctl, --user, is-active, ticket-receiver-pod.service]
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[ticket_band_user][1] }}"
+      register: ticket_band_pod_active
+      changed_when: false
+      failed_when: ticket_band_pod_active.stdout != 'active'
+
+    # Each container's unit starts after the pod's unit reports active, so nginx may not be
+    # listening yet.
+    - name: Ticket band | Wait for nginx to refuse a post without the password
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ticket_band_receiver_port }}/v1/webhook"
+        method: POST
+        status_code: [401]
+      register: ticket_band_pod_refusal
+      until: ticket_band_pod_refusal is succeeded
+      retries: 15
+      delay: 2
+
+  rescue:
+    - name: Ticket band | Require the active pod and nginx's refusal
+      ansible.builtin.fail:
+        msg: The receiver pod must be active and nginx must refuse a post without the password

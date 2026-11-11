@@ -48,6 +48,19 @@
   no_log: true
   notify: Restart alertmanager
 
+# The ticket receiver's password, which Alertmanager sends to the band's nginx with basic_auth
+# (OpenBao on the hub decision 76). The folder is mounted at /etc/alertmanager.
+- name: alertmanager-setup | Write the ticket receiver's password file
+  ansible.builtin.template:
+    src: alertmanager-ticket-receiver-password.j2
+    dest: "/home/{{ hub_container_user }}/.config/alertmanager/ticket-receiver-password"
+    owner: "{{ hub_container_user }}"
+    group: "{{ hub_container_user }}"
+    mode: "0600"
+  diff: false
+  no_log: true
+  notify: Restart alertmanager
+
 - name: alertmanager-setup | Write Alertmanager's Quadlet file
   ansible.builtin.template:
     src: alertmanager.container.j2

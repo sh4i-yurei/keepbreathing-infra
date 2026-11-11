@@ -1,6 +1,137 @@
 ---
-# The band's service part (OpenBao on the hub decision 75): the account's verify, once, after
-# openbao_config in hub.yml. The account part is tasks_from: account, which runs before it.
+# The band's service part (OpenBao on the hub decisions 72, 75 and 76): the account's verify, then
+# the receiver's pod, after openbao_config in hub.yml. The account part is tasks_from: account,
+# which runs before it. Every task that writes inside the account's home runs as the account
+# (decision 61), and every podman and systemctl command runs with the account's run directory.
 - name: Verify the ticket band account
   ansible.builtin.import_tasks: verify.yml
+  when: not ansible_check_mode
+
+# The account's uid comes from the password database, because the openbao-client driver runs these
+# tasks without the account part, and in a check run of a fresh account the account part's
+# registered values describe an account that doesn't exist yet.
+- name: Ticket band | Read the password database
+  ansible.builtin.getent:
+    database: passwd
+
+- name: Ticket band | Find the account in the password database
+  ansible.builtin.set_fact:
+    ticket_band_pod_entry: "{{ ansible_facts.getent_passwd[ticket_band_user] | default(none) }}"
+
+- name: Ticket band | Predict the receiver pod on a fresh check-mode account
+  ansible.builtin.import_tasks: predict-pod.yml
+  when: ansible_check_mode and ticket_band_pod_entry is none
+
+- name: Ticket band | Download the receiver pod's images
+  containers.podman.podman_image:
+    name: "{{ item }}"
+  become: true
+  become_user: "{{ ticket_band_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ticket_band_pod_entry[1] }}"
+  loop:
+    - "{{ ticket_band_receiver_image }}"
+    - "{{ ticket_band_nginx_image }}"
+  when: ticket_band_pod_entry is not none or not ansible_check_mode
+
+# The secret holds only the key's OpenBao path; pfnet's container reads the value when it is
+# created (decisions 17 and 72).
+- name: Ticket band | Keep the App key's OpenBao path in a Podman secret
+  ansible.builtin.include_role:
+    name: openbao_client
+    tasks_from: podman-secret
+  vars:
+    openbao_client_podman_account: "{{ ticket_band_user }}"
+    openbao_client_secret_name: ticket-band-app-key
+    openbao_client_secret_path: "{{ ticket_band_app_key_path }}"
+
+- name: Ticket band | Write the receiver pod's files
+  when: ticket_band_pod_entry is not none or not ansible_check_mode
+  block:
+    - name: Ticket band | Create the receiver pod's folders
+      ansible.builtin.file:
+        path: "/home/{{ ticket_band_user }}/{{ item }}"
+        state: directory
+        owner: "{{ ticket_band_user }}"
+        group: "{{ ticket_band_user }}"
+        mode: '0700'
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      loop:
+        - .config/containers/systemd
+        - .config/ticket-nginx
+
+    # nginx's master process reads its configuration, so the file can stay the account's alone.
+    - name: Ticket band | Write nginx's configuration
+      ansible.builtin.template:
+        src: ticket-nginx.conf.j2
+        dest: "/home/{{ ticket_band_user }}/.config/ticket-nginx/default.conf"
+        owner: "{{ ticket_band_user }}"
+        group: "{{ ticket_band_user }}"
+        mode: '0600'
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      register: ticket_band_nginx_config
+
+    # nginx's worker processes read the user file as "other" inside the container, so it is mode
+    # 0644 inside the folder of mode 0700 (decision 76).
+    - name: Ticket band | Write nginx's user file
+      ansible.builtin.template:
+        src: ticket-nginx-htpasswd.j2
+        dest: "/home/{{ ticket_band_user }}/.config/ticket-nginx/htpasswd"
+        owner: "{{ ticket_band_user }}"
+        group: "{{ ticket_band_user }}"
+        mode: '0644'
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      no_log: true
+      diff: false
+      register: ticket_band_nginx_users
+
+    - name: Ticket band | Write the receiver pod's Quadlet files
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/home/{{ ticket_band_user }}/.config/containers/systemd/{{ item }}"
+        owner: "{{ ticket_band_user }}"
+        group: "{{ ticket_band_user }}"
+        mode: '0644'
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      loop:
+        - ticket-receiver.pod
+        - ticket-pfnet.container
+        - ticket-nginx.container
+      register: ticket_band_quadlet
+
+# Quadlet makes units only when the account's manager reloads, so a changed Quadlet file reloads
+# it before the pod starts. A changed file restarts the pod, and its containers stop and start
+# with it.
+- name: Ticket band | Start the receiver pod
+  ansible.builtin.systemd_service:
+    name: ticket-receiver-pod.service
+    state: >-
+      {{ 'restarted' if (ticket_band_quadlet is changed or ticket_band_nginx_config is changed or
+                         ticket_band_nginx_users is changed) else 'started' }}
+    daemon_reload: "{{ ticket_band_quadlet is changed }}"
+    scope: user
+  become: true
+  become_user: "{{ ticket_band_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ticket_band_pod_entry[1] }}"
+  when: not ansible_check_mode
+
+# A running container keeps the secret's value it was created with.
+- name: Ticket band | Restart pfnet after its secret changed
+  ansible.builtin.systemd_service:
+    name: ticket-pfnet.service
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ ticket_band_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ticket_band_pod_entry[1] }}"
+  when: openbao_client_secret_changed | bool and not ansible_check_mode
+
+- name: Verify the receiver pod
+  ansible.builtin.import_tasks: verify-pod.yml
   when: not ansible_check_mode

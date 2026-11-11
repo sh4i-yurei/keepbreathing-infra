@@ -1,0 +1,17 @@
+---
+- name: Run the ticket band's receiver pod for tbclient
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ticket_band_user: tbclient
+    ticket_band_receiver_port: 18083
+    ticket_band_app_id: 1
+    ticket_band_installation_id: 1
+    ticket_band_app_key_path: tbsvc/app-key
+    # The bcrypt hash of the fixed test password tb-driver-pass.
+    ticket_band_receiver_password_hash: "$2b$10$07OvoxxQhWf/2H3y8DTwH.EzEWrwoMrzUKB8PyEyjIwfJ5o6Mwxj."
+  tasks:
+    - name: Run the band's service part for tbclient, after openbao_config gave tbsvc its AppRole
+      ansible.builtin.import_role:
+        name: ticket_band

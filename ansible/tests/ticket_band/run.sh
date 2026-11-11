@@ -85,6 +85,24 @@ changed_task "$work/role.log" 'Ticket band | Write boot cleanup unit'
 changed_task "$work/role.log" 'OpenBao client | Predict the default Podman secret driver' openbao_client
 if id -u "$user" >/dev/null 2>&1; then fail 'check mode created tbtest'; fi
 
+# The account part and then the main tasks, in check mode for an account that doesn't exist yet,
+# report the account's files and the receiver pod's three Quadlet files, and make nothing.
+play check-mode --check --diff
+changed_task "$work/check-mode.log" 'Ticket band | Create the account'
+changed_task "$work/check-mode.log" 'Ticket band | Write transient storage configuration'
+changed_task "$work/check-mode.log" 'Ticket band | Write boot cleanup unit'
+changed_task "$work/check-mode.log" 'OpenBao client | Predict the default Podman secret driver' openbao_client
+python3 - "$work/check-mode.log" <<'PY' || { tail -45 "$work/check-mode.log"; fail 'check mode must report the three Quadlet files as changed'; }
+import pathlib, re, sys
+log = pathlib.Path(sys.argv[1]).read_text()
+header = "TASK [ticket_band : Ticket band | Write the receiver pod's Quadlet files]"
+assert header in log, 'the log names no Quadlet file task'
+section = log.split(header, 1)[1].split('\nTASK [', 1)[0]
+for name in ('ticket-receiver.pod', 'ticket-pfnet.container', 'ticket-nginx.container'):
+    assert re.search(r'^changed: \[localhost\] => \(item=' + re.escape(name) + r'\)', section, re.MULTILINE), (name, section)
+PY
+if id -u "$user" >/dev/null 2>&1; then fail 'check mode of the main tasks created tbtest'; fi
+
 play role
 python3 - "$config" "$user" <<'PY' || fail 'storage configuration must match and belong to tbtest'
 import configparser, os, pathlib, pwd, sys

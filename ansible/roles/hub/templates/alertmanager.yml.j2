@@ -5,7 +5,11 @@
 # alertmanager template, at its default priority 3. Everything else, such as info, goes to a receiver
 # with no destination. Notices about the ticket band's own health, labelled band_health="true", go
 # to the tickets topic first, grouped so each alert is its own notice, and never page whatever their
-# severity (OpenBao on the hub decisions 24, 41 and 59).
+# severity (OpenBao on the hub decisions 24, 41 and 59). The ticket receiver is the band's pod
+# behind nginx, reached through pasta's mapping of the hub's loopback and Alertmanager's password;
+# no route sends to it yet (decision 76). Its URL is written out because CI checks this template
+# unrendered, and test_ticket_receiver_url.py keeps it equal to hub_host_loopback and the band's
+# port.
 route:
   receiver: nowhere
   routes:
@@ -34,3 +38,11 @@ receivers:
         http_config:
           authorization:
             credentials_file: /etc/alertmanager/ntfy-token
+  - name: ticket
+    webhook_configs:
+      - url: "http://169.254.1.3:8083/v1/webhook"
+        send_resolved: true
+        http_config:
+          basic_auth:
+            username: alertmanager
+            password_file: /etc/alertmanager/ticket-receiver-password

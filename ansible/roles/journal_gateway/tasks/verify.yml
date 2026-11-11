@@ -84,6 +84,7 @@
         that:
           - journal_gateway_socket_status.status.ActiveState == 'active'
           - journal_gateway_socket_status.status.UnitFileState == 'enabled'
+          - journal_gateway_socket_status.status.FreeBind == 'yes'
         quiet: true
 
     - name: verify | Read permanent rich rules

@@ -2,9 +2,10 @@
 
 Item 4.4's Alertmanager route for failed sends to the ticket receiver, the hub role's copy of the
 band's port, Prometheus's scrape job for the receiver, and the two verify conditions decision 77
-sets; and item 4.5's route for the morning digest's failed unit (decision 79). amtool can't test a
-route's grouping, and the verify conditions only run on the hub, so these read the files and
-evaluate them the way Ansible does.
+sets; item 4.5's route for the morning digest's failed unit (decision 79); and item 4.6's warning
+route to the ticket receiver. amtool can't test a route's grouping or repeat interval, and the
+verify conditions only run on the hub, so these read the files and evaluate them the way Ansible
+does.
 """
 
 from pathlib import Path
@@ -217,3 +218,25 @@ def test_the_digest_failed_unit_routes_to_tickets_after_the_ticket_route():
         < position
         < first_severity
     )
+
+
+def test_warning_route_sends_one_ticket_per_alert_with_a_daily_repeat():
+    routes = read(ROLE / "templates/alertmanager.yml.j2")["route"]["routes"]
+    warnings = [
+        route for route in routes if route.get("matchers") == ['severity="warning"']
+    ]
+    assert warnings == [
+        {
+            "matchers": ['severity="warning"'],
+            "receiver": "ticket",
+            "group_by": ["..."],
+            "repeat_interval": "1d",
+        }
+    ]
+    assert routes[-1] == warnings[0]
+    assert [route["matchers"] for route in routes[:3]] == [
+        ['band_health="true"'],
+        ['receiver_name="ticket"'],
+        ['name="ticket-digest.service"'],
+    ]
+    assert [route for route in routes if route.get("receiver") == "ticket"] == warnings

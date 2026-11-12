@@ -1,13 +1,14 @@
 # Managed by Ansible (roles/hub). Edits here are overwritten.
 # Alerts labelled severity="page" or "critical" go to ntfy's pages topic through alertmanager-page,
 # the role's copy of ntfy's alertmanager template with priority 5 (Monitoring and alerting decisions
-# #14, #22, #27 and #35). severity="warning" goes to the tickets topic through ntfy's built-in
-# alertmanager template, at its default priority 3. Everything else, such as info, goes to a receiver
-# with no destination. Notices about the ticket band's own health, labelled band_health="true", go
+# #14, #22, #27 and #35). severity="warning" goes to the ticket receiver, the band's pod behind
+# nginx reached through pasta's mapping of the hub's loopback and Alertmanager's password, with one
+# issue per alert and a daily repeat (OpenBao on the hub decisions 20 and 30). Everything else, such
+# as info, goes to a receiver with no destination. Notices about the ticket band's own health,
+# labelled band_health="true", go
 # to the tickets topic first, grouped so each alert is its own notice, and never page whatever their
-# severity (OpenBao on the hub decisions 24, 41 and 59). The ticket receiver is the band's pod
-# behind nginx, reached through pasta's mapping of the hub's loopback and Alertmanager's password;
-# no route sends to it yet (decision 76). Alerts about failed sends to it carry
+# severity (OpenBao on the hub decisions 24, 41 and 59). Alerts about failed sends to the ticket
+# receiver carry
 # receiver_name="ticket", because Alertmanager runs with receiver-name-in-metrics, and go to the
 # tickets topic next, grouped the same way, whatever their severity (decisions 29, 40 and 41). Its
 # URL is written out because CI checks this template unrendered, and test_ticket_receiver_url.py
@@ -34,7 +35,9 @@ route:
       receiver: ntfy-pages
     - matchers:
         - severity="warning"
-      receiver: ntfy-tickets
+      receiver: ticket
+      group_by: ['...']
+      repeat_interval: 1d
 
 receivers:
   - name: nowhere

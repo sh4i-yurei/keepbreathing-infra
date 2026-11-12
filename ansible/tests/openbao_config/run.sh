@@ -1326,9 +1326,9 @@ PY
 # text in OpenBao's error. A sign-in that succeeds keeps its OpenBao token in the named variable and
 # a .token file. A mismatch prints only the status and OpenBao's errors, never a token.
 issued_index=0
-jwt_login() {
-  local role=$1 expected=$2 text=${3:-} token_name=${4:-} status
-  status=$(JWT_FILE=$token_file JWT_ROLE=$role python3 - "$work/jwt-login.json" <<'PY'
+jwt_request() {
+  local role=$1
+  JWT_FILE=$token_file JWT_ROLE=$role python3 - "$work/jwt-login.json" <<'PY'
 import json, os, sys, urllib.error, urllib.request
 body = json.dumps({'role': os.environ['JWT_ROLE'], 'jwt': open(os.environ['JWT_FILE']).read()}).encode()
 request = urllib.request.Request('http://127.0.0.1:8200/v1/auth/jwt/login', data=body, method='POST',
@@ -1342,7 +1342,10 @@ with open(sys.argv[1], 'wb') as stream:
     stream.write(content)
 print(code)
 PY
-)
+}
+jwt_login() {
+  local role=$1 expected=$2 text=${3:-} token_name=${4:-} status
+  status=$(jwt_request "$role")
   if [[ $status != "$expected" ]]; then
     python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("errors"))' "$work/jwt-login.json" >&2 || true
     fail "a $role sign-in must answer $expected, got $status"
@@ -1361,6 +1364,43 @@ PY
     python3 -c 'import json,sys; open(sys.argv[2], "w").write(json.load(open(sys.argv[1]))["auth"]["client_token"])' \
       "$work/jwt-login.json" "$work/issued-$issued_index.token"
     printf -v "$token_name" '%s' "$(<"$work/issued-$issued_index.token")"
+  fi
+}
+login_row() {
+  local label=$1 role=$2 either=${3:-} status detail
+  status=$(jwt_request "$role")
+  detail=$(python3 - "$work/jwt-login.json" "$status" "$work" <<'PY'
+import json, pathlib, sys
+answer, status, folder = json.load(open(sys.argv[1])), sys.argv[2], pathlib.Path(sys.argv[3])
+if status == '200':
+    print(' '.join(answer['auth']['policies']))
+else:
+    print('; '.join(answer.get('errors') or []))
+PY
+)
+  if [[ $status == 200 ]]; then
+    issued_index=$((issued_index + 1))
+    python3 -c 'import json,sys; open(sys.argv[2], "w").write(json.load(open(sys.argv[1]))["auth"]["client_token"])' \
+      "$work/jwt-login.json" "$work/issued-$issued_index.token"
+    local row_token
+    row_token=$(<"$work/issued-$issued_index.token")
+    revoke_jwt_token row_token
+  elif [[ $either == either && $detail == 'error validating claims: claim '* ]]; then
+    detail='error validating claims'
+  fi
+  printf '%s %s: %s\n' "$status" "$label" "$detail" >>"$login_rows"
+}
+reach_row() {
+  local label=$1 status method=$2 path=$3
+  shift
+  status=$(api "$@")
+  printf '%s %s\n' "$status" "$label" >>"$reach_rows"
+  if [[ $status == 200 && $method == GET && $path == secret/data/* ]]; then
+    python3 - "$work/api.json" "${path#secret/data/}" <<'PY' || fail "$label must read the value keepbreath0 wrote"
+import json, sys
+actual = json.load(open(sys.argv[1]))['data']['data']
+assert actual == {'value': sys.argv[2]}, actual
+PY
   fi
 }
 # api_expect for calls whose answer may hold a token or a key: a mismatch prints only OpenBao's errors.
@@ -1897,6 +1937,237 @@ for path in "${bad_extra_paths[@]}"; do
   play_fails approle-bad-extra role "$bad_extra_message" "${jwt_args[@]}" -e "$extra_consumer"
   refused_before_sign_in "$last_play_log" "a consumer's extra path ${path@Q}"
 done
+# 3.5f reads the two hub entries themselves, beside the writer fixture's unchanged stand-ins.
+jwt_roles_hub=$work/jwt-roles-hub.json
+python3 - "$jwt_roles_writer" host_vars/hub.yml "$jwt_roles_hub" <<'PY'
+import json, sys, yaml
+roles = json.load(open(sys.argv[1]))
+hub = yaml.safe_load(open(sys.argv[2]))
+roles['openbao_jwt_roles'].extend(
+    role for role in hub['openbao_jwt_roles'] if role['name'] in ('iac-bake', 'iac-sweep'))
+json.dump(roles, open(sys.argv[3], 'w'))
+PY
+hub_args=(-e "@$full_list" -e "$both_keys" -e "@$jwt_settings" -e "@$jwt_roles_hub")
+play role --check --diff "${hub_args[@]}"
+recap "$last_play_log" 2
+for name in iac-bake iac-sweep; do
+  reports "$last_play_log" "openbao_config would write the policy $name"
+  reports "$last_play_log" "openbao_config would write the JWT role $name"
+done
+for name in test-plan test-durable test-short; do
+  reports_not "$last_play_log" "openbao_config would write the policy $name"
+  reports_not "$last_play_log" "openbao_config would write the JWT role $name"
+done
+api_expect 404 'check mode leaves iac-bake policy absent' GET sys/policies/acl/iac-bake admin_token
+api_expect 404 'check mode leaves iac-sweep role absent' GET auth/jwt/role/iac-sweep admin_token
+play role "${hub_args[@]}"
+recap "$last_play_log" 2
+changed_in_loop "$last_play_log" 'OpenBao config | Write each JWT role policy'
+changed_in_loop "$last_play_log" 'OpenBao config | Write each JWT role'
+jwt_role_is iac-bake '{"repository_id":"1368108961","workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/bake.yml@refs/heads/main"}'
+jwt_role_is iac-sweep '{"repository_id":"1368108961","workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/sweep.yml@refs/heads/main","event_name":"schedule"}'
+jwt_policy_is iac-bake
+api_expect 200 'iac-sweep policy read' GET sys/policies/acl/iac-sweep admin_token
+python3 - "$work/api.json" <<'PY' || fail "iac-sweep's policy must match decisions 84 and 90 exactly"
+import json, sys
+live = json.load(open(sys.argv[1]))['data']['policy']
+wanted = ('path "transit/datakey/plaintext/tofu-short-lived" {\n  capabilities = ["update"]\n}\n'
+          'path "transit/decrypt/tofu-short-lived" {\n  capabilities = ["update"]\n}\n'
+          'path "auth/token/lookup-self" {\n  capabilities = ["read"]\n}\n'
+          'path "secret/data/iac-sweep/*" {\n  capabilities = ["read"]\n}\n'
+          'path "secret/data/iac-short-lived/digitalocean-token" {\n  capabilities = ["read"]\n}\n'
+          'path "secret/data/iac-short-lived/cloudflare-token" {\n  capabilities = ["read"]\n}\n'
+          'path "secret/data/iac-short-lived/state-store-access-key-id" {\n  capabilities = ["read"]\n}\n'
+          'path "secret/data/iac-short-lived/state-store-secret-access-key" {\n  capabilities = ["read"]\n}\n')
+assert live == wanted, (live, wanted)
+PY
+play role "${hub_args[@]}"
+recap "$last_play_log" 0
+play verify "${hub_args[@]}"
+play role --check --diff "${hub_args[@]}"
+recap "$last_play_log" 0
+
+bake_claims='{"sub":"repo:sh4i-yurei/keepbreathing-infra:ref:refs/heads/main","repository_id":"1368108961","workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/bake.yml@refs/heads/main","event_name":"workflow_dispatch"}'
+sweep_claims='{"sub":"repo:sh4i-yurei/keepbreathing-infra:ref:refs/heads/main","repository_id":"1368108961","workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/sweep.yml@refs/heads/main","event_name":"schedule"}'
+login_rows=$work/login-rows.txt
+: >"$login_rows"
+sign_token "$work/issuer-one.pem" one "$bake_claims"
+login_row 'bake.yml on main, run by hand' iac-bake
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"event_name":"push"}'
+login_row 'bake.yml on main, on a push' iac-bake
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/bake.yml@refs/heads/feature"}'
+login_row 'bake.yml on a branch' iac-bake
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/bake.yml@refs/pull/1/merge"}'
+login_row 'bake.yml in a pull request' iac-bake
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/other.yml@refs/heads/main"}'
+login_row 'another file on main as iac-bake' iac-bake
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"workflow_ref":null}'
+login_row 'no workflow_ref as iac-bake' iac-bake
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"repository_id":1368108961}'
+login_row 'a numeric repository_id as iac-bake' iac-bake
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"repository_id":"1305427147"}'
+login_row 'the site repository as iac-bake' iac-bake
+sign_token "$work/issuer-one.pem" one "$sweep_claims"
+login_row 'sweep.yml on main, on its schedule' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"event_name":"workflow_dispatch"}'
+login_row 'sweep.yml on main, run by hand' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"event_name":"push"}'
+login_row 'sweep.yml on main, on a push' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"event_name":null}'
+login_row 'no event_name as iac-sweep' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/sweep.yml@refs/heads/feature"}'
+login_row 'sweep.yml on a branch' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/other.yml@refs/heads/main"}'
+login_row 'another file on main as iac-sweep' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"workflow_ref":null}'
+login_row 'no workflow_ref as iac-sweep' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"repository_id":1368108961}'
+login_row 'a numeric repository_id as iac-sweep' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims" '{"repository_id":"1305427147"}'
+login_row 'the site repository as iac-sweep' iac-sweep
+sign_token "$work/issuer-one.pem" one "$bake_claims" '{"event_name":"schedule"}'
+login_row 'bake.yml on its schedule as iac-sweep' iac-sweep
+sign_token "$work/issuer-one.pem" one "$sweep_claims"
+login_row 'the sweep token as iac-bake' iac-bake
+login_row 'the sweep token as test-durable' test-durable
+sign_token "$work/issuer-one.pem" one "$bake_claims"
+login_row 'the bake token as test-durable' test-durable
+sign_token "$work/issuer-one.pem" one "$plan_claims"
+login_row 'the test-plan token as iac-bake' iac-bake
+sign_token "$work/issuer-one.pem" one "$durable_claims"
+login_row 'the test-durable token as iac-bake' iac-bake
+login_row 'the test-durable token as iac-sweep' iac-sweep either
+sign_token "$work/issuer-one.pem" one "$bake_claims"
+login_row 'the bake token as iac-sweep' iac-sweep either
+login_row 'the bake token as test-short' test-short either
+sign_token "$work/issuer-one.pem" one "$sweep_claims"
+login_row 'the sweep token as test-short' test-short either
+sign_token "$work/issuer-one.pem" one "$plan_claims"
+login_row 'the test-plan token as iac-sweep' iac-sweep either
+sign_token "$work/issuer-one.pem" one "$short_claims"
+login_row 'the test-short token as iac-bake' iac-bake either
+login_row 'the test-short token as iac-sweep' iac-sweep either
+diff - "$login_rows" <<'ROWS' || fail 'every iac-bake and iac-sweep sign-in must answer as decisions 84 and 90 say'
+200 bake.yml on main, run by hand: iac-bake
+200 bake.yml on main, on a push: iac-bake
+400 bake.yml on a branch: error validating claims: claim "workflow_ref" does not match any associated bound claim values
+400 bake.yml in a pull request: error validating claims: claim "workflow_ref" does not match any associated bound claim values
+400 another file on main as iac-bake: error validating claims: claim "workflow_ref" does not match any associated bound claim values
+400 no workflow_ref as iac-bake: error validating claims: claim "workflow_ref" is missing
+400 a numeric repository_id as iac-bake: error validating claims: claim "repository_id" does not match any associated bound claim values
+400 the site repository as iac-bake: error validating claims: claim "repository_id" does not match any associated bound claim values
+200 sweep.yml on main, on its schedule: iac-sweep
+400 sweep.yml on main, run by hand: error validating claims: claim "event_name" does not match any associated bound claim values
+400 sweep.yml on main, on a push: error validating claims: claim "event_name" does not match any associated bound claim values
+400 no event_name as iac-sweep: error validating claims: claim "event_name" is missing
+400 sweep.yml on a branch: error validating claims: claim "workflow_ref" does not match any associated bound claim values
+400 another file on main as iac-sweep: error validating claims: claim "workflow_ref" does not match any associated bound claim values
+400 no workflow_ref as iac-sweep: error validating claims: claim "workflow_ref" is missing
+400 a numeric repository_id as iac-sweep: error validating claims: claim "repository_id" does not match any associated bound claim values
+400 the site repository as iac-sweep: error validating claims: claim "repository_id" does not match any associated bound claim values
+400 bake.yml on its schedule as iac-sweep: error validating claims: claim "workflow_ref" does not match any associated bound claim values
+400 the sweep token as iac-bake: error validating claims: claim "workflow_ref" does not match any associated bound claim values
+400 the sweep token as test-durable: error validating claims: claim "environment" is missing
+400 the bake token as test-durable: error validating claims: claim "environment" is missing
+400 the test-plan token as iac-bake: error validating claims: claim "workflow_ref" is missing
+400 the test-durable token as iac-bake: error validating claims: claim "workflow_ref" is missing
+400 the test-durable token as iac-sweep: error validating claims
+400 the bake token as iac-sweep: error validating claims
+400 the bake token as test-short: error validating claims
+400 the sweep token as test-short: error validating claims
+400 the test-plan token as iac-sweep: error validating claims
+400 the test-short token as iac-bake: error validating claims
+400 the test-short token as iac-sweep: error validating claims
+ROWS
+
+for entry in \
+  iac-bake/digitalocean-token iac-sweep/token \
+  iac-short-lived/digitalocean-token iac-short-lived/cloudflare-token \
+  iac-short-lived/state-store-access-key-id iac-short-lived/state-store-secret-access-key \
+  iac-short-lived/token iac-short-lived/digitalocean-token-old \
+  iac-short-lived/1305427147/access-service-token \
+  iac-short-lived/1305427147/access-service-token-id; do
+  body=$(python3 -c 'import json,sys; print(json.dumps({"data":{"value":sys.argv[1]}}))' "$entry")
+  api_expect 200 "keepbreath0 writes $entry" POST "secret/data/$entry" admin_token "$body"
+done
+sign_token "$work/issuer-one.pem" one "$bake_claims"
+jwt_login iac-bake 200 '' bake_token
+jwt_token_is bake_token iac-bake
+sign_token "$work/issuer-one.pem" one "$sweep_claims"
+jwt_login iac-sweep 200 '' sweep_token
+jwt_token_is sweep_token iac-sweep
+reach_rows=$work/reach-rows.txt
+: >"$reach_rows"
+reach_row 'bake reads its own folder' GET secret/data/iac-bake/digitalocean-token bake_token
+reach_row 'bake writes its own folder' POST secret/data/iac-bake/digitalocean-token bake_token '{"data":{"value":"x"}}'
+reach_row 'bake lists its own folder' LIST secret/metadata/iac-bake bake_token
+reach_row 'bake reads a short-lived provider token' GET secret/data/iac-short-lived/digitalocean-token bake_token
+reach_row 'bake reads the iac-sweep folder' GET secret/data/iac-sweep/token bake_token
+reach_row 'bake reads the test-plan folder' GET secret/data/test-plan/token bake_token
+reach_row 'bake makes a data key under tofu-durable' POST transit/datakey/plaintext/tofu-durable bake_token
+reach_row 'bake makes a data key under tofu-short-lived' POST transit/datakey/plaintext/tofu-short-lived bake_token
+reach_row 'bake makes a child token' POST auth/token/create bake_token '{}'
+reach_row 'sweep reads the DigitalOcean token' GET secret/data/iac-short-lived/digitalocean-token sweep_token
+reach_row 'sweep reads the Cloudflare token' GET secret/data/iac-short-lived/cloudflare-token sweep_token
+reach_row 'sweep reads the state-store access key ID' GET secret/data/iac-short-lived/state-store-access-key-id sweep_token
+reach_row 'sweep reads the state-store secret key' GET secret/data/iac-short-lived/state-store-secret-access-key sweep_token
+reach_row 'sweep reads its own folder' GET secret/data/iac-sweep/token sweep_token
+reach_row 'sweep makes a data key under tofu-short-lived' POST transit/datakey/plaintext/tofu-short-lived sweep_token
+cp "$work/api.json" "$work/sweep-datakey.json"
+decrypt_body=$(python3 -c 'import json,sys; print(json.dumps({"ciphertext":(json.load(open(sys.argv[1])).get("data") or {}).get("ciphertext", "")}))' "$work/sweep-datakey.json")
+reach_row 'sweep decrypts under tofu-short-lived' POST transit/decrypt/tofu-short-lived sweep_token "$decrypt_body"
+if [[ $(tail -1 "$reach_rows") == '200 sweep decrypts under tofu-short-lived' ]]; then
+  python3 - "$work/sweep-datakey.json" "$work/api.json" <<'PY' || fail 'sweep must decrypt the same data key OpenBao made'
+import json, sys
+made = json.load(open(sys.argv[1]))['data']['plaintext']
+decrypted = json.load(open(sys.argv[2]))['data']['plaintext']
+assert decrypted == made
+PY
+fi
+reach_row 'sweep makes a data key under tofu-durable' POST transit/datakey/plaintext/tofu-durable sweep_token
+reach_row 'sweep decrypts under tofu-durable' POST transit/decrypt/tofu-durable sweep_token "$decrypt_body"
+reach_row 'sweep writes a provider token' POST secret/data/iac-short-lived/digitalocean-token sweep_token '{"data":{"value":"x"}}'
+reach_row 'sweep writes a state-store entry' POST secret/data/iac-short-lived/state-store-access-key-id sweep_token '{"data":{"value":"x"}}'
+reach_row 'sweep reads a site service token' GET secret/data/iac-short-lived/1305427147/access-service-token sweep_token
+reach_row 'sweep reads a site client ID' GET secret/data/iac-short-lived/1305427147/access-service-token-id sweep_token
+reach_row 'sweep reads another short-lived entry' GET secret/data/iac-short-lived/token sweep_token
+reach_row 'sweep reads a suffixed name' GET secret/data/iac-short-lived/digitalocean-token-old sweep_token
+reach_row 'sweep lists iac-short-lived' LIST secret/metadata/iac-short-lived sweep_token
+reach_row "sweep reads a provider token's metadata" GET secret/metadata/iac-short-lived/digitalocean-token sweep_token
+reach_row 'sweep reads the iac-bake folder' GET secret/data/iac-bake/digitalocean-token sweep_token
+reach_row 'sweep makes a child token' POST auth/token/create sweep_token '{}'
+diff - "$reach_rows" <<'ROWS' || fail 'each iac-bake and iac-sweep token must reach only decisions 84 and 90s paths'
+200 bake reads its own folder
+403 bake writes its own folder
+403 bake lists its own folder
+403 bake reads a short-lived provider token
+403 bake reads the iac-sweep folder
+403 bake reads the test-plan folder
+403 bake makes a data key under tofu-durable
+403 bake makes a data key under tofu-short-lived
+403 bake makes a child token
+200 sweep reads the DigitalOcean token
+200 sweep reads the Cloudflare token
+200 sweep reads the state-store access key ID
+200 sweep reads the state-store secret key
+200 sweep reads its own folder
+200 sweep makes a data key under tofu-short-lived
+200 sweep decrypts under tofu-short-lived
+403 sweep makes a data key under tofu-durable
+403 sweep decrypts under tofu-durable
+403 sweep writes a provider token
+403 sweep writes a state-store entry
+403 sweep reads a site service token
+403 sweep reads a site client ID
+403 sweep reads another short-lived entry
+403 sweep reads a suffixed name
+403 sweep lists iac-short-lived
+403 sweep reads a provider token's metadata
+403 sweep reads the iac-bake folder
+403 sweep makes a child token
+ROWS
+revoke_jwt_token bake_token
+revoke_jwt_token sweep_token
 stop_issuer
 no_ansible_tokens '3.5b cases'
 

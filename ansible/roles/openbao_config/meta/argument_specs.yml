@@ -67,6 +67,18 @@ argument_specs:
           token_ttl:
             type: int
             default: 1800
+          extra_paths:
+            type: list
+            elements: dict
+            default: []
+            options:
+              path:
+                type: str
+                required: true
+              capabilities:
+                type: list
+                elements: str
+                required: true
       openbao_jwt_issuer:
         type: str
         default: https://token.actions.githubusercontent.com

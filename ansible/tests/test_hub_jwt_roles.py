@@ -40,6 +40,16 @@ def test_iac_durable_binds_the_repository_and_the_durable_environment():
         "name": "iac-durable",
         "bound_claims": {"repository_id": REPOSITORY_ID, "environment": "durable"},
         "transit_keys": ["tofu-durable"],
+        "extra_paths": [
+            {
+                "path": "secret/data/iac-short-lived/+/access-service-token",
+                "capabilities": ["create", "update", "delete"],
+            },
+            {
+                "path": "secret/data/iac-short-lived/+/access-service-token-id",
+                "capabilities": ["create", "update", "delete"],
+            },
+        ],
     }
     assert all(isinstance(value, str) for value in role["bound_claims"].values())
 

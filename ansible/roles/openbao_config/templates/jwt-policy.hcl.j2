@@ -1,0 +1,19 @@
+{% for key in openbao_config_jwt_role.transit_keys %}
+path {{ ('transit/datakey/plaintext/' ~ key) | to_json }} {
+  capabilities = ["update"]
+}
+path {{ ('transit/decrypt/' ~ key) | to_json }} {
+  capabilities = ["update"]
+}
+{% endfor %}
+path {{ 'auth/token/lookup-self' | to_json }} {
+  capabilities = ["read"]
+}
+path {{ ('secret/data/' ~ openbao_config_jwt_role.name ~ '/*') | to_json }} {
+  capabilities = ["read"]
+}
+{% for extra in openbao_config_jwt_role.extra_paths | default([]) %}
+path {{ extra.path | to_json }} {
+  capabilities = [{{ extra.capabilities | map('to_json') | join(', ') }}]
+}
+{% endfor %}

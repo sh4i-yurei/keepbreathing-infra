@@ -385,6 +385,7 @@ def test_full_digest_posts_open_then_recent_closed_tickets(setup, github, ntfy):
         "repositories": ["platform-tickets"],
         "permissions": {"issues": "read"},
     }
+    assert token_request.headers.get("Content-Type") == "application/json"
     assert open_list.path == REPO_ISSUES
     assert open_list.query == {
         "state": ["open"],
@@ -417,6 +418,55 @@ def test_full_digest_posts_open_then_recent_closed_tickets(setup, github, ntfy):
     assert post.headers.get("Title") == "Tickets: 1 open, 1 closed in the last day"
     assert post.body.decode("utf-8") == f"{line(ticket)}\n{line(ticket)}"
     assert "/pull/" not in post.body.decode("utf-8")
+
+
+def test_tickets_on_every_page_of_a_list_are_listed(setup, github, ntfy):
+    first, second = closed(numbered(214), 1), closed(numbered(216), 2)
+    github.pages["closed"] = [[first], [second]]
+
+    assert run(setup.path) == (0, "", "")
+    assert github.calls().count(("GET", SECOND_PAGE)) == 1
+    assert posts(ntfy) == [
+        (
+            "/tickets",
+            "Tickets: 0 open, 2 closed in the last day",
+            f"{line(first)}\n{line(second)}",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("link", "followed"),
+    [
+        ('<{page}>; rel="prev next"', True),
+        ('<{page}>;rel="next"', True),
+        ('<{page}>; rel="next https://example.com/relation?kind=page"', True),
+        ('<{page}>; rel="Xnext"', False),
+    ],
+    ids=[
+        "two-relation-types",
+        "no-space-after-semicolon",
+        "relation-type-holding-equals",
+        "near-miss-relation",
+    ],
+)
+def test_the_next_page_is_the_link_whose_relation_types_include_next(
+    setup, github, ntfy, link, followed
+):
+    first, second = closed(numbered(214), 1), closed(numbered(216), 2)
+    github.pages["closed"] = [[first], [second]]
+    github.links[("closed", 0)] = link.format(page=f"{github.address}{SECOND_PAGE}")
+    listed = [first, second] if followed else [first]
+
+    assert run(setup.path) == (0, "", "")
+    assert github.calls().count(("GET", SECOND_PAGE)) == int(followed)
+    assert posts(ntfy) == [
+        (
+            "/tickets",
+            f"Tickets: 0 open, {len(listed)} closed in the last day",
+            "\n".join(line(item) for item in listed),
+        )
+    ]
 
 
 def test_quiet_day_with_both_lists_empty_sends_nothing(setup, github, ntfy):

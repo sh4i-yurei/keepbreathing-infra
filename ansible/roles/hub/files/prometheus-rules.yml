@@ -25,11 +25,13 @@ groups:
             {{ $labels.instance }} has only {{ printf "%.2f" $value }}% available space left and is
             filling up.
 
-  # Any scrape target down for 5 minutes pages (Monitoring and alerting decision #33).
+  # Every scrape target except the ticket receiver pages when down for 5 minutes (Monitoring and
+  # alerting decision #33). The ticket receiver's own alert is TicketDeliveryDown (OpenBao on the
+  # hub decision 24).
   - name: targets
     rules:
       - alert: TargetDown
-        expr: up == 0
+        expr: up{job!="ticket-receiver"} == 0
         for: 5m
         labels:
           severity: page
@@ -108,3 +110,16 @@ groups:
           description: >-
             OpenBao on the hub is sealed, down or unreachable through svc:openbao. Services
             can't fetch their secrets from it until it is back.
+
+      - alert: TicketDeliveryDown
+        expr: up{job="ticket-receiver"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          band_health: "true"
+        annotations:
+          summary: The ticket receiver has not answered Prometheus for 5 minutes.
+          description: >-
+            The ticket band's receiver on the hub is stopped, held back at boot or not
+            answering through nginx on {{ $labels.instance }}. Alertmanager can't deliver tickets to
+            it until it is back.

@@ -67,4 +67,23 @@ amtool config routes test --config.file=alertmanager.yml \
 amtool config routes test --config.file=alertmanager.yml \
   --verify.receivers=ntfy-tickets severity=page band_health=true
 
+# Failed sends to the ticket receiver go to the tickets topic whatever their severity, and failed
+# sends to ntfy's own receivers keep their severity routes (OpenBao on the hub decisions 29 and 40).
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  alertname=AlertmanagerClusterFailedToSendAlerts severity=critical receiver_name=ticket
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  alertname=AlertmanagerClusterFailedToSendAlerts severity=warning receiver_name=ticket
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  alertname=AlertmanagerFailedToSendAlerts severity=warning receiver_name=ticket
+for receiver in ntfy-pages ntfy-tickets; do
+  amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-pages \
+    alertname=AlertmanagerClusterFailedToSendAlerts severity=critical "receiver_name=$receiver"
+  amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+    alertname=AlertmanagerClusterFailedToSendAlerts severity=warning "receiver_name=$receiver"
+  amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+    alertname=AlertmanagerFailedToSendAlerts severity=warning "receiver_name=$receiver"
+done
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  alertname=TicketDeliveryDown severity=warning band_health=true
+
 echo 'hub rules: all checks passed'

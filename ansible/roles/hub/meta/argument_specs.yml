@@ -80,6 +80,10 @@ argument_specs:
         required: true
         no_log: true
         description: Alertmanager's password for the ticket band's receiver, written into Alertmanager's ticket-receiver-password file.
+      hub_ticket_receiver_port:
+        type: int
+        required: true
+        description: The hub role's copy of ticket_band_receiver_port, the port Prometheus scrapes the ticket band's receiver on through nginx.
 
       hub_node_exporter_tailnet_hosts:
         type: list

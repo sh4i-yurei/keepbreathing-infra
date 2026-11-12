@@ -1,6 +1,7 @@
 ---
-# Files copied unchanged from upstream projects keep their formatting for
-# byte-for-byte comparison.
+# Files copied from upstream projects keep upstream's formatting for comparison.
+# alertmanager-mixin-alerts.yml differs from upstream only in its two
+# AlertmanagerClusterFailedToSendAlerts expressions.
 exclude_paths:
   - roles/hub/files/node-mixin-rules.yml
   - roles/hub/files/node-mixin-alerts.yml

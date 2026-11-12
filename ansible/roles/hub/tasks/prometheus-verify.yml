@@ -20,11 +20,12 @@
       register: hub_prometheus_targets
       until: >-
         (hub_prometheus_targets.json.data.activeTargets | map(attribute='scrapePool') | sort)
-        == (['alertmanager', 'gatus', 'grafana', 'node', 'ntfy', 'podman', 'prometheus'] + (groups['droplets']
-        + (hub_node_exporter_tailnet_hosts | map(attribute='name') | list))
+        == (['alertmanager', 'gatus', 'grafana', 'node', 'ntfy', 'podman', 'prometheus', 'ticket-receiver']
+        + (groups['droplets'] + (hub_node_exporter_tailnet_hosts | map(attribute='name') | list))
         | map('regex_replace', '^', 'node-') | list
         + (hub_podman_exporter_hosts | map('regex_replace', '^', 'podman-') | list)) | sort
-        and (hub_prometheus_targets.json.data.activeTargets | map(attribute='health') | unique)
+        and (hub_prometheus_targets.json.data.activeTargets
+        | rejectattr('scrapePool', 'equalto', 'ticket-receiver') | map(attribute='health') | unique)
         == ['up']
       retries: 15
       delay: 5

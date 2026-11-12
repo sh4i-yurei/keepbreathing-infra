@@ -50,9 +50,11 @@
   },
   "roles/hub/tasks/alertmanager-verify.yml": {
     "url_password": [
+      "fixture-password-3",
       "fixture-password-3"
     ],
     "url_username": [
+      "fixture-user-3",
       "fixture-user-3"
     ]
   },

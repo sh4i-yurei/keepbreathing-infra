@@ -50,7 +50,7 @@ groups:
       summary: All Alertmanager instances in a cluster failed to send notifications
         to a critical integration.
     expr: |
-      min by (job, integration) (
+      min by (job, integration, receiver_name) (
         rate(alertmanager_notifications_failed_total{job="alertmanager", integration=~`.*`}[15m])
       /
         ignoring (reason) group_left rate(alertmanager_notifications_total{job="alertmanager", integration=~`.*`}[15m]) > 0
@@ -67,7 +67,7 @@ groups:
       summary: All Alertmanager instances in a cluster failed to send notifications
         to a non-critical integration.
     expr: |
-      min by (job, integration) (
+      min by (job, integration, receiver_name) (
         rate(alertmanager_notifications_failed_total{job="alertmanager", integration!~`.*`}[15m])
       /
         ignoring (reason) group_left rate(alertmanager_notifications_total{job="alertmanager", integration!~`.*`}[15m]) > 0

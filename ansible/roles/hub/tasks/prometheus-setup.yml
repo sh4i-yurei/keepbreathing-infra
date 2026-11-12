@@ -57,9 +57,11 @@
     mode: "0600"
   notify: Restart prometheus
 
-# The node_exporter, Prometheus and Alertmanager mixins' alert rules, copied unchanged from
-# monitoring.mixins.dev at the same commit (decisions #35 and #42). critical goes to pages and warning
-# to tickets in Alertmanager's routing.
+# The node_exporter, Prometheus and Alertmanager mixins' alert rules, copied from
+# monitoring.mixins.dev at the same commit (decisions #35 and #42), except the two
+# AlertmanagerClusterFailedToSendAlerts expressions, changed to keep receiver_name (OpenBao on the
+# hub decisions 29 and 40). critical goes to pages and warning to tickets in Alertmanager's routing,
+# except failed sends to the ticket receiver, which go to tickets.
 - name: prometheus-setup | Write the mixins' alert rules
   ansible.builtin.copy:
     src: "{{ item }}"

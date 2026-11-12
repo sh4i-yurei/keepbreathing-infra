@@ -1,7 +1,7 @@
 ---
 argument_specs:
   main:
-    short_description: Verify the ticket band's account and run its receiver pod, after openbao_config
+    short_description: Verify the ticket band's account, run its receiver pod and install its morning digest, after openbao_config
     options:
       ticket_band_user:
         type: str
@@ -26,6 +26,66 @@ argument_specs:
         type: str
         required: true
         description: The bcrypt hash of Alertmanager's password, for nginx's user file.
+        no_log: true
+      ticket_band_digest_schedule:
+        type: str
+        required: false
+        description: The systemd calendar time the morning digest's timer fires at, in the hub's local time.
+      ticket_band_digest_timeout:
+        type: int
+        required: false
+        description: Seconds the account's run unit may take; the system service waiting for it gets 300 more.
+      ticket_band_digest_github_api:
+        type: str
+        required: false
+        description: The address of GitHub's REST API, the only address the digest sends GitHub tokens to.
+      ticket_band_digest_ntfy_url:
+        type: str
+        required: false
+        description: The address of ntfy's tickets topic, which the digest posts to.
+      ticket_band_digest_ntfy_token:
+        type: str
+        required: true
+        description: The token of ntfy's ticket-digest user, which the role writes into the account.
+        no_log: true
+  digest:
+    short_description: Install the ticket band's morning digest, its system timer and the system service that waits for it
+    options:
+      ticket_band_user:
+        type: str
+        required: true
+      ticket_band_app_id:
+        type: int
+        required: true
+        description: The ID of the GitHub App the digest reads issues as.
+      ticket_band_installation_id:
+        type: int
+        required: true
+        description: The ID of the App's installation, which reaches only the tickets repository.
+      ticket_band_app_key_path:
+        type: str
+        required: true
+        description: The OpenBao path <consumer>/<name> of the App's private key, which the digest reads through openbao-read.
+      ticket_band_digest_schedule:
+        type: str
+        required: false
+        description: The systemd calendar time the morning digest's timer fires at, in the hub's local time.
+      ticket_band_digest_timeout:
+        type: int
+        required: false
+        description: Seconds the account's run unit may take; the system service waiting for it gets 300 more.
+      ticket_band_digest_github_api:
+        type: str
+        required: false
+        description: The address of GitHub's REST API, the only address the digest sends GitHub tokens to.
+      ticket_band_digest_ntfy_url:
+        type: str
+        required: false
+        description: The address of ntfy's tickets topic, which the digest posts to.
+      ticket_band_digest_ntfy_token:
+        type: str
+        required: true
+        description: The token of ntfy's ticket-digest user, which the role writes into the account.
         no_log: true
   account:
     short_description: Prepare the ticket band's rootless Podman account and make openbao-podman-secret its default Podman secret driver

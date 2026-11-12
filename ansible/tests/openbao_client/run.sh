@@ -9,6 +9,13 @@ source tests/lib/undo.sh
 source tests/lib/runner.sh
 
 fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
+# The morning digest's files, its drop-in holding the service, the drop-in's permit and the timer's
+# stamp (OpenBao on the hub 4.5).
+digest_hold=/run/systemd/system/ticket-digest.service.d/driver-hold.conf
+digest_permit=/run/ticket-digest-driver-permit
+digest_paths=(/usr/local/libexec/ticket-digest /etc/ticket-digest.json
+  /etc/systemd/system/ticket-digest.service /etc/systemd/system/ticket-digest.timer
+  "$digest_hold" "$digest_permit" /var/lib/systemd/timers/stamp-ticket-digest.timer)
 # A listener may answer with 404 or 403, so only connection failure means free.
 listening() { [[ $(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$1/" || true) != 000 ]]; }
 
@@ -26,6 +33,11 @@ if [[ -e /etc/openbao || -L /etc/openbao ]]; then fail '/etc/openbao already exi
 if listening 8200; then fail '127.0.0.1:8200 is already in use'; fi
 if listening 18300; then fail '127.0.0.1:18300 is already in use'; fi
 if listening 18083; then fail '127.0.0.1:18083 is already in use'; fi
+for path in "${digest_paths[@]}"; do
+  if [[ -e $path || -L $path ]]; then fail "$path already exists"; fi
+done
+if listening 18400; then fail '127.0.0.1:18400 is already in use'; fi
+if listening 18401; then fail '127.0.0.1:18401 is already in use'; fi
 
 work=$(mktemp -d)
 undo_add 'remove openbao_client driver work' undo_work
@@ -56,6 +68,20 @@ undo_client_files() {
   rm -rf -- /etc/openbao
 }
 undo_add 'remove /usr/local/bin/openbao-read, /usr/local/bin/openbao-podman-secret and /etc/openbao' undo_client_files
+# Registered after the accounts' undo, so it runs first: the timer is gone before tbclient is. The
+# disable is quiet, because the job requires the driver's success line to be its last.
+undo_digest() {
+  if [[ -e /etc/systemd/system/ticket-digest.timer ]]; then
+    systemctl disable --now --quiet ticket-digest.timer
+  fi
+  rm -f -- "${digest_paths[@]}"
+  if [[ -d ${digest_hold%/*} ]]; then rmdir -- "${digest_hold%/*}"; fi
+  systemctl daemon-reload
+  if [[ $(systemctl show ticket-digest.service -p ActiveState --value) == failed ]]; then
+    systemctl reset-failed ticket-digest.service
+  fi
+}
+undo_add 'remove the morning digest' undo_digest
 
 proxy_pid=
 start_proxy() {
@@ -87,6 +113,23 @@ stop_proxy() {
   proxy_pid=
 }
 undo_add 'stop the proxy stand-in' stop_proxy
+# digest_standin.py, GitHub on 127.0.0.1:18400 and ntfy on 127.0.0.1:18401, for the digest's run.
+standin_pid=
+stop_digest_standin() {
+  local attempt
+  [[ -n $standin_pid ]] || return 0
+  kill "$standin_pid" 2>/dev/null || true
+  for ((attempt=0; attempt<100; attempt++)); do
+    kill -0 "$standin_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$standin_pid" 2>/dev/null; then
+    printf 'digest stand-in %s is still running\n' "$standin_pid" >&2
+    return 1
+  fi
+  standin_pid=
+}
+undo_add 'stop the digest stand-in' stop_digest_standin
 
 openbao_image=$(python3 -c 'import yaml; print(yaml.safe_load(open("group_vars/all.yml"))["openbao_image"])')
 export TEST_OPENBAO_IMAGE=$openbao_image
@@ -734,6 +777,14 @@ receiver_up() {
   metrics_within 60 || fail "GET $receiver/metrics must answer 200"
 }
 
+# The main tasks end with the morning digest, which enables and starts its timer, and the timer
+# may come due while the driver runs. A drop-in holds the digest's service first: it starts only
+# when the permit exists, and each start that runs removes the permit (OpenBao on the hub 4.5).
+install -d -m 0755 "${digest_hold%/*}"
+printf '[Unit]\nConditionPathExists=%s\n[Service]\nExecStartPre=/usr/bin/rm -f %s\n' \
+  "$digest_permit" "$digest_permit" >"$digest_hold"
+systemctl daemon-reload
+
 # The pod playbook starts the pod and both containers, and pfnet answers /metrics through nginx.
 play ticket-band-pod
 receiver_up
@@ -925,6 +976,67 @@ play_fails verify-pod-without-nginx ticket-band-verify-pod 'The receiver pod mus
 start_proxy 192.0.2.10
 as_account tbclient systemctl --user start "$nginx_unit"
 receiver_up
+
+# The morning digest end to end for tbclient (OpenBao on the hub 4.5, decisions 10, 26, 28, 78 and
+# 82): openbao-read takes the App's key from the real OpenBao through the proxy stand-in, and
+# digest_standin.py stands in for GitHub and ntfy. The public key, which the stand-in verifies the
+# App token with, sits beside the key in the pattern folder.
+openssl rsa -in "$patterns/app-key.pem" -pubout -out "$patterns/app-key.pub" 2>/dev/null
+standin_log=$work/digest-standin.jsonl
+: >"$standin_log"
+python3 tests/openbao_client/digest_standin.py "$patterns/app-key.pub" "$standin_log" >"$work/digest-standin.log" 2>&1 &
+standin_pid=$!
+for ((attempt=0; attempt<100; attempt++)); do
+  if listening 18400 && listening 18401; then break; fi
+  sleep 0.2
+done
+listening 18400 && listening 18401 || { cat "$work/digest-standin.log" >&2; fail 'the digest stand-in must listen on 18400 and 18401'; }
+# The probes above are requests too; the log starts empty from here.
+: >"$standin_log"
+play ticket-band-digest
+held_status=0
+systemctl start ticket-digest.service || held_status=$?
+held_condition=$(systemctl show ticket-digest.service -p ConditionResult --value)
+held_requests=$(wc -l <"$standin_log")
+[[ $held_status == 0 && $held_condition == no && $held_requests == 0 ]] ||
+  fail "a start of ticket-digest.service without the driver's permit must be skipped and reach no stand-in; saw exit $held_status, ConditionResult=$held_condition, $held_requests stand-in requests"
+printf 'held digest: exit 0, ConditionResult=no, no stand-in request\n'
+touch "$digest_permit"
+digest_start=$(date +%s)
+systemctl start ticket-digest.service || fail "the digest for tbclient must succeed; $(systemctl show ticket-digest.service -p Result)"
+digest_result=$(systemctl show ticket-digest.service -p Result --value)
+[[ $digest_result == success ]] || fail "the digest for tbclient must end with Result=success; saw $digest_result"
+printf 'digest for tbclient: Result=%s in %ss\n' "$digest_result" "$(($(date +%s) - digest_start))"
+python3 - "$standin_log" <<'PY' || { cat "$standin_log" >&2; fail "the stand-ins must see one verified token request, both lists, the revoke and one ntfy post"; }
+import json, pathlib, sys
+entries = [json.loads(line) for line in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+print('stand-in saw:', [(e['server'], e['method'], e['path']) for e in entries])
+tokens = [e for e in entries if e['server'] == 'github' and e['method'] == 'POST']
+assert [(e['path'], e['verified'], e['claims']['iss']) for e in tokens] == [('/app/installations/1/access_tokens', True, '1')], tokens
+lists = [e for e in entries if e['server'] == 'github' and e['method'] == 'GET']
+assert [(e['path'], e['query']['state'], e['installation_token']) for e in lists] == [
+    ('/repos/sh4i-yurei/platform-tickets/issues', ['open'], True),
+    ('/repos/sh4i-yurei/platform-tickets/issues', ['closed'], True),
+], lists
+revokes = [e for e in entries if e['server'] == 'github' and e['method'] == 'DELETE']
+assert [(e['path'], e['installation_token']) for e in revokes] == [('/installation/token', True)], revokes
+posts = [e for e in entries if e['server'] == 'ntfy']
+assert [(e['method'], e['path'], e['authorization'], e['title']) for e in posts] == [
+    ('POST', '/tickets', 'Bearer tb-digest-token-not-real', 'Tickets: 1 open, 0 closed in the last day'),
+], posts
+assert posts[0]['body'] == '#1 A stand-in ticket https://github.com/sh4i-yurei/platform-tickets/issues/1', posts
+PY
+# The run unit's own output and its manager's lines about it, both under tbclient's uid.
+journalctl --no-pager -o cat "_UID=$tb_uid" _SYSTEMD_USER_UNIT=ticket-digest-run.service + \
+  "_UID=$tb_uid" USER_UNIT=ticket-digest-run.service >"$work/digest-journal.log"
+digest_journal_lines=$(wc -l <"$work/digest-journal.log")
+((digest_journal_lines >= 1)) || fail 'the journal query for the digest run unit must find at least one line'
+if grep -Fq tb-digest-token-not-real "$work/digest-journal.log"; then fail "the digest's journal must not hold the ntfy token"; fi
+[[ $(count_matching "$patterns/app-key-body" <"$work/digest-journal.log") == 0 ]] || fail "the digest's journal must not hold the App's key"
+held=$(files_holding "$patterns/app-key-body" /home/tbclient /etc /tmp /var/tmp)
+[[ -z $held ]] || fail "no file under /home/tbclient, /etc, /tmp or /var/tmp may hold the App's key after the digest: $held"
+printf 'digest journal: %s lines, neither the ntfy token nor the App key\n' "$digest_journal_lines"
+stop_digest_standin
 stop_proxy
 
 no_leftover_tokens

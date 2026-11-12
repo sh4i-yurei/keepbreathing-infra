@@ -1,8 +1,9 @@
 ---
 # The band's service part (OpenBao on the hub decisions 72, 75 and 76): the account's verify, then
-# the receiver's pod, after openbao_config in hub.yml. The account part is tasks_from: account,
-# which runs before it. Every task that writes inside the account's home runs as the account
-# (decision 61), and every podman and systemctl command runs with the account's run directory.
+# the receiver's pod, then the morning digest, after openbao_config in hub.yml. The account part is
+# tasks_from: account, which runs before it. Every task that writes inside the account's home runs
+# as the account (decision 61), and every podman and systemctl command runs with the account's run
+# directory.
 - name: Verify the ticket band account
   ansible.builtin.import_tasks: verify.yml
   when: not ansible_check_mode
@@ -135,3 +136,6 @@
 - name: Verify the receiver pod
   ansible.builtin.import_tasks: verify-pod.yml
   when: not ansible_check_mode
+
+- name: Install the morning digest
+  ansible.builtin.import_tasks: digest.yml

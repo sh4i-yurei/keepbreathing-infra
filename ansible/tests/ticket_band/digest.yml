@@ -1,0 +1,19 @@
+---
+# The morning digest's tasks alone, through tasks_from: digest, for tbtest. This job has no
+# OpenBao, so the digest is installed and its units are checked here; the openbao_client driver
+# runs it end to end.
+- name: Install the ticket band's morning digest for tbtest
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ticket_band_user: tbtest
+    ticket_band_app_id: 1
+    ticket_band_installation_id: 1
+    ticket_band_app_key_path: tbsvc/app-key
+    ticket_band_digest_ntfy_token: tb-digest-token-not-real
+  tasks:
+    - name: Install the morning digest
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: digest

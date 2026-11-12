@@ -1,0 +1,20 @@
+---
+# The morning digest for tbclient, pointed at digest_standin.py's GitHub on 127.0.0.1:18400 and
+# ntfy on 127.0.0.1:18401. The App's key comes from the driver's real OpenBao at tbsvc/app-key.
+- name: Install the ticket band's morning digest for tbclient against the stand-ins
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ticket_band_user: tbclient
+    ticket_band_app_id: 1
+    ticket_band_installation_id: 1
+    ticket_band_app_key_path: tbsvc/app-key
+    ticket_band_digest_ntfy_token: tb-digest-token-not-real
+    ticket_band_digest_github_api: http://127.0.0.1:18400
+    ticket_band_digest_ntfy_url: http://127.0.0.1:18401/tickets
+  tasks:
+    - name: Install the morning digest
+      ansible.builtin.import_role:
+        name: ticket_band
+        tasks_from: digest

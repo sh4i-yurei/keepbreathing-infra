@@ -86,4 +86,30 @@ done
 amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
   alertname=TicketDeliveryDown severity=warning band_health=true
 
+# The cutover in 4.6 points the warning route at the ticket receiver, and this copy makes exactly
+# that change. On it, the morning digest's failed unit still reaches the tickets topic and any
+# other failed unit reaches the ticket receiver (OpenBao on the hub decisions 35 and 79).
+sed '/^        - severity="warning"$/{n;s/^      receiver: ntfy-tickets$/      receiver: ticket/}' \
+  "$scratch/alertmanager.yml" > "$scratch/alertmanager-cutover.yml"
+chmod 0644 "$scratch/alertmanager-cutover.yml"
+warning_line=$(grep -m1 -nxF '        - severity="warning"' "$scratch/alertmanager.yml" | cut -d: -f1 || true)
+receiver_line=$((${warning_line:-0} + 1))
+cutover_expected=$(printf '%sc%s\n<       receiver: ntfy-tickets\n---\n>       receiver: ticket' \
+  "$receiver_line" "$receiver_line")
+if [[ $(diff "$scratch/alertmanager.yml" "$scratch/alertmanager-cutover.yml" || true) != "$cutover_expected" ]]; then
+  echo 'ASSERTION FAILED: the cutover copy must change exactly the warning route receiver' >&2
+  exit 1
+fi
+amtool check-config alertmanager-cutover.yml | tee "$scratch/check-config-cutover.txt"
+grep -Fxq ' - 4 receivers' "$scratch/check-config-cutover.txt" || {
+  echo 'ASSERTION FAILED: amtool check-config must find 4 receivers in the cutover copy' >&2
+  exit 1
+}
+amtool config routes test --config.file=alertmanager-cutover.yml --verify.receivers=ntfy-tickets \
+  alertname=NodeSystemdServiceFailed severity=warning name=ticket-digest.service
+amtool config routes test --config.file=alertmanager-cutover.yml --verify.receivers=ticket \
+  alertname=NodeSystemdServiceFailed severity=warning name=sshd.service
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  alertname=NodeSystemdServiceFailed severity=warning name=ticket-digest.service
+
 echo 'hub rules: all checks passed'

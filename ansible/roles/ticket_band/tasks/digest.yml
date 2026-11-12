@@ -1,0 +1,130 @@
+---
+# The morning digest (OpenBao on the hub decisions 10, 13, 26, 35, 41, 61 and 78). A system timer
+# starts a system service, which starts the account's run unit and waits for it, so a digest that
+# fails or hangs fails a system service. main.yml imports these tasks last, and tasks_from: digest
+# runs them alone. Every task that writes inside the account's home runs as the account (decision
+# 61). The timer is enabled and started, and the service is never started here.
+- name: Ticket band | Read the password database for the digest
+  ansible.builtin.getent:
+    database: passwd
+
+- name: Ticket band | Find the account for the digest
+  ansible.builtin.set_fact:
+    ticket_band_digest_entry: "{{ ansible_facts.getent_passwd[ticket_band_user] | default(none) }}"
+
+# python3-jwt comes from EPEL and python3-cryptography from baseos on the hub, and both from apt on
+# Ubuntu. No package on the hub requires python3-cryptography (decision 26).
+- name: Ticket band | Install the digest's Python libraries
+  ansible.builtin.package:
+    name:
+      - python3-jwt
+      - python3-cryptography
+    state: present
+  become: true
+
+- name: Ticket band | Install the digest
+  ansible.builtin.copy:
+    src: ticket-digest.py
+    dest: /usr/local/libexec/ticket-digest
+    owner: root
+    group: root
+    mode: '0755'
+  become: true
+
+- name: Ticket band | Write the digest's configuration
+  ansible.builtin.template:
+    src: ticket-digest.json.j2
+    dest: /etc/ticket-digest.json
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+
+- name: Ticket band | Predict the digest's files on a fresh check-mode account
+  when: ansible_check_mode and ticket_band_digest_entry is none
+  block:
+    - name: Ticket band | Write the digest's ntfy token
+      ansible.builtin.debug:
+        msg: "Would write /home/{{ ticket_band_user }}/.config/ticket-digest/ntfy-token"
+      changed_when: true
+
+    - name: Ticket band | Write the digest's run unit
+      ansible.builtin.debug:
+        msg: "Would write /home/{{ ticket_band_user }}/.config/systemd/user/ticket-digest-run.service"
+      changed_when: true
+
+- name: Ticket band | Write the digest's files in the account
+  when: ticket_band_digest_entry is not none or not ansible_check_mode
+  block:
+    - name: Ticket band | Create the digest's folders
+      ansible.builtin.file:
+        path: "/home/{{ ticket_band_user }}/{{ item }}"
+        state: directory
+        owner: "{{ ticket_band_user }}"
+        group: "{{ ticket_band_user }}"
+        mode: '0700'
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      loop:
+        - .config/ticket-digest
+        - .config/systemd/user
+
+    - name: Ticket band | Write the digest's ntfy token
+      ansible.builtin.template:
+        src: ticket-digest-ntfy-token.j2
+        dest: "/home/{{ ticket_band_user }}/.config/ticket-digest/ntfy-token"
+        owner: "{{ ticket_band_user }}"
+        group: "{{ ticket_band_user }}"
+        mode: '0600'
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      no_log: true
+      diff: false
+
+    - name: Ticket band | Write the digest's run unit
+      ansible.builtin.template:
+        src: ticket-digest-run.service.j2
+        dest: "/home/{{ ticket_band_user }}/.config/systemd/user/ticket-digest-run.service"
+        owner: "{{ ticket_band_user }}"
+        group: "{{ ticket_band_user }}"
+        mode: '0644'
+      become: true
+      become_user: "{{ ticket_band_user }}"
+      register: ticket_band_digest_run_unit
+
+# The account's manager reads a changed unit file only when it reloads.
+- name: Ticket band | Reload the account's manager after the run unit changed
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: user
+  become: true
+  become_user: "{{ ticket_band_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ticket_band_digest_entry[1] }}"
+  when: ticket_band_digest_run_unit is changed and not ansible_check_mode
+
+- name: Ticket band | Write the digest's system units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  loop:
+    - ticket-digest.service
+    - ticket-digest.timer
+  register: ticket_band_digest_units
+
+- name: Ticket band | Enable and start the digest's timer
+  ansible.builtin.systemd_service:
+    name: ticket-digest.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ ticket_band_digest_units is changed }}"
+  become: true
+  when: not ansible_check_mode
+
+- name: Verify the morning digest
+  ansible.builtin.import_tasks: verify-digest.yml
+  when: not ansible_check_mode

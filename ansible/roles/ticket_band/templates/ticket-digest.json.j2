@@ -1,0 +1,12 @@
+{{ {
+  'app_id': ticket_band_app_id,
+  'installation_id': ticket_band_installation_id,
+  'owner': 'sh4i-yurei',
+  'repository': 'platform-tickets',
+  'label': 'ticket',
+  'key_path': ticket_band_app_key_path,
+  'reader': '/usr/local/bin/openbao-read',
+  'github_api': ticket_band_digest_github_api,
+  'ntfy_url': ticket_band_digest_ntfy_url,
+  'ntfy_token_file': '/home/' ~ ticket_band_user ~ '/.config/ticket-digest/ntfy-token',
+} | to_nice_json }}

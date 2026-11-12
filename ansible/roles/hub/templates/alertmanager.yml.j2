@@ -11,7 +11,9 @@
 # receiver_name="ticket", because Alertmanager runs with receiver-name-in-metrics, and go to the
 # tickets topic next, grouped the same way, whatever their severity (decisions 29, 40 and 41). Its
 # URL is written out because CI checks this template unrendered, and test_ticket_receiver_url.py
-# keeps it equal to hub_host_loopback and the band's port.
+# keeps it equal to hub_host_loopback and the band's port. After the route for failed sends, alerts
+# about the morning digest's failed unit, name="ticket-digest.service", go to the tickets topic,
+# grouped the same way, so they never reach the ticket receiver (decisions 26, 35 and 41).
 route:
   receiver: nowhere
   routes:
@@ -21,6 +23,10 @@ route:
       group_by: ['...']
     - matchers:
         - receiver_name="ticket"
+      receiver: ntfy-tickets
+      group_by: ['...']
+    - matchers:
+        - name="ticket-digest.service"
       receiver: ntfy-tickets
       group_by: ['...']
     - matchers:

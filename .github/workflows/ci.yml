@@ -580,7 +580,7 @@ jobs:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y podman passt
+      - run: sudo apt-get update && sudo apt-get install -y podman passt python3-apt
       - name: Existing account is preserved
         run: |
           sudo useradd -m bltest
@@ -634,6 +634,16 @@ jobs:
           test -d /home/tbclient
           id tbclient
           sudo userdel -r tbclient
+      - name: Existing digest configuration is preserved
+        run: |
+          printf 'existing digest file\n' | sudo tee /etc/ticket-digest.json > /dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_client/run.sh > /tmp/openbao-client-existing-digest.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing /etc/ticket-digest.json was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /etc/ticket-digest.json already exists' /tmp/openbao-client-existing-digest.log
+          test "$(cat /etc/ticket-digest.json)" = 'existing digest file'
+          if id tbclient >/dev/null 2>&1; then echo 'ASSERTION FAILED: a refusal created tbclient'; exit 1; fi
+          sudo rm /etc/ticket-digest.json
       - name: openbao_client role integration cases
         run: |
           sudo cp -p /etc/environment /tmp/openbao-client-environment-before
@@ -658,7 +668,10 @@ jobs:
           if test -e /usr/local/bin/openbao-read; then echo 'ASSERTION FAILED: full driver left /usr/local/bin/openbao-read'; exit 1; fi
           if test -e /usr/local/bin/openbao-podman-secret; then echo 'ASSERTION FAILED: full driver left /usr/local/bin/openbao-podman-secret'; exit 1; fi
           if test -e /etc/openbao; then echo 'ASSERTION FAILED: full driver left /etc/openbao'; exit 1; fi
-          for port in 8200 18300 18083; do
+          for path in /usr/local/libexec/ticket-digest /etc/ticket-digest.json /etc/systemd/system/ticket-digest.service /etc/systemd/system/ticket-digest.timer /run/systemd/system/ticket-digest.service.d/driver-hold.conf /run/ticket-digest-driver-permit /var/lib/systemd/timers/stamp-ticket-digest.timer; do
+            if test -e "$path"; then echo "ASSERTION FAILED: full driver left $path"; exit 1; fi
+          done
+          for port in 8200 18300 18083 18400 18401; do
             if test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$port/" || true)" != 000; then echo "ASSERTION FAILED: full driver left a listener on $port"; exit 1; fi
           done
           sudo cmp /tmp/openbao-client-environment-before /etc/environment
@@ -819,7 +832,7 @@ jobs:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y podman
+      - run: sudo apt-get update && sudo apt-get install -y podman python3-apt
       - name: Existing account is preserved
         run: |
           sudo useradd -m tbtest
@@ -830,6 +843,20 @@ jobs:
           test -d /home/tbtest
           id tbtest
           sudo userdel -r tbtest
+      - name: Existing digest files are preserved
+        run: |
+          for path in /usr/local/libexec/ticket-digest /etc/ticket-digest.json /etc/systemd/system/ticket-digest.service /etc/systemd/system/ticket-digest.timer /run/systemd/system/ticket-digest.service.d/driver-hold.conf /run/ticket-digest-driver-permit /var/lib/systemd/timers/stamp-ticket-digest.timer; do
+            sudo mkdir -p "$(dirname "$path")"
+            printf 'existing digest file\n' | sudo tee "$path" > /dev/null
+            if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/ticket_band/run.sh > /tmp/ticket-band-existing-digest.log 2>&1; then
+              echo "ASSERTION FAILED: pre-existing $path was accepted"; exit 1
+            fi
+            grep -Fx "ASSERTION FAILED: $path already exists" /tmp/ticket-band-existing-digest.log
+            test "$(sudo cat "$path")" = 'existing digest file'
+            if id tbtest >/dev/null 2>&1; then echo 'ASSERTION FAILED: a refusal created tbtest'; exit 1; fi
+            sudo rm "$path"
+          done
+          sudo rm -r /run/systemd/system/ticket-digest.service.d
       - name: Ticket band role integration cases
         run: |
           if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/ticket_band/run.sh > /tmp/ticket-band-full.log 2>&1; then
@@ -847,6 +874,9 @@ jobs:
           if id tbtest >/dev/null 2>&1; then echo 'ASSERTION FAILED: full driver left tbtest'; exit 1; fi
           if test -e /home/tbtest; then echo 'ASSERTION FAILED: full driver left home'; exit 1; fi
           if test -e /var/lib/systemd/linger/tbtest; then echo 'ASSERTION FAILED: full driver left lingering'; exit 1; fi
+          for path in /usr/local/libexec/ticket-digest /etc/ticket-digest.json /etc/systemd/system/ticket-digest.service /etc/systemd/system/ticket-digest.timer /run/systemd/system/ticket-digest.service.d/driver-hold.conf /run/ticket-digest-driver-permit /var/lib/systemd/timers/stamp-ticket-digest.timer; do
+            if test -e "$path"; then echo "ASSERTION FAILED: full driver left $path"; exit 1; fi
+          done
 
   hub-pull:
     needs: changes

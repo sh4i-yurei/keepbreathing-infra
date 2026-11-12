@@ -1,9 +1,10 @@
-"""The ticket band's own health reaches ntfy without the band (OpenBao on the hub item 4.4).
+"""The ticket band's own health reaches ntfy without the band (OpenBao on the hub 4.4 and 4.5).
 
-Alertmanager's route for failed sends to the ticket receiver, the hub role's copy of the band's
-port, Prometheus's scrape job for the receiver, and the two verify conditions decision 77 sets.
-amtool can't test a route's grouping, and the verify conditions only run on the hub, so these read
-the files and evaluate them the way Ansible does.
+Item 4.4's Alertmanager route for failed sends to the ticket receiver, the hub role's copy of the
+band's port, Prometheus's scrape job for the receiver, and the two verify conditions decision 77
+sets; and item 4.5's route for the morning digest's failed unit (decision 79). amtool can't test a
+route's grouping, and the verify conditions only run on the hub, so these read the files and
+evaluate them the way Ansible does.
 """
 
 from pathlib import Path
@@ -180,3 +181,39 @@ def test_alertmanager_verify_requires_receiver_names_on_the_delivery_counters():
     assert not fails(200, OB44_AM_LINES)
     assert fails(200, 'alertmanager_notifications_total{integration="webhook"} 0\n')
     assert fails(401, OB44_AM_LINES)
+
+
+def test_the_digest_failed_unit_routes_to_tickets_after_the_ticket_route():
+    routes = read(ROLE / "templates/alertmanager.yml.j2")["route"]["routes"]
+    positions = [
+        index
+        for index, route in enumerate(routes)
+        if route.get("matchers") == ['name="ticket-digest.service"']
+    ]
+    assert len(positions) == 1, (
+        'exactly one route must match only name="ticket-digest.service"'
+    )
+    position = positions[0]
+
+    def where(matchers: list[str]) -> int:
+        return next(
+            index for index, route in enumerate(routes) if route.get("matchers") == matchers
+        )
+
+    first_severity = next(
+        index
+        for index, route in enumerate(routes)
+        if any(matcher.startswith("severity") for matcher in route.get("matchers", []))
+    )
+
+    assert routes[position] == {
+        "matchers": ['name="ticket-digest.service"'],
+        "receiver": "ntfy-tickets",
+        "group_by": ["..."],
+    }
+    assert (
+        where(['band_health="true"'])
+        < where(['receiver_name="ticket"'])
+        < position
+        < first_severity
+    )

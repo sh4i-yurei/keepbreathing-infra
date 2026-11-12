@@ -9,3 +9,12 @@ ticket_band_nginx_image: docker.io/library/nginx:alpine@sha256:1d40e3eb3bf4f138d
 # The port nginx listens on inside the receiver's pod, which the pod publishes on 127.0.0.1 only
 # (decision 76).
 ticket_band_receiver_port: 8083
+
+# The morning digest (OpenBao on the hub decisions 10, 26 and 78). Its timer fires at 07:00 local
+# time, America/Chicago on the hub. The account's run unit gets ticket_band_digest_timeout seconds,
+# and the system service that waits for it 300 more. The ntfy address's port is the hub role's
+# hub_ntfy_port, and test_ticket_digest.py keeps the two equal.
+ticket_band_digest_schedule: "*-*-* 07:00:00"
+ticket_band_digest_timeout: 300
+ticket_band_digest_github_api: https://api.github.com
+ticket_band_digest_ntfy_url: http://127.0.0.1:8080/tickets

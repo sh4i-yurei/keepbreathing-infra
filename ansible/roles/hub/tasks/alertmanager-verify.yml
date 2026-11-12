@@ -32,8 +32,9 @@
       no_log: true
 
     # Without receiver-name-in-metrics the counters carry no receiver_name (OpenBao on the hub
-    # decision 77). ntfy-tickets has a route before and after 4.6's cutover; Alertmanager builds no
-    # receiver that no route sends to, so the ticket receiver has no counters until then.
+    # decision 77). ntfy-tickets has a route before and after 4.6's cutover, so this check holds on
+    # either side of it. Alertmanager builds no receiver that no route sends to, so the ticket
+    # receiver has counters only once the warning route sends to it.
     - name: alertmanager-verify | Every delivery counter carries its receiver's name
       ansible.builtin.uri:
         url: "http://127.0.0.1:{{ hub_alertmanager_port }}/metrics"

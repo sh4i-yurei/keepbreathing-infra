@@ -53,7 +53,7 @@ grep -Fxq ' - 4 receivers' "$scratch/check-config.txt" || {
 }
 
 amtool config routes test --config.file=alertmanager.yml \
-  --verify.receivers=ntfy-tickets severity=warning
+  --verify.receivers=ticket severity=warning
 amtool config routes test --config.file=alertmanager.yml \
   --verify.receivers=ntfy-pages severity=page
 amtool config routes test --config.file=alertmanager.yml \
@@ -67,6 +67,16 @@ amtool config routes test --config.file=alertmanager.yml \
 amtool config routes test --config.file=alertmanager.yml \
   --verify.receivers=ntfy-tickets severity=page band_health=true
 
+# These label sets were firing as warnings on the hub on 2026-11-11.
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
+  alertname=NodeRebootRequired instance=web job=node severity=warning
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
+  alertname=NodeSystemdServiceFailed instance=hub job=node \
+  name=journal-pull@almaserv.service severity=warning state=failed type=simple
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  alertname=OpenBaoUnhealthy band_health=true certificate_ticket=true group=hub \
+  instance=169.254.1.3:8081 job=gatus key=hub_openbao name=openbao severity=warning type=HTTP
+
 # Failed sends to the ticket receiver go to the tickets topic whatever their severity, and failed
 # sends to ntfy's own receivers keep their severity routes (OpenBao on the hub decisions 29 and 40).
 amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
@@ -78,38 +88,19 @@ amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy
 for receiver in ntfy-pages ntfy-tickets; do
   amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-pages \
     alertname=AlertmanagerClusterFailedToSendAlerts severity=critical "receiver_name=$receiver"
-  amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
     alertname=AlertmanagerClusterFailedToSendAlerts severity=warning "receiver_name=$receiver"
-  amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
+  amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
     alertname=AlertmanagerFailedToSendAlerts severity=warning "receiver_name=$receiver"
 done
 amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
   alertname=TicketDeliveryDown severity=warning band_health=true
 
-# The cutover in 4.6 points the warning route at the ticket receiver, and this copy makes exactly
-# that change. On it, the morning digest's failed unit still reaches the tickets topic and any
-# other failed unit reaches the ticket receiver (OpenBao on the hub decisions 35 and 79).
-sed '/^        - severity="warning"$/{n;s/^      receiver: ntfy-tickets$/      receiver: ticket/}' \
-  "$scratch/alertmanager.yml" > "$scratch/alertmanager-cutover.yml"
-chmod 0644 "$scratch/alertmanager-cutover.yml"
-warning_line=$(grep -m1 -nxF '        - severity="warning"' "$scratch/alertmanager.yml" | cut -d: -f1 || true)
-receiver_line=$((${warning_line:-0} + 1))
-cutover_expected=$(printf '%sc%s\n<       receiver: ntfy-tickets\n---\n>       receiver: ticket' \
-  "$receiver_line" "$receiver_line")
-if [[ $(diff "$scratch/alertmanager.yml" "$scratch/alertmanager-cutover.yml" || true) != "$cutover_expected" ]]; then
-  echo 'ASSERTION FAILED: the cutover copy must change exactly the warning route receiver' >&2
-  exit 1
-fi
-amtool check-config alertmanager-cutover.yml | tee "$scratch/check-config-cutover.txt"
-grep -Fxq ' - 4 receivers' "$scratch/check-config-cutover.txt" || {
-  echo 'ASSERTION FAILED: amtool check-config must find 4 receivers in the cutover copy' >&2
-  exit 1
-}
-amtool config routes test --config.file=alertmanager-cutover.yml --verify.receivers=ntfy-tickets \
-  alertname=NodeSystemdServiceFailed severity=warning name=ticket-digest.service
-amtool config routes test --config.file=alertmanager-cutover.yml --verify.receivers=ticket \
-  alertname=NodeSystemdServiceFailed severity=warning name=sshd.service
+# The digest's failed unit reaches the tickets topic; any other failed unit reaches the ticket
+# receiver (OpenBao on the hub decisions 35 and 79).
 amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy-tickets \
   alertname=NodeSystemdServiceFailed severity=warning name=ticket-digest.service
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
+  alertname=NodeSystemdServiceFailed severity=warning name=sshd.service
 
 echo 'hub rules: all checks passed'

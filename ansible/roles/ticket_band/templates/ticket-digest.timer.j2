@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/ticket_band). Edits here are overwritten.
+[Unit]
+Description=Morning ticket digest
+
+[Timer]
+OnCalendar={{ ticket_band_digest_schedule }}
+Persistent=true
+Unit=ticket-digest.service
+
+[Install]
+WantedBy=timers.target

@@ -10,12 +10,14 @@ ticket_band_user: keepbreath8
 # keepbreath-ticket-band, its installation on platform-tickets and its key's OpenBao path. The
 # Vaultwarden item "ticket receiver (hub)" holds Alertmanager's password for the receiver and its
 # bcrypt hash: ticket_band writes the hash into nginx's user file, and the hub role writes the
-# password into Alertmanager's password file.
+# password into Alertmanager's password file. The Vaultwarden item "ntfy ticket-digest (hub)" holds
+# the morning digest's ntfy token, which ticket_band writes into the account.
 ticket_band_receiver_port: 8083
 ticket_band_app_id: 5670133
 ticket_band_installation_id: 179920588
 ticket_band_app_key_path: ticket-band/app-key
 ticket_band_receiver_password_hash: "{{ lookup('vault_secret', 'ticket receiver (hub)', field='bcrypt') }}"
+ticket_band_digest_ntfy_token: "{{ lookup('vault_secret', 'ntfy ticket-digest (hub)', field='token') }}"
 hub_ticket_receiver_password: "{{ lookup('vault_secret', 'ticket receiver (hub)') }}"
 hub_ticket_receiver_port: "{{ ticket_band_receiver_port }}"
 openbao_port: 8200

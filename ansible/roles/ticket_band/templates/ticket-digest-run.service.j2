@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/ticket_band). Edits here are overwritten.
+[Unit]
+Description=Post the morning digest of ticket issues to ntfy
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ ticket_band_digest_timeout }}
+ExecStart=/usr/bin/python3 /usr/local/libexec/ticket-digest /etc/ticket-digest.json

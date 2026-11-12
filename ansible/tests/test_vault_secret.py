@@ -820,6 +820,7 @@ def fixture_items():
         "rclone web (hub)",
         "rclone mail (hub)",
         "rclone hub (hub)",
+        "ntfy ticket-digest (hub)",
     ]
     return {
         name: {
@@ -978,3 +979,26 @@ def test_converted_file_preserves_baseline_render(path, vault, monkeypatch):
     )
     actual = render_vault_file(path, (ANSIBLE / path).read_text(), variables)
     assert actual == expected[path]
+
+
+def test_ntfy_server_renders_the_ticket_digest_user_from_the_role_defaults(
+    vault, monkeypatch
+):
+    path = "roles/hub/templates/ntfy-server.yml.j2"
+    defaults = yaml.safe_load((ANSIBLE / "roles/hub/defaults/main.yml").read_text())
+    variables = _render_context(vault, monkeypatch) | {
+        "hub_ntfy_users": defaults["hub_ntfy_users"]
+    }
+
+    rendered = yaml.safe_load(
+        render_vault_file(path, (ANSIBLE / path).read_text(), variables)
+    )
+
+    assert {
+        key: [entry for entry in rendered[key] if entry.startswith("ticket-digest:")]
+        for key in ("auth-users", "auth-access", "auth-tokens")
+    } == {
+        "auth-users": ["ticket-digest:fixture-bcrypt-19:user"],
+        "auth-access": ["ticket-digest:tickets:wo"],
+        "auth-tokens": ["ticket-digest:fixture-token-19"],
+    }

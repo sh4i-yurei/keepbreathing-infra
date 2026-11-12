@@ -1,0 +1,8 @@
+# Managed by Ansible (roles/ticket_band). Edits here are overwritten.
+[Unit]
+Description=Start and wait for the morning ticket digest
+
+[Service]
+Type=oneshot
+TimeoutStartSec={{ ticket_band_digest_timeout | int + 300 }}
+ExecStart=/usr/bin/systemctl --user --machine={{ ticket_band_user }}@ start --wait ticket-digest-run.service

@@ -1,0 +1,15 @@
+---
+# The digest's timer must be enabled, so that a 07:00 missed while the hub was off runs at the next
+# boot (OpenBao on the hub decision 26).
+- name: Ticket band | Read whether the digest's timer is enabled
+  ansible.builtin.command:
+    argv: [systemctl, is-enabled, ticket-digest.timer]
+  register: ticket_band_digest_timer_enabled
+  changed_when: false
+  failed_when: false
+
+- name: Ticket band | Require the digest's timer enabled
+  ansible.builtin.assert:
+    that: ticket_band_digest_timer_enabled.stdout == 'enabled'
+    fail_msg: The morning digest's timer must be enabled
+    quiet: true

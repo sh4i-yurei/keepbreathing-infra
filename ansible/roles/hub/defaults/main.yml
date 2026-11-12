@@ -35,6 +35,9 @@ hub_ntfy_users:
   - name: alertmanager
     access: [pages:wo, tickets:wo]
     token: true
+  - name: ticket-digest
+    access: [tickets:wo]
+    token: true
 
 # Gatus's image, pinned to the digest of the v5.37.0 tag (Monitoring and alerting decision #17).
 # The digest fixes the exact image; the version is only readable from this comment.

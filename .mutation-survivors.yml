@@ -188,3 +188,47 @@
   reason: "The verify file's exact text is unspecified; each variant uploads small content under verify/ and checks the restored SHA-1 matches its first upload."
 - mutant: ansible.roles.b2_bucket.files.b2_verify.x_verify__mutmut_46
   reason: "The verify file's exact text is unspecified; each variant uploads small content under verify/ and checks the restored SHA-1 matches its first upload."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_app_key__mutmut_6
+  reason: "Omitting subprocess check uses its default false value, so a failing reader produces the same public error."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_app_key__mutmut_11
+  reason: "subprocess check=None and check=False both leave a nonzero exit in CompletedProcess for the same public error."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_digest__mutmut_110
+  reason: "GitHub's closed_at is whole seconds, while since comes from the run's own clock with microseconds; > and >= differ only when the two are equal to the microsecond, which only a test freezing the program's clock could arrange."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_digest__mutmut_137
+  reason: "A Request with a body uses POST automatically, so method=None sends the same POST to ntfy."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_digest__mutmut_153
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_digest__mutmut_154
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_digest__mutmut_156
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; ntfy receives the same Title header."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_digest__mutmut_157
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; ntfy receives the same Title header."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_installation_token__mutmut_3
+  reason: "A Request with a body uses POST automatically, so method=None sends the same POST to GitHub."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_installation_token__mutmut_19
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_installation_token__mutmut_20
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_installation_token__mutmut_22
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; GitHub receives the same Content-Type header."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_installation_token__mutmut_23
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; GitHub receives the same Content-Type header."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_issues__mutmut_7
+  reason: "A Request without a body uses GET automatically, so method=None sends the same GET for each page of the list."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_issues__mutmut_21
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_issues__mutmut_22
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_issues__mutmut_36
+  reason: "HTTP header names are case insensitive, and a response's headers are looked up without regard to case; Link, link and LINK read the same header."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_issues__mutmut_37
+  reason: "HTTP header names are case insensitive, and a response's headers are looked up without regard to case; Link, link and LINK read the same header."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_issues__mutmut_38
+  reason: "The default is used only when a response has no Link header; XXXX holds no <target> link-value, so like an empty string it names no next page."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_ntfy_token__mutmut_3
+  reason: "After a token-file read error, both None and an empty string fail the same empty-token check and raise the same public error."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_revoke__mutmut_17
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."
+- mutant: ansible.roles.ticket_band.files.ticket-digest.x_revoke__mutmut_18
+  reason: "HTTP header names are case insensitive, and urllib capitalizes every request header name before sending; the same Authorization header goes out."

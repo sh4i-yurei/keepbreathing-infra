@@ -34,8 +34,11 @@
     key: "{{ baseline_container_user }}"
   when: baseline_container_user | default('', true) | length > 0
 
-# #141 starts the manager before later roles call its user-level systemd. This also runs in
-# check mode: baseline requires the account to exist before it reaches this task (decision 59.2).
+# loginctl enable-linger starts the user manager in the background and returns at once, and a
+# stopped manager stays stopped while lingering is on. Starting user@<uid>.service waits until
+# the manager reports ready, because the unit is Type=notify-reload (#141, as #139 did in the
+# openbao, ticket_band and backup_server roles). This also runs in check mode: baseline requires
+# the account to exist before it reaches this task (decision 59.2).
 - name: container-account | Start the container account's user manager
   ansible.builtin.systemd_service:
     name: "user@{{ ansible_facts.getent_passwd[baseline_container_user][1] }}.service"

@@ -17,7 +17,8 @@ argument_specs:
         required: true
         description: The unprivileged account that runs rootless containers on
           this machine, supplied per host. An empty value means the machine has
-          no container account, and lingering is skipped.
+          no container account, and both lingering and starting its user manager
+          are skipped.
       baseline_blacklist_fs_modules:
         type: list
         elements: str

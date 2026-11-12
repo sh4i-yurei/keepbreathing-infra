@@ -53,7 +53,7 @@ run under `--limit`, and the check there is a second run that reports no changes
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `baseline_container_user` | *required* | The unprivileged account that runs rootless containers on this machine. Set it per host in `host_vars`. An empty value means the machine has no container account, and lingering is skipped. |
+| `baseline_container_user` | *required* | The unprivileged account that runs rootless containers on this machine. Set it per host in `host_vars`. An empty value means the machine has no container account, and both lingering and starting its user manager are skipped. |
 | `baseline_swap_size` | `1G` | The size of the swap file created on a machine that has no swap. |
 | `baseline_firewalld_remove_cockpit` | `true` | Whether to remove the cockpit service from the firewall's default zone. |
 | `baseline_blacklist_fs_modules` | `[cramfs, freevxfs, jffs2, hfs, hfsplus]` | Filesystem modules written to `/etc/modprobe.d/` as `install <mod> /bin/false` plus `blacklist <mod>`. None of them is built into the AlmaLinux 9 or 10 kernel. The file exists so that the CIS and STIG scanners report clean. `udf` and `squashfs` are left out because the VMs mount ISO images. |

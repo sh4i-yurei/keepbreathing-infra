@@ -1,0 +1,12 @@
+---
+- name: Exercise baseline's container account part on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    baseline_container_user: "{{ account }}"
+  tasks:
+    - name: Run baseline's container account part
+      ansible.builtin.import_role:
+        name: baseline
+        tasks_from: container-account

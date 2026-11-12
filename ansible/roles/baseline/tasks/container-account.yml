@@ -1,0 +1,43 @@
+---
+# Bootstrap step 9's container account part. podman.yml imports it.
+
+- name: container-account | Look for the container account's subordinate ID ranges
+  ansible.builtin.command: grep -q "^{{ baseline_container_user }}:" {{ item }}
+  register: baseline_subids
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  loop:
+    - /etc/subuid
+    - /etc/subgid
+  when: baseline_container_user | default('', true) | length > 0
+
+- name: container-account | Check the container account has subordinate ID ranges
+  ansible.builtin.assert:
+    that: baseline_subids.results | selectattr('rc', 'ne', 0) | list | length == 0
+    fail_msg: >-
+      {{ baseline_container_user }} has no entry in /etc/subuid or /etc/subgid.
+      Rootless Podman maps container users onto host IDs with those ranges and
+      cannot run without them. useradd allocates them; an account made with
+      useradd -r, or one from an identity provider, does not get them.
+  when: baseline_container_user | default('', true) | length > 0
+
+- name: container-account | Set lingering for the container account
+  ansible.builtin.command:
+    cmd: loginctl enable-linger {{ baseline_container_user | quote }}
+    creates: /var/lib/systemd/linger/{{ baseline_container_user }}
+  when: baseline_container_user | default('', true) | length > 0
+
+- name: container-account | Find the container account's uid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ baseline_container_user }}"
+  when: baseline_container_user | default('', true) | length > 0
+
+# #141 starts the manager before later roles call its user-level systemd. This also runs in
+# check mode: baseline requires the account to exist before it reaches this task (decision 59.2).
+- name: container-account | Start the container account's user manager
+  ansible.builtin.systemd_service:
+    name: "user@{{ ansible_facts.getent_passwd[baseline_container_user][1] }}.service"
+    state: started
+  when: baseline_container_user | default('', true) | length > 0

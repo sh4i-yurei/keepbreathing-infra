@@ -17,6 +17,7 @@ JOBS = {
     "b2-copy",
     "backup-prune",
     "backup-server",
+    "baseline-container-account",
     "break-glass-sheet",
     "hub-backup-disk",
     "hub-pull",
@@ -78,6 +79,7 @@ DIFF_111 = [
             False,
             {
                 "b2-copy",
+                "baseline-container-account",
                 "backup-prune",
                 "break-glass-sheet",
                 "hub-pull",
@@ -103,7 +105,11 @@ DIFF_111 = [
         ),
         (["ansible/roles/tailscale_service/tasks/main.yml"], False, {"backup-server"}),
         (["ansible/roles/hub/tasks/main.yml"], False, {"hub-backup-disk"}),
-        (["ansible/roles/baseline/tasks/main.yml"], False, set()),
+        (
+            ["ansible/roles/baseline/tasks/main.yml"],
+            False,
+            {"baseline-container-account"},
+        ),
         (["ansible/tests/test_ci_python.py", "README.md"], False, set()),
         (["ansible/tests/test_run_driver.py", "ci/run_driver.py"], False, set()),
         (
@@ -378,7 +384,7 @@ def test_main_selects_readers_of_both_rename_paths(tmp_path, monkeypatch, capsys
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
     main("push", "refs/heads/feature", repo)
     assert output.read_text().splitlines() == ["full=false"] + [
-        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'backup-prune', 'break-glass-sheet', 'hub-pull', 'openbao', 'openbao-backup', 'openbao-client', 'openbao-config', 'ticket-band', 'vaultwarden-backup'} else 'false'}"
+        f"{job.replace('-', '_')}={'true' if job in {'b2-copy', 'backup-prune', 'baseline-container-account', 'break-glass-sheet', 'hub-pull', 'openbao', 'openbao-backup', 'openbao-client', 'openbao-config', 'ticket-band', 'vaultwarden-backup'} else 'false'}"
         for job in sorted(JOBS)
     ]
     assert capsys.readouterr().out == output.read_text()

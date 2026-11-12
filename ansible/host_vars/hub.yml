@@ -38,6 +38,7 @@ openbao_approle_bound_cidrs:
 openbao_transit_keys: [tofu-durable, tofu-short-lived]
 # Infrastructure as code's GitHub jobs sign in at jwt/ (OpenBao on the hub decisions 65, 66 and 71).
 # iac-durable is on the list because GitHub's durable environment exists and is protected (decision 65).
+# iac-durable writes each site's staging service token into iac-short-lived's folder (decision 83).
 openbao_jwt_audience: "https://openbao.{{ tailnet_domain }}"
 openbao_jwt_roles:
   - name: iac-plan
@@ -49,6 +50,11 @@ openbao_jwt_roles:
       repository_id: "1368108961"
       environment: durable
     transit_keys: [tofu-durable]
+    extra_paths:
+      - path: secret/data/iac-short-lived/+/access-service-token
+        capabilities: [create, update, delete]
+      - path: secret/data/iac-short-lived/+/access-service-token-id
+        capabilities: [create, update, delete]
   - name: iac-short-lived
     bound_claims:
       repository_id: "1305427147"

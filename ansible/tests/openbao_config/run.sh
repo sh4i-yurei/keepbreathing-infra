@@ -150,7 +150,7 @@ if os.environ["API_TOKEN"]:
     headers["X-Vault-Token"] = os.environ["API_TOKEN"]
 data = os.environ["API_BODY"].encode() or None
 if data:
-    headers["Content-Type"] = "application/json"
+    headers["Content-Type"] = os.environ.get("API_CONTENT_TYPE") or "application/json"
 request = urllib.request.Request("http://127.0.0.1:8200/v1/" + os.environ["API_PATH"],
                                  data=data, headers=headers, method=os.environ["API_METHOD"])
 try:
@@ -1712,6 +1712,191 @@ recap "$last_play_log" 0
 play_fails jwt-no-audience role "openbao_jwt_audience must be set when openbao_jwt_roles isn't empty" \
   "${jwt_args[@]}" -e '{"openbao_jwt_audience":""}'
 refused_before_sign_in "$last_play_log" 'a JWT role without an audience'
+
+# 3.5e: iac-durable writes each site's staging service token into iac-short-lived's folder, and
+# nothing else outside its own (OpenBao on the hub decision 83). test-durable stands for
+# iac-durable and test-short for iac-short-lived, so test-durable's extra paths name test-short's
+# folder. The site segment is the site repository's ID.
+jwt_roles_writer=$work/jwt-roles-writer.json
+python3 - "$jwt_roles" "$jwt_roles_writer" <<'PY'
+import json, sys
+roles = json.load(open(sys.argv[1]))
+for role in roles['openbao_jwt_roles']:
+    if role['name'] == 'test-durable':
+        role['extra_paths'] = [
+            {'path': 'secret/data/test-short/+/access-service-token', 'capabilities': ['create', 'update', 'delete']},
+            {'path': 'secret/data/test-short/+/access-service-token-id', 'capabilities': ['create', 'update', 'delete']}]
+json.dump(roles, open(sys.argv[2], 'w'))
+PY
+writer_args=(-e "@$full_list" -e "$both_keys" -e "@$jwt_settings" -e "@$jwt_roles_writer")
+play role --check --diff "${writer_args[@]}"
+recap "$last_play_log" 1
+reports "$last_play_log" 'openbao_config would write the policy test-durable'
+reports_not "$last_play_log" 'openbao_config would write the policy test-plan'
+reports_not "$last_play_log" 'openbao_config would write the policy test-short'
+play role "${writer_args[@]}"
+recap "$last_play_log" 1
+changed_in_loop "$last_play_log" 'OpenBao config | Write each JWT role policy'
+api_expect 200 'test-durable policy read' GET sys/policies/acl/test-durable admin_token
+python3 - "$work/api.json" <<'PY' || fail "the policy test-durable must be decision 66's text followed by decision 83's two extra paths"
+import json, sys
+live = json.load(open(sys.argv[1]))['data']['policy']
+wanted = ('path "transit/datakey/plaintext/tofu-durable" {\n  capabilities = ["update"]\n}\n'
+          'path "transit/decrypt/tofu-durable" {\n  capabilities = ["update"]\n}\n'
+          'path "auth/token/lookup-self" {\n  capabilities = ["read"]\n}\n'
+          'path "secret/data/test-durable/*" {\n  capabilities = ["read"]\n}\n'
+          'path "secret/data/test-short/+/access-service-token" {\n  capabilities = ["create", "update", "delete"]\n}\n'
+          'path "secret/data/test-short/+/access-service-token-id" {\n  capabilities = ["create", "update", "delete"]\n}\n')
+assert live == wanted, (live, wanted)
+PY
+jwt_policy_is test-plan tofu-durable
+jwt_policy_is test-short tofu-short-lived
+play role "${writer_args[@]}"
+recap "$last_play_log" 0
+play verify "${writer_args[@]}"
+play role --check --diff "${writer_args[@]}"
+recap "$last_play_log" 0
+
+# Each row is one call through api(), written as "<status> <label>", and the whole list must match.
+# A PATCH sent as application/json gets 415 before OpenBao checks the policy, so the patch row sends
+# application/merge-patch+json. api() doesn't follow a redirect, so each redirecting form answers 307,
+# and its cleaned target is called directly.
+sign_token "$work/issuer-one.pem" one "$durable_claims"
+jwt_login test-durable 200 '' durable_token
+sign_token "$work/issuer-one.pem" one "$short_claims"
+jwt_login test-short 200 '' short_token
+sign_token "$work/issuer-one.pem" one "$plan_claims"
+jwt_login test-plan 200 '' plan_token
+api_expect 200 'keepbreath0 writes a secret in testsvc/' POST secret/data/testsvc/token admin_token '{"data":{"value":"testsvc"}}'
+writer_rows=$work/writer-rows.txt
+: >"$writer_rows"
+writer_row() {
+  local label=$1 status
+  shift
+  status=$(api "$@")
+  printf '%s %s\n' "$status" "$label" >>"$writer_rows"
+}
+site=secret/data/test-short/1305427147
+writer_row 'durable creates the token' POST "$site/access-service-token" durable_token '{"data":{"value":"s3cret-1"}}'
+writer_row 'durable updates the token' POST "$site/access-service-token" durable_token '{"data":{"value":"s3cret-2"}}'
+writer_row 'durable creates the client ID' POST "$site/access-service-token-id" durable_token '{"data":{"value":"client-1"}}'
+writer_row 'durable creates a second site token' POST secret/data/test-short/2000000001/access-service-token durable_token '{"data":{"value":"s3cret-3"}}'
+writer_row 'durable reads the token' GET "$site/access-service-token" durable_token
+API_CONTENT_TYPE=application/merge-patch+json writer_row 'durable patches the token' PATCH "$site/access-service-token" durable_token '{"data":{"value":"s3cret-p"}}'
+writer_row 'durable lists test-short' LIST secret/metadata/test-short durable_token
+writer_row 'durable lists the site folder' LIST secret/metadata/test-short/1305427147 durable_token
+writer_row 'durable reads the token metadata' GET secret/metadata/test-short/1305427147/access-service-token durable_token
+writer_row 'durable deletes the token metadata' DELETE secret/metadata/test-short/1305427147/access-service-token durable_token
+writer_row 'durable soft-deletes a version' POST secret/delete/test-short/1305427147/access-service-token durable_token '{"versions":[1]}'
+writer_row 'durable undeletes a version' POST secret/undelete/test-short/1305427147/access-service-token durable_token '{"versions":[1]}'
+writer_row 'durable destroys a version' POST secret/destroy/test-short/1305427147/access-service-token durable_token '{"versions":[1]}'
+writer_row 'durable writes another site entry' POST "$site/other" durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes two segments deep' POST "$site/deeper/access-service-token" durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes a suffixed name' POST "$site/access-service-token-old" durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes an upper-case name' POST "$site/Access-Service-Token" durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes an upper-case folder' POST secret/data/Test-Short/1305427147/access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes a provider token' POST secret/data/test-short/digitalocean-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes a consumer folder' POST secret/data/testsvc/token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes its own folder' POST secret/data/test-durable/new durable_token '{"data":{"value":"x"}}'
+writer_row 'durable makes a child token' POST auth/token/create durable_token '{}'
+writer_row 'durable writes an empty segment' POST secret/data/test-short//access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes a dot segment' POST secret/data/test-short/./access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes a dot-dot segment' POST secret/data/test-short/../access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes through dot-dot elsewhere' POST secret/data/test-short/../test-durable/access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes the empty-segment target' POST secret/data/test-short/access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes the dot-dot target' POST secret/data/access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'durable writes the dot-dot elsewhere target' POST secret/data/test-durable/access-service-token durable_token '{"data":{"value":"x"}}'
+writer_row 'short reads the token' GET "$site/access-service-token" short_token
+cp "$work/api.json" "$work/short-read.json"
+writer_row 'short writes the token' POST "$site/access-service-token" short_token '{"data":{"value":"x"}}'
+writer_row 'plan writes the token' POST "$site/access-service-token" plan_token '{"data":{"value":"x"}}'
+writer_row 'durable deletes the client ID' DELETE "$site/access-service-token-id" durable_token
+writer_row 'durable deletes the token' DELETE "$site/access-service-token" durable_token
+writer_row 'short reads the deleted token' GET "$site/access-service-token" short_token
+cp "$work/api.json" "$work/short-read-deleted.json"
+writer_row 'short reads the deleted client ID' GET "$site/access-service-token-id" short_token
+diff - "$writer_rows" <<'ROWS' || fail 'every test-durable write and refusal must answer as decision 83 says'
+200 durable creates the token
+200 durable updates the token
+200 durable creates the client ID
+200 durable creates a second site token
+403 durable reads the token
+403 durable patches the token
+403 durable lists test-short
+403 durable lists the site folder
+403 durable reads the token metadata
+403 durable deletes the token metadata
+403 durable soft-deletes a version
+403 durable undeletes a version
+403 durable destroys a version
+403 durable writes another site entry
+403 durable writes two segments deep
+403 durable writes a suffixed name
+403 durable writes an upper-case name
+403 durable writes an upper-case folder
+403 durable writes a provider token
+403 durable writes a consumer folder
+403 durable writes its own folder
+403 durable makes a child token
+307 durable writes an empty segment
+307 durable writes a dot segment
+307 durable writes a dot-dot segment
+307 durable writes through dot-dot elsewhere
+403 durable writes the empty-segment target
+403 durable writes the dot-dot target
+403 durable writes the dot-dot elsewhere target
+200 short reads the token
+403 short writes the token
+403 plan writes the token
+204 durable deletes the client ID
+204 durable deletes the token
+404 short reads the deleted token
+404 short reads the deleted client ID
+ROWS
+python3 - "$work/short-read.json" <<'PY' || fail 'test-short must read the value test-durable wrote last'
+import json, sys
+data = json.load(open(sys.argv[1]))['data']['data']
+assert data == {'value': 's3cret-2'}, data
+PY
+python3 - "$work/short-read-deleted.json" <<'PY' || fail 'after the delete, test-short must get no value and a deletion time'
+import json, sys
+data = json.load(open(sys.argv[1]))['data']
+assert data['data'] is None, data
+assert data['metadata']['deletion_time'], data['metadata']
+PY
+
+# keepbreath0's lists show only the entries written on purpose, so no redirecting form wrote
+# anything a reader can find.
+lists_exactly() {
+  local path=$1 wanted=$2
+  api_expect 200 "keepbreath0 LIST $path" LIST "$path" admin_token
+  python3 - "$work/api.json" "$wanted" <<'PY' || fail "keepbreath0's LIST $path must return exactly $wanted"
+import json, sys
+got = json.load(open(sys.argv[1]))['data']['keys']
+assert got == json.loads(sys.argv[2]), got
+PY
+}
+lists_exactly secret/metadata/test-short/ '["1305427147/", "2000000001/", "token"]'
+lists_exactly secret/metadata/test-short/1305427147/ '["access-service-token", "access-service-token-id"]'
+lists_exactly secret/metadata/test-durable/ '["token"]'
+api_expect 404 'keepbreath0 reads the dot-dot target' GET secret/data/access-service-token admin_token
+for name in durable_token short_token plan_token; do revoke_jwt_token "$name"; done
+
+# An extra path with a segment that is neither + nor a lower-case name is refused before the role
+# signs in, for a JWT role and for a consumer.
+bad_extra_paths=('secret/data/test-short/*' 'secret/data/test-short/../test-durable/x' 'secret/data/test-short//x' \
+  'secret/data/test-short/a"b' $'secret/data/test-short/x\n')
+bad_extra_message='entry test-extra may list only extra paths whose every segment is + or matches ^[a-z0-9][a-z0-9._-]*$'
+for path in "${bad_extra_paths[@]}"; do
+  extra_jwt=$(python3 -c 'import json,sys; print(json.dumps({"openbao_jwt_roles": [{"name": "test-extra", "bound_claims": {"repository_id": "1"}, "transit_keys": [], "extra_paths": [{"path": sys.argv[1], "capabilities": ["create"]}]}]}))' "$path")
+  play_fails jwt-bad-extra role "$bad_extra_message" "${jwt_args[@]}" -e "$extra_jwt"
+  refused_before_sign_in "$last_play_log" "a JWT role's extra path ${path@Q}"
+done
+for path in "${bad_extra_paths[@]}"; do
+  extra_consumer=$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c["openbao_approles"].append({"name": "test-extra", "files": False, "extra_paths": [{"path": sys.argv[2], "capabilities": ["read"]}]}); print(json.dumps(c))' "$full_list" "$path")
+  play_fails approle-bad-extra role "$bad_extra_message" "${jwt_args[@]}" -e "$extra_consumer"
+  refused_before_sign_in "$last_play_log" "a consumer's extra path ${path@Q}"
+done
 stop_issuer
 no_ansible_tokens '3.5b cases'
 

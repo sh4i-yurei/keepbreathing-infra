@@ -111,25 +111,12 @@
       loop: "{{ openbao_transit_keys }}"
 
     # OpenBao never compares bound_issuer with the discovery document's issuer, so both are read
-    # back (decision 65). The policy and role values are the ones jwt.yml builds.
+    # back (decision 65). The policy comes from templates/jwt-policy.hcl.j2, the template jwt.yml
+    # reads, and the role value is the one jwt.yml builds.
     - name: OpenBao config verify | Check jwt/'s config, each JWT role and each JWT role policy
       when: not ansible_check_mode and openbao_jwt_roles | length > 0
       vars:
-        openbao_config_jwt_wanted_policy: |
-          {% for key in openbao_config_jwt_role.transit_keys %}
-          path "transit/datakey/plaintext/{{ key }}" {
-            capabilities = ["update"]
-          }
-          path "transit/decrypt/{{ key }}" {
-            capabilities = ["update"]
-          }
-          {% endfor %}
-          path "auth/token/lookup-self" {
-            capabilities = ["read"]
-          }
-          path "secret/data/{{ openbao_config_jwt_role.name }}/*" {
-            capabilities = ["read"]
-          }
+        openbao_config_jwt_wanted_policy: "{{ lookup('ansible.builtin.template', 'jwt-policy.hcl.j2') }}"
         openbao_config_jwt_wanted_role:
           role_type: jwt
           user_claim: sub

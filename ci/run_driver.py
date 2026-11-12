@@ -23,10 +23,12 @@ import yaml
 from ci.select_jobs import driver_jobs
 
 # Jobs proven to run in a rootless container on 2026-11-05, with ticket-band and
-# openbao-config added on 2026-11-06 and openbao-backup on 2026-11-08. The other driver jobs mount
+# openbao-config added on 2026-11-06, openbao-backup on 2026-11-08 and
+# baseline-container-account on 2026-11-11. The other driver jobs mount
 # loop devices or set security.* attributes, which need root in the host's own namespace.
 LOCAL_JOBS = (
     "b2-bucket",
+    "baseline-container-account",
     "hub-pull",
     "openbao",
     "openbao-backup",

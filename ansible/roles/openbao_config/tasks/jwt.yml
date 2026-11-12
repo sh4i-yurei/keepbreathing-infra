@@ -16,22 +16,9 @@
   when: openbao_jwt_roles | length > 0
   vars:
     openbao_config_jwt_present: "{{ 'jwt/' in openbao_config_auth.json.data }}"
-    # Each task names its entry openbao_config_jwt_role. verify.yml builds the same two values.
-    openbao_config_jwt_wanted_policy: |
-      {% for key in openbao_config_jwt_role.transit_keys %}
-      path "transit/datakey/plaintext/{{ key }}" {
-        capabilities = ["update"]
-      }
-      path "transit/decrypt/{{ key }}" {
-        capabilities = ["update"]
-      }
-      {% endfor %}
-      path "auth/token/lookup-self" {
-        capabilities = ["read"]
-      }
-      path "secret/data/{{ openbao_config_jwt_role.name }}/*" {
-        capabilities = ["read"]
-      }
+    # Each task names its entry openbao_config_jwt_role. The policy comes from
+    # templates/jwt-policy.hcl.j2, which verify.yml reads too, and verify.yml builds the same role value.
+    openbao_config_jwt_wanted_policy: "{{ lookup('ansible.builtin.template', 'jwt-policy.hcl.j2') }}"
     # Argument validation doesn't fill in a nested option's default, so token_ttl's 1800 is here.
     openbao_config_jwt_wanted_role:
       role_type: jwt

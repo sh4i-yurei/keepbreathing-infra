@@ -20,6 +20,7 @@ jobs:
       b2_copy: ${{ steps.select.outputs.b2_copy }}
       backup_prune: ${{ steps.select.outputs.backup_prune }}
       backup_server: ${{ steps.select.outputs.backup_server }}
+      baseline_container_account: ${{ steps.select.outputs.baseline_container_account }}
       break_glass_sheet: ${{ steps.select.outputs.break_glass_sheet }}
       hub_backup_disk: ${{ steps.select.outputs.hub_backup_disk }}
       hub_pull: ${{ steps.select.outputs.hub_pull }}
@@ -450,6 +451,55 @@ jobs:
           test -d /home/b2test
           sudo userdel -r b2test
       - run: sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_bucket/run.sh
+
+  baseline-container-account:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.baseline_container_account == 'true') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y libpam-systemd dbus-user-session
+      - name: Existing account is preserved
+        run: |
+          sudo useradd -m bltest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/baseline_container_account/run.sh > /tmp/baseline-container-account-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing account was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: bltest already exists' /tmp/baseline-container-account-existing.log
+          test -d /home/bltest
+          id bltest
+          sudo userdel -r bltest
+      - name: Baseline container account integration cases
+        run: |
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/baseline_container_account/run.sh > /tmp/baseline-container-account-full.log 2>&1; then
+            cat /tmp/baseline-container-account-full.log
+          else
+            tail -80 /tmp/baseline-container-account-full.log
+            exit 1
+          fi
+          if test "$(tail -1 /tmp/baseline-container-account-full.log)" != 'baseline_container_account driver: all cases passed'; then
+            echo 'ASSERTION FAILED: baseline container account driver success message was not its last line'
+            exit 1
+          fi
+      - name: Full driver cleans up
+        run: |
+          if id bltest >/dev/null 2>&1; then echo 'ASSERTION FAILED: full driver left bltest'; exit 1; fi
+          if test -e /home/bltest; then echo 'ASSERTION FAILED: full driver left home'; exit 1; fi
+          if test -e /var/lib/systemd/linger/bltest; then echo 'ASSERTION FAILED: full driver left lingering'; exit 1; fi
 
   backup-server:
     needs: changes

@@ -71,6 +71,21 @@
   loop_control:
     label: "{{ item.name }}"
 
+# Every segment of an extra path is + or a lower-case name, which refuses *, an empty segment, .,
+# .., a trailing slash and a quote (OpenBao on the hub decision 83). \Z ends the match, because
+# Python's $ also matches before a final newline.
+- name: OpenBao config | Require safe extra paths
+  ansible.builtin.assert:
+    that: >-
+      item.extra_paths | default([]) | map(attribute='path')
+      | reject('match', '(\\+|[a-z0-9][a-z0-9._-]*)(/(\\+|[a-z0-9][a-z0-9._-]*))*\\Z')
+      | list | length == 0
+    fail_msg: "entry {{ item.name }} may list only extra paths whose every segment is + or matches ^[a-z0-9][a-z0-9._-]*$"
+    quiet: true
+  loop: "{{ openbao_approles + openbao_jwt_roles }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: OpenBao config | Require an audience for the JWT roles
   ansible.builtin.assert:
     that: openbao_jwt_roles | length == 0 or openbao_jwt_audience | length > 0

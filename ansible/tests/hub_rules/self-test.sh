@@ -53,6 +53,12 @@ if grep -q '^ *- band_health="true"$' "$band_health_config" \
 fi
 expect_failure band-health-route 'WARNING: Expected receivers did not match resolved receivers.'
 
+# A warning routed to ntfy must fail the ticket route check.
+copy_inputs "$scratch/ticket-route"
+sed -i 's/^      receiver: ticket$/      receiver: ntfy-tickets/' \
+  "$scratch/ticket-route/alertmanager.yml.j2"
+expect_failure ticket-route 'WARNING: Expected receivers did not match resolved receivers.'
+
 copy_inputs "$scratch/config"
 cat > "$scratch/config/alertmanager.yml.j2" <<'YAML'
 route:

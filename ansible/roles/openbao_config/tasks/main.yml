@@ -49,14 +49,34 @@
     fail_msg: openbao_approles and openbao_jwt_roles names must be unique across both, because each names a policy
     quiet: true
 
-# A string binding refuses a claim sent as a number, so every bound value must be a string.
-- name: OpenBao config | Require each JWT role to bind string claims
+# A string binding refuses a claim sent as a number. A list may bind only the two claims named
+# below; a mapping passes Ansible's sequence test but OpenBao cannot sign in with it (decision 86).
+- name: OpenBao config | Require each JWT role to bind strings or lists of strings
+  vars:
+    openbao_config_claim_values: "{{ item.bound_claims | dict2items | map(attribute='value') | list }}"
+    openbao_config_claim_lists: "{{ openbao_config_claim_values | reject('string') | reject('mapping') | select('sequence') | list }}"
   ansible.builtin.assert:
     that:
       - item.bound_claims is mapping
-      - item.bound_claims | length > 0
-      - item.bound_claims | dict2items | map(attribute='value') | reject('string') | list | length == 0
-    fail_msg: "openbao_jwt_roles entry {{ item.name }} must bind at least one claim, and every claim value must be a string"
+      - openbao_config_claim_values | length > 0
+      - openbao_config_claim_values | reject('string') | list == openbao_config_claim_lists
+      - openbao_config_claim_values | reject | list | length == 0
+      - openbao_config_claim_lists | sum(start=[]) | reject('string') | list | length == 0
+      - openbao_config_claim_lists | sum(start=[]) | reject | list | length == 0
+    fail_msg: >-
+      openbao_jwt_roles entry {{ item.name }} must bind at least one claim, and every claim value
+      must be a non-empty string or a non-empty list of non-empty strings
+    quiet: true
+  loop: "{{ openbao_jwt_roles }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: OpenBao config | Allow a list only on repository_id and event_name
+  ansible.builtin.assert:
+    that: >-
+      item.bound_claims | dict2items | rejectattr('value', 'string') | map(attribute='key')
+      | reject('in', ['repository_id', 'event_name']) | list | length == 0
+    fail_msg: "openbao_jwt_roles entry {{ item.name }} may bind a list only to repository_id or event_name"
     quiet: true
   loop: "{{ openbao_jwt_roles }}"
   loop_control:

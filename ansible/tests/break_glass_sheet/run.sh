@@ -91,13 +91,37 @@ aws create-bucket --bucket b2glass-locked --object-lock-enabled-for-bucket >"$wo
 printf 'one restored file\n' >"$work/source"
 setfattr -n security.selinux -v system_u:object_r:var_lib_t:s0 "$work/source" ||
   fail 'fixture must carry security.selinux'
+printf 'second restored file\n' >"$work/second"
+setfattr -n security.selinux -v system_u:object_r:var_lib_t:s0 "$work/second" ||
+  fail 'second fixture must carry security.selinux'
 seed_restic() {
   podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
-    -e RESTIC_PASSWORD=test-b2-password -v "$work/source:/source:ro" "$restic_image" \
+    -e RESTIC_PASSWORD=test-b2-password -v "$work/source:/source:ro" -v "$work/second:/second:ro" "$restic_image" \
     -r "s3:$endpoint/b2glass-locked/restic" "$@"
 }
 seed_restic init >"$work/restic-init.log"
 seed_restic backup /source >"$work/restic-backup.log"
+seed_restic backup /second >"$work/restic-backup-second.log"
+curl -fsS -u test-master-id:test-master-secret -H 'Content-Type: application/json' \
+  -d '{"accountId":"test-account","bucketName":"b2glass-empty","bucketType":"allPrivate","fileLockEnabled":true}' \
+  "$base/b2api/v4/b2_create_bucket" >"$work/fake-bucket-empty.json"
+podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
+  -e RESTIC_PASSWORD=test-b2-password "$restic_image" \
+  -r "s3:$endpoint/b2glass-empty/restic" init >"$work/restic-init-empty.log"
+curl -fsS -u test-master-id:test-master-secret -H 'Content-Type: application/json' \
+  -d '{"accountId":"test-account","bucketName":"b2glass-hollow","bucketType":"allPrivate","fileLockEnabled":true}' \
+  "$base/b2api/v4/b2_create_bucket" >"$work/fake-bucket-hollow.json"
+mkdir "$work/tally"
+printf 'last restored file\n' >"$work/zz-last"
+hollow_restic() {
+  podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver -e AWS_SECRET_ACCESS_KEY=test-driver-secret \
+    -e RESTIC_PASSWORD=test-b2-password -v "$work/source:/source:ro" -v "$work/tally:/tally:ro" \
+    -v "$work/zz-last:/zz-last:ro" "$restic_image" -r "s3:$endpoint/b2glass-hollow/restic" "$@"
+}
+hollow_restic init >"$work/restic-hollow-init.log"
+hollow_restic backup /source >"$work/restic-hollow-source.log"
+hollow_restic backup /tally >"$work/restic-hollow-tally.log"
+hollow_restic backup /zz-last >"$work/restic-hollow-zz-last.log"
 mkdir "$work/unfiltered"
 if podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-driver \
   -e AWS_SECRET_ACCESS_KEY=test-driver-secret -e RESTIC_PASSWORD=test-b2-password \
@@ -223,5 +247,7 @@ restart_weed test-glass-secret Read,List
 TEST_B2_PASSWORD=wrong-repository-password failure_case bad_password "Restore with the sheet's key failed for testhost. restic said: "
 grep -Fq 'wrong password or no key found' "$work/bad_password.log" || fail 'bad_password restic error'
 TEST_B2_PASSWORD=test-b2-password
+TEST_BUCKET=b2glass-empty failure_case empty_repository "The sheet's key found no snapshot in testhost's B2 repository"
+TEST_BUCKET=b2glass-hollow failure_case hollow_set "Restore with the sheet's key failed for testhost. restic said: "
 failure_case writable "B2 would accept uploads from the sheet's key for b2glass-locked. b2 said: HTTP 200" writeFiles
 printf 'break-glass-sheet driver: all cases passed\n'

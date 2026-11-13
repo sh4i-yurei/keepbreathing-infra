@@ -1,0 +1,59 @@
+---
+- name: Break-glass sheet | Make path set folder
+  ansible.builtin.file:
+    path: "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}/{{ break_glass_sheet_set_index }}"
+    state: directory
+    mode: "0700"
+  no_log: true
+
+- name: Break-glass sheet | Run sheet restore for path set
+  ansible.builtin.command:
+    argv: >-
+      {{ ['podman', 'run', '--rm', '--network', 'host', '--env-file',
+          break_glass_sheet_temp.path ~ '/' ~ break_glass_sheet_target.machine ~ '.env',
+          '-v', break_glass_sheet_temp.path ~ '/' ~ break_glass_sheet_target.machine ~ '/' ~ (break_glass_sheet_set_index | string) ~ ':/restore:Z',
+          restic_image, '-r',
+          's3:' ~ break_glass_sheet_master_auth.json.apiInfo.storageApi.s3ApiUrl ~ '/' ~ break_glass_sheet_target.name ~ '/restic',
+          '--no-lock', 'restore', 'latest']
+         + (['--path'] | product(break_glass_sheet_path_set) | flatten | list)
+         + ['--target', '/restore', '--exclude-xattr', 'security.selinux', '--verify'] }}
+  register: break_glass_sheet_restore
+  failed_when: false
+  changed_when: false
+  no_log: true
+
+- name: Break-glass sheet | Scrub restore output for a failed proof
+  ansible.builtin.set_fact:
+    break_glass_sheet_scrubbed_output: >-
+      {{ ((break_glass_sheet_restore.stderr
+            if break_glass_sheet_restore.stderr | length > 0
+            else break_glass_sheet_restore.stdout).splitlines()[-20:] | join(' | '))
+         | replace(break_glass_sheet_new_key.json.applicationKeyId, '<key-id>')
+         | replace(break_glass_sheet_new_key.json.applicationKey, '<key>')
+         | replace(b2_copy_passwords[break_glass_sheet_target.machine].b2, '<password>') }}
+  no_log: true
+
+- name: Break-glass sheet | Identify restore output for a failed proof
+  ansible.builtin.set_fact:
+    break_glass_sheet_proof_tool: restic
+  no_log: true
+
+- name: Break-glass sheet | Find restored regular file
+  ansible.builtin.command:
+    argv:
+      - find
+      - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}/{{ break_glass_sheet_set_index }}"
+      - -type
+      - f
+      - -print
+      - -quit
+  register: break_glass_sheet_restored_file
+  changed_when: false
+  no_log: true
+
+- name: Break-glass sheet | Require successful nonempty restore
+  ansible.builtin.assert:
+    that:
+      - break_glass_sheet_restore.rc == 0
+      - break_glass_sheet_restored_file.stdout | length > 0
+  no_log: true

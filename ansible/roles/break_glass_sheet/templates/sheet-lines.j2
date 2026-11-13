@@ -5,6 +5,12 @@
 {% set key_id = break_glass_sheet_new_key.json.applicationKeyId %}
 {% set key = break_glass_sheet_new_key.json.applicationKey %}
 {% set _ = lines.append(target.machine ~ ': bucket ' ~ target.name ~ ', repository password ' ~ password) %}
-{% set _ = lines.append(target.machine ~ ' restore: podman run --rm --network host -e AWS_ACCESS_KEY_ID=' ~ key_id ~ ' -e AWS_SECRET_ACCESS_KEY=' ~ key ~ ' -e RESTIC_PASSWORD=' ~ password ~ ' -v ./restore:/restore:Z ' ~ restic_image_tag ~ ' -r s3:' ~ endpoint ~ '/' ~ target.name ~ '/restic --no-lock restore latest --target /restore --exclude-xattr security.selinux --verify') %}
+{% for path_set in break_glass_sheet_path_sets[target.machine] %}
+{% set restore_paths = [] %}
+{% for path in path_set %}
+{% set _ = restore_paths.append(' --path ' ~ path) %}
+{% endfor %}
+{% set _ = lines.append(target.machine ~ ' restore ' ~ (path_set | join(' ')) ~ ': podman run --rm --network host -e AWS_ACCESS_KEY_ID=' ~ key_id ~ ' -e AWS_SECRET_ACCESS_KEY=' ~ key ~ ' -e RESTIC_PASSWORD=' ~ password ~ ' -v ./restore:/restore:Z ' ~ restic_image_tag ~ ' -r s3:' ~ endpoint ~ '/' ~ target.name ~ '/restic --no-lock restore latest' ~ (restore_paths | join('')) ~ ' --target /restore --exclude-xattr security.selinux --verify') %}
+{% endfor %}
 {% endfor %}
 {{ lines | to_yaml }}

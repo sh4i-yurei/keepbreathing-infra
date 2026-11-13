@@ -23,10 +23,15 @@ if case == "sheet":
         "B2 key: test-glass-secret",
         f"S3 endpoint: {endpoint}",
         "testhost: bucket b2glass-locked, repository password test-b2-password",
-        "testhost restore: podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-key-glass "
+        "testhost restore /second: podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-key-glass "
         "-e AWS_SECRET_ACCESS_KEY=test-glass-secret -e RESTIC_PASSWORD=test-b2-password "
         "-v ./restore:/restore:Z docker.io/restic/restic:0.19.1 "
-        f"-r s3:{endpoint}/b2glass-locked/restic --no-lock restore latest --target /restore "
+        f"-r s3:{endpoint}/b2glass-locked/restic --no-lock restore latest --path /second --target /restore "
+        "--exclude-xattr security.selinux --verify",
+        "testhost restore /source: podman run --rm --network host -e AWS_ACCESS_KEY_ID=test-key-glass "
+        "-e AWS_SECRET_ACCESS_KEY=test-glass-secret -e RESTIC_PASSWORD=test-b2-password "
+        "-v ./restore:/restore:Z docker.io/restic/restic:0.19.1 "
+        f"-r s3:{endpoint}/b2glass-locked/restic --no-lock restore latest --path /source --target /restore "
         "--exclude-xattr security.selinux --verify",
     ]
     assert value == expected, (value, expected)

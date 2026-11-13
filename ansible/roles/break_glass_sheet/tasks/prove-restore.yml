@@ -22,7 +22,7 @@
     mode: "0600"
   no_log: true
 
-- name: Break-glass sheet | Run sheet restore for machine
+- name: Break-glass sheet | List snapshots for machine
   ansible.builtin.command:
     argv:
       - podman
@@ -32,56 +32,67 @@
       - host
       - --env-file
       - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}.env"
-      - -v
-      - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}:/restore:Z"
       - "{{ restic_image }}"
       - -r
       - "s3:{{ break_glass_sheet_master_auth.json.apiInfo.storageApi.s3ApiUrl }}/{{ break_glass_sheet_target.name }}/restic"
       - --no-lock
-      - restore
-      - latest
-      - --target
-      - /restore
-      - --exclude-xattr
-      - security.selinux
-      - --verify
-  register: break_glass_sheet_restore
+      - snapshots
+      - --json
+  register: break_glass_sheet_listing
   failed_when: false
   changed_when: false
   no_log: true
 
-- name: Break-glass sheet | Scrub restore output for a failed proof
+- name: Break-glass sheet | Scrub listing output for a failed proof
   ansible.builtin.set_fact:
     break_glass_sheet_scrubbed_output: >-
-      {{ ((break_glass_sheet_restore.stderr
-            if break_glass_sheet_restore.stderr | length > 0
-            else break_glass_sheet_restore.stdout).splitlines()[-20:] | join(' | '))
+      {{ ((break_glass_sheet_listing.stderr
+            if break_glass_sheet_listing.stderr | length > 0
+            else break_glass_sheet_listing.stdout).splitlines()[-20:] | join(' | '))
          | replace(break_glass_sheet_new_key.json.applicationKeyId, '<key-id>')
          | replace(break_glass_sheet_new_key.json.applicationKey, '<key>')
          | replace(b2_copy_passwords[break_glass_sheet_target.machine].b2, '<password>') }}
+  when: break_glass_sheet_listing.rc != 0
   no_log: true
 
-- name: Break-glass sheet | Identify restore output for a failed proof
+- name: Break-glass sheet | Identify listing output for a failed proof
   ansible.builtin.set_fact:
     break_glass_sheet_proof_tool: restic
+  when: break_glass_sheet_listing.rc != 0
   no_log: true
 
-- name: Break-glass sheet | Find restored regular file
-  ansible.builtin.command:
-    argv:
-      - find
-      - "{{ break_glass_sheet_temp.path }}/{{ break_glass_sheet_target.machine }}"
-      - -type
-      - f
-      - -print
-      - -quit
-  register: break_glass_sheet_restored_file
-  changed_when: false
+- name: Break-glass sheet | Require successful listing
+  ansible.builtin.assert:
+    that: break_glass_sheet_listing.rc == 0
   no_log: true
 
-- name: Break-glass sheet | Require successful nonempty restore
+- name: Break-glass sheet | Record machine path sets
+  ansible.builtin.set_fact:
+    break_glass_sheet_path_sets: >-
+      {{ break_glass_sheet_path_sets | default({}) | combine({
+           break_glass_sheet_target.machine:
+             break_glass_sheet_listing.stdout | from_json
+             | map(attribute='paths') | map('sort') | unique | sort
+         }) }}
+  no_log: true
+
+- name: Break-glass sheet | Name empty repository failure
+  ansible.builtin.set_fact:
+    break_glass_sheet_proof_failure: "The sheet's key found no snapshot in {{ break_glass_sheet_target.machine }}'s B2 repository"
+    break_glass_sheet_proof_tool: ""
+  when: break_glass_sheet_path_sets[break_glass_sheet_target.machine] | length == 0
+  no_log: true
+
+- name: Break-glass sheet | Require machine path sets
   ansible.builtin.assert:
     that:
-      - break_glass_sheet_restore.rc == 0
-      - break_glass_sheet_restored_file.stdout | length > 0
+      - break_glass_sheet_path_sets[break_glass_sheet_target.machine] | length > 0
+  no_log: true
+
+- name: Break-glass sheet | Prove each machine path set
+  ansible.builtin.include_tasks: prove-path-set.yml
+  loop: "{{ break_glass_sheet_path_sets[break_glass_sheet_target.machine] }}"
+  loop_control:
+    loop_var: break_glass_sheet_path_set
+    index_var: break_glass_sheet_set_index
   no_log: true

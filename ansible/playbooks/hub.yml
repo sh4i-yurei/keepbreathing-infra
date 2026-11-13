@@ -78,6 +78,11 @@
       vars:
         tailscale_service_name: openbao
         tailscale_service_port: "{{ openbao_port }}"
+    # OpenBao must be served before its Gatus check can provide a certificate reading (decision 81).
+    - name: Verify Gatus's ticket readings
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: gatus-readings-verify
     - name: Back up OpenBao's snapshot nightly
       ansible.builtin.import_role:
         name: openbao_backup

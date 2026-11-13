@@ -14,6 +14,9 @@ image_build: false
 # The MagicDNS domain shared by the hub's existing Services and new Service roles.
 tailnet_domain: tail4cf2f3.ts.net
 
+# The site's domain, shared by its web and mail checks.
+site_domain: keepbreath.ing
+
 # restic v0.19.1
 restic_image: docker.io/restic/restic@sha256:136600b6ff6843d61d355f7f71f460a166429f35de6fd11b568fece3c9a4d510
 restic_image_tag: docker.io/restic/restic:0.19.1

@@ -26,8 +26,8 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[BODY].healthy == true"
-      - "[CERTIFICATE_EXPIRATION] > 336h"
-    # Alert when ntfy's certificate nears expiry.
+    extra-labels:
+      certificate_ticket: "true"
     alerts:
       - type: ntfy
 
@@ -38,7 +38,8 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[BODY].database == ok"
-      - "[CERTIFICATE_EXPIRATION] > 336h"
+    extra-labels:
+      certificate_ticket: "true"
     alerts:
       - type: ntfy
 
@@ -56,27 +57,29 @@ endpoints:
 
   - name: apex
     group: site
-    url: "https://keepbreath.ing/"
+    url: "https://{{ hub_site_domain }}/"
     interval: 2m
     conditions:
       - "[STATUS] == 200"
-      - "[CERTIFICATE_EXPIRATION] > 336h"
+    extra-labels:
+      certificate_ticket: "true"
     alerts:
       - type: ntfy
 
   - name: www
     group: site
-    url: "https://www.keepbreath.ing/"
+    url: "https://www.{{ hub_site_domain }}/"
     interval: 2m
     conditions:
       - "[STATUS] == 200"
-      - "[CERTIFICATE_EXPIRATION] > 336h"
+    extra-labels:
+      certificate_ticket: "true"
     alerts:
       - type: ntfy
 
   - name: domain-expiration
     group: site
-    url: "https://keepbreath.ing/"
+    url: "https://{{ hub_site_domain }}/"
     interval: 24h
     conditions:
       - "[DOMAIN_EXPIRATION] > 720h"
@@ -85,7 +88,7 @@ endpoints:
 
   - name: contact-form
     group: site
-    url: "https://keepbreath.ing/api/challenge"
+    url: "https://{{ hub_site_domain }}/api/challenge"
     interval: 2m
     conditions:
       - "[STATUS] == 200"
@@ -95,11 +98,12 @@ endpoints:
 
   - name: mail-submission
     group: mail
-    url: "starttls://mail.keepbreath.ing:587"
+    url: "starttls://mail.{{ hub_site_domain }}:587"
     interval: 15m
     conditions:
       - "[CONNECTED] == true"
-      - "[CERTIFICATE_EXPIRATION] > 336h"
+    extra-labels:
+      certificate_ticket: "true"
     alerts:
       - type: ntfy
 
@@ -109,7 +113,8 @@ endpoints:
     interval: 2m
     conditions:
       - "[STATUS] == 200"
-      - "[CERTIFICATE_EXPIRATION] > 336h"
+    extra-labels:
+      certificate_ticket: "true"
     alerts:
       - type: ntfy
 
@@ -123,8 +128,7 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[BODY].workflow_runs[0].conclusion == success"
-    alerts:
-      - type: ntfy
+    # Its notice is the GatusDeployFailed rule in prometheus-rules.yml.
 
   - name: deploy-queue
     group: github
@@ -136,9 +140,7 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[BODY].total_count == 0"
-    alerts:
-      - type: ntfy
-        failure-threshold: 3
+    # Its notice is the GatusDeployQueued rule in prometheus-rules.yml.
 
   - name: runner
     group: github
@@ -150,5 +152,4 @@ endpoints:
     conditions:
       - "[STATUS] == 200"
       - "[BODY].runners[0].status == online"
-    alerts:
-      - type: ntfy
+    # Its notice is the GatusRunnerOffline rule in prometheus-rules.yml.

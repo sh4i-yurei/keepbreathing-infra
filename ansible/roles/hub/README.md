@@ -15,7 +15,7 @@ separate per-host basic-auth password; the droplets also use their own self-sign
 The role writes only passwords to `0600` files under Prometheus's configuration folder;
 `prometheus.yml` contains the usernames and file paths.
 
-The five alerting-rule files contain 67 alerting rules. A sixth file contains node_exporter's
+The five alerting-rule files contain 71 alerting rules. A sixth file contains node_exporter's
 recording rules. The `ContainerMissing` rule is rendered separately from
 `container-missing-rules.yml.j2`. Its list of expected containers comes from the base names of every
 `templates/*.container.j2` file. Remote lists live with their machines in `host_vars`. It waits five

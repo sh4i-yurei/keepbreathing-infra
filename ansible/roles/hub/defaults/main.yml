@@ -5,6 +5,9 @@ hub_backup_mount_point: /srv/backup
 # The tailnet's MagicDNS domain. A Tailscale Service named x is reached at x.<this domain>.
 hub_tailnet_domain: "{{ tailnet_domain }}"
 
+# The site's domain, which its web and mail hostnames end in.
+hub_site_domain: "{{ site_domain }}"
+
 # ntfy's image, pinned to the digest of the v2.29.0 tag (Notification service decisions #11
 # and #15). The digest fixes the exact image; hub_ntfy_version is changed with it.
 hub_ntfy_image: docker.io/binwiederhier/ntfy@sha256:4c599cf0818965782f93f652bd843e92714992e84d6b88ad17713dc0951cda1f

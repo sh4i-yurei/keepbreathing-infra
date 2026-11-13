@@ -39,6 +39,8 @@ openbao_transit_keys: [tofu-durable, tofu-short-lived]
 # Infrastructure as code's GitHub jobs sign in at jwt/ (OpenBao on the hub decisions 65, 66 and 71).
 # iac-durable is on the list because GitHub's durable environment exists and is protected (decision 65).
 # iac-durable writes each site's staging service token into iac-short-lived's folder (decision 83).
+# iac-bake and iac-sweep each bind one workflow file on main; iac-sweep also binds scheduled runs
+# and reads the short-lived provider tokens and state-store login by name (decisions 84 and 90).
 openbao_jwt_audience: "https://openbao.{{ tailnet_domain }}"
 openbao_jwt_roles:
   - name: iac-plan
@@ -60,6 +62,26 @@ openbao_jwt_roles:
       repository_id: "1305427147"
       job_workflow_ref: sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main
     transit_keys: [tofu-short-lived]
+  - name: iac-bake
+    bound_claims:
+      repository_id: "1368108961"
+      workflow_ref: sh4i-yurei/keepbreathing-infra/.github/workflows/bake.yml@refs/heads/main
+    transit_keys: []
+  - name: iac-sweep
+    bound_claims:
+      repository_id: "1368108961"
+      workflow_ref: sh4i-yurei/keepbreathing-infra/.github/workflows/sweep.yml@refs/heads/main
+      event_name: schedule
+    transit_keys: [tofu-short-lived]
+    extra_paths:
+      - path: secret/data/iac-short-lived/digitalocean-token
+        capabilities: [read]
+      - path: secret/data/iac-short-lived/cloudflare-token
+        capabilities: [read]
+      - path: secret/data/iac-short-lived/state-store-access-key-id
+        capabilities: [read]
+      - path: secret/data/iac-short-lived/state-store-secret-access-key
+        capabilities: [read]
 openbao_seal_key_id: hub-1
 openbao_seal_key: "{{ lookup('vault_secret', 'openbao seal (hub)') }}"
 openbao_keepbreath0_password: "{{ lookup('vault_secret', 'openbao keepbreath0 (hub)') }}"

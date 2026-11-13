@@ -350,4 +350,29 @@ failed_at "$last_play_log" 'OpenBao backup | Require the openbao-snapshot AppRol
 recap "$last_play_log" 0 1
 printf 'case 9: a wrong openbao-snapshot account is refused with changed=0\n'
 
+# Case 10: another job saves a snapshot in the same repository after OpenBao's run.
+undo_dropin() {
+  rm -rf -- /etc/systemd/system/openbao-backup.service.d
+  systemctl daemon-reload
+}
+mkdir /etc/systemd/system/openbao-backup.service.d
+undo_add 'remove the other-path drop-in' undo_dropin
+cat > /etc/systemd/system/openbao-backup.service.d/other-path.conf <<EOF
+[Service]
+ExecStartPost=runuser -u bbtest -- env HOME=$home XDG_RUNTIME_DIR=/run/user/$bb_uid podman run --rm --network host --security-opt label=disable --env-file $env_file $restic_image backup --stdin-filename other.snap --stdin-from-command -- echo other
+EOF
+systemctl daemon-reload
+count=$(snapshot_count)
+play role
+recap "$last_play_log" 0 0
+restic_bb snapshots --json >"$work/snapshots-after-other-path.json"
+python3 - "$work/snapshots-after-other-path.json" "$count" <<'PY' || fail 'the run must add one /openbao.snap snapshot and then one /other.snap snapshot'
+import json, sys
+snapshots = sorted(json.load(open(sys.argv[1])), key=lambda snapshot: snapshot['time'])
+assert len(snapshots) == int(sys.argv[2]) + 2, snapshots
+assert snapshots[-2]['paths'] == ['/openbao.snap'], snapshots[-2:]
+assert snapshots[-1]['paths'] == ['/other.snap'], snapshots[-2:]
+PY
+printf 'case 10: another path saved during the run leaves the verify passing with changed=0\n'
+
 printf 'openbao_backup driver: all cases passed\n'

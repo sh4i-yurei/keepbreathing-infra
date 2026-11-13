@@ -4,7 +4,8 @@ Everything that describes the machines behind keepbreath.ing, as opposed to the
 site itself, which lives in the `keepbreathing` repository. Ansible roles and the
 inventory, the tailnet policy file, and later Packer templates, Terraform, the hub's
 Quadlet units and the alert rules. Operational issues that are not code bugs (a
-certificate expiring, a disk filling, the runner not registered) are filed here.
+certificate expiring, a disk filling, the runner not registered) become tickets in the private
+platform-tickets repository.
 
 Private on purpose. A repository like this is a map of the estate even with no
 secrets in it, and its issues are a live feed of weak moments.

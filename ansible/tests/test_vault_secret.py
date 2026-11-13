@@ -876,6 +876,7 @@ def _render_context(vault, monkeypatch):
         "hub_prometheus_port": 9090,
         "hub_loki_port": 3100,
         "hub_alertmanager_port": 9093,
+        "hub_site_domain": "keepbreath.ing",
     }
     return variables
 

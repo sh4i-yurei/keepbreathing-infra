@@ -85,6 +85,22 @@ def is_openbao_backup(task):
     return task.startswith("openbao_backup : ")
 
 
+def test_gatus_readings_follow_tailnet_service_and_precede_backup():
+    tasks = play_tasks(list_tasks("playbooks/hub.yml"), "Hub services")
+    served = max(
+        index
+        for index, task in enumerate(tasks)
+        if task.startswith("tailscale_service : ")
+    )
+    readings = first(
+        tasks,
+        lambda task: task.startswith("hub : gatus-readings-verify | "),
+        "gatus-readings-verify task",
+    )
+    backup = first(tasks, is_openbao_backup, "openbao_backup task")
+    assert served < readings < backup
+
+
 def test_hub_services_run_openbao_backup_last_after_tailscale_service():
     tasks = play_tasks(list_tasks("playbooks/hub.yml"), "Hub services")
     backup = first(tasks, is_openbao_backup, "openbao_backup task")

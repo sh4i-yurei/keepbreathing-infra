@@ -1,0 +1,77 @@
+---
+# The certificate reading for OpenBao exists only after its Tailscale Service is available.
+- name: gatus-readings-verify | Only on a real run
+  when: not ansible_check_mode
+  block:
+    - name: gatus-readings-verify | Read the deployed Gatus configuration
+      ansible.builtin.slurp:
+        src: "/home/{{ hub_container_user }}/.config/gatus/config.yaml"
+      become: true
+      register: hub_gatus_config_slurp
+      no_log: true
+
+    - name: gatus-readings-verify | Summarize the deployed checks
+      ansible.builtin.set_fact:
+        hub_gatus_checks: "{{ hub_gatus_config_slurp.content | b64decode | from_yaml | gatus_check_summary }}"
+      no_log: true
+
+    - name: gatus-readings-verify | Require a labelled check for every domain host
+      ansible.builtin.assert:
+        that:
+          - "hub_gatus_checks | gatus_unlabelled_hosts([hub_tailnet_domain, hub_site_domain]) | length == 0"
+        fail_msg: >-
+          Every host under {{ hub_tailnet_domain }} and {{ hub_site_domain }} that a Gatus check
+          reaches over HTTPS or STARTTLS needs a check labelled certificate_ticket: "true".
+          Hosts without one:
+          {{ hub_gatus_checks | gatus_unlabelled_hosts([hub_tailnet_domain, hub_site_domain]) }}.
+        quiet: true
+
+    - name: gatus-readings-verify | Read the deployed Prometheus rules
+      ansible.builtin.slurp:
+        src: "/home/{{ hub_container_user }}/.config/prometheus/rules.yml"
+      become: true
+      register: hub_gatus_rules
+
+    - name: gatus-readings-verify | Wait for labelled certificate readings
+      block:
+        - name: gatus-readings-verify | Query certificate readings
+          ansible.builtin.uri:
+            url: >-
+              http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/query?query={{
+              'gatus_results_certificate_expiration_seconds{certificate_ticket="true"}' | urlencode }}
+            return_content: true
+          register: hub_gatus_cert_query
+          until: >-
+            hub_gatus_cert_query.json.status == 'success'
+            and (hub_gatus_checks | gatus_checks_without_reading(
+            [hub_tailnet_domain, hub_site_domain], hub_gatus_cert_query.json.data.result)) | length == 0
+          retries: 24
+          delay: 10
+      rescue:
+        - name: gatus-readings-verify | Report missing certificate readings
+          ansible.builtin.fail:
+            msg: >-
+              Gatus's labelled checks have no certificate reading with certificate_ticket in
+              Prometheus:
+              {{ hub_gatus_checks | gatus_checks_without_reading([hub_tailnet_domain, hub_site_domain], hub_gatus_cert_query.json.data.result | default([])) }}.
+
+    - name: gatus-readings-verify | Wait for rule key readings
+      block:
+        - name: gatus-readings-verify | Query rule key readings
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ hub_prometheus_port }}/api/v1/query?query={{ 'gatus_results_endpoint_success' | urlencode }}"
+            return_content: true
+          register: hub_gatus_key_query
+          until: >-
+            hub_gatus_key_query.json.status == 'success'
+            and (hub_gatus_rules.content | b64decode | from_yaml | gatus_rule_keys
+            | gatus_keys_without_reading(hub_gatus_key_query.json.data.result)) | length == 0
+          retries: 24
+          delay: 10
+      rescue:
+        - name: gatus-readings-verify | Report missing rule key readings
+          ansible.builtin.fail:
+            msg: >-
+              These gatus_key annotations in Prometheus's rules have no Gatus reading:
+              {{ hub_gatus_rules.content | b64decode | from_yaml | gatus_rule_keys
+              | gatus_keys_without_reading(hub_gatus_key_query.json.data.result | default([])) }}.

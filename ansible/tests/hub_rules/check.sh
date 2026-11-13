@@ -103,4 +103,12 @@ amtool config routes test --config.file=alertmanager.yml --verify.receivers=ntfy
 amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
   alertname=NodeSystemdServiceFailed severity=warning name=sshd.service
 
+# Gatus's GitHub and certificate warnings reach tickets (OpenBao on the hub decisions 14 and 25).
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
+  alertname=GatusDeployFailed severity=warning key=github_last-deploy
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
+  alertname=GatusRunnerOffline severity=warning key=github_runner
+amtool config routes test --config.file=alertmanager.yml --verify.receivers=ticket \
+  alertname=CertificateExpiringSoon severity=warning certificate_ticket=true key=site_apex
+
 echo 'hub rules: all checks passed'

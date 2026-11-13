@@ -133,3 +133,126 @@ tests:
             exp_annotations:
               summary: An Alertmanager instance failed to send notifications.
               description: Alertmanager 169.254.1.3:9093 failed to send 100% of notifications to webhook.
+
+  # Each test feeds the named key and a different failing key, so its expression and annotation
+  # must agree (OpenBao on the hub decisions 25 and 42).
+  - interval: 1m
+    input_series:
+      - series: 'gatus_results_endpoint_success{group="github",key="github_last-deploy",name="last-deploy",type="HTTP"}'
+        values: '1 0x7 1x2'
+      - series: 'gatus_results_endpoint_success{group="github",key="github_deploy-queue",name="deploy-queue",type="HTTP"}'
+        values: '0x10'
+      - series: 'gatus_results_endpoint_success{group="github",key="github_runner",name="runner",type="HTTP"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: GatusDeployFailed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: GatusDeployFailed
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: GatusDeployFailed
+        exp_alerts:
+          - exp_labels:
+              group: github
+              key: github_last-deploy
+              name: last-deploy
+              type: HTTP
+              severity: warning
+            exp_annotations:
+              gatus_key: github_last-deploy
+              summary: The site's last deploy has not succeeded for 5 minutes.
+              description: >-
+                Gatus has found the latest completed run of keepbreathing's deploy workflow failed,
+                or could not read it, for 5 minutes.
+      - eval_time: 9m
+        alertname: GatusDeployFailed
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'gatus_results_endpoint_success{group="github",key="github_deploy-queue",name="deploy-queue",type="HTTP"}'
+        values: '1 0x12 1x2'
+      - series: 'gatus_results_endpoint_success{group="github",key="github_last-deploy",name="last-deploy",type="HTTP"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: GatusDeployQueued
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: GatusDeployQueued
+        exp_alerts:
+          - exp_labels:
+              group: github
+              key: github_deploy-queue
+              name: deploy-queue
+              type: HTTP
+              severity: warning
+            exp_annotations:
+              gatus_key: github_deploy-queue
+              summary: A deploy has sat queued for 10 minutes.
+              description: >-
+                Gatus has found a queued run of keepbreathing's deploy workflow, or could not read
+                the queue, for 10 minutes.
+      - eval_time: 14m
+        alertname: GatusDeployQueued
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'gatus_results_endpoint_success{group="github",key="github_runner",name="runner",type="HTTP"}'
+        values: '1 0x62 1x2'
+      - series: 'gatus_results_endpoint_success{group="github",key="github_deploy-queue",name="deploy-queue",type="HTTP"}'
+        values: '0x65'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: GatusRunnerOffline
+        exp_alerts: []
+      - eval_time: 61m
+        alertname: GatusRunnerOffline
+        exp_alerts:
+          - exp_labels:
+              group: github
+              key: github_runner
+              name: runner
+              type: HTTP
+              severity: warning
+            exp_annotations:
+              gatus_key: github_runner
+              summary: GitHub has not seen the deploy runner online for an hour.
+              description: >-
+                Gatus has found keepbreathing's self-hosted runner offline or unregistered, or could
+                not read its status, for an hour.
+      - eval_time: 64m
+        alertname: GatusRunnerOffline
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'gatus_results_certificate_expiration_seconds{certificate_ticket="true",group="hub",key="hub_ntfy",name="ntfy",type="HTTP"}'
+        values: '1300000 1209600x34 7776000x2'
+      - series: 'gatus_results_certificate_expiration_seconds{certificate_ticket="true",group="site",key="site_apex",name="apex",type="HTTP"}'
+        values: '1209601x37'
+      - series: 'gatus_results_certificate_expiration_seconds{group="github",key="github_runner",name="runner",type="HTTP"}'
+        values: '1000x37'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CertificateExpiringSoon
+        exp_alerts: []
+      - eval_time: 31m
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels:
+              certificate_ticket: "true"
+              group: hub
+              key: hub_ntfy
+              name: ntfy
+              type: HTTP
+              severity: warning
+            exp_annotations:
+              summary: The certificate behind Gatus's ntfy check expires within 14 days.
+              description: The certificate Gatus's hub/ntfy check sees expires in 14d 0h 0m 0s.
+      - eval_time: 37m
+        alertname: CertificateExpiringSoon
+        exp_alerts: []

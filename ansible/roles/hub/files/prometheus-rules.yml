@@ -123,3 +123,54 @@ groups:
             The ticket band's receiver on the hub is stopped, held back at boot or not
             answering through nginx on {{ $labels.instance }}. Alertmanager can't deliver tickets to
             it until it is back.
+
+  # Gatus's GitHub and certificate notices become tickets (OpenBao on the hub decisions 14, 25,
+  # 38 and 42).
+  - name: gatus-tickets
+    rules:
+      - alert: GatusDeployFailed
+        expr: gatus_results_endpoint_success{key="github_last-deploy"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          gatus_key: github_last-deploy
+          summary: The site's last deploy has not succeeded for 5 minutes.
+          description: >-
+            Gatus has found the latest completed run of keepbreathing's deploy workflow failed,
+            or could not read it, for 5 minutes.
+
+      - alert: GatusDeployQueued
+        expr: gatus_results_endpoint_success{key="github_deploy-queue"} == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          gatus_key: github_deploy-queue
+          summary: A deploy has sat queued for 10 minutes.
+          description: >-
+            Gatus has found a queued run of keepbreathing's deploy workflow, or could not read
+            the queue, for 10 minutes.
+
+      - alert: GatusRunnerOffline
+        expr: gatus_results_endpoint_success{key="github_runner"} == 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          gatus_key: github_runner
+          summary: GitHub has not seen the deploy runner online for an hour.
+          description: >-
+            Gatus has found keepbreathing's self-hosted runner offline or unregistered, or could
+            not read its status, for an hour.
+
+      - alert: CertificateExpiringSoon
+        expr: gatus_results_certificate_expiration_seconds{certificate_ticket="true"} <= 1209600
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: The certificate behind Gatus's {{ $labels.name }} check expires within 14 days.
+          description: >-
+            The certificate Gatus's {{ $labels.group }}/{{ $labels.name }} check sees expires in
+            {{ $value | humanizeDuration }}.

@@ -19,6 +19,10 @@ argument_specs:
         type: str
         default: tail4cf2f3.ts.net
         description: The tailnet's MagicDNS domain, which a Tailscale Service's hostname ends in.
+      hub_site_domain:
+        type: str
+        default: keepbreath.ing
+        description: The site's domain, which its web and mail hostnames end in.
       hub_ntfy_image:
         type: str
         default: docker.io/binwiederhier/ntfy@sha256:4c599cf0818965782f93f652bd843e92714992e84d6b88ad17713dc0951cda1f

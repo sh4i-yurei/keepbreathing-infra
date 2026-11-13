@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -21,18 +20,16 @@ from jinja2 import Environment
 import pytest
 import yaml
 
+from load_source import load_source
+
 
 ANSIBLE = Path(__file__).resolve().parents[1]
 ROLE = ANSIBLE / "roles/hub"
-PLUGIN = ANSIBLE / "filter_plugins/gatus_checks.py"
 DOMAINS = ["tail4cf2f3.ts.net", "keepbreath.ing"]
 
 
 def plugin():
-    spec = importlib.util.spec_from_file_location("gatus_checks", PLUGIN)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_source("ansible/filter_plugins/gatus_checks.py")
 
 
 def rendered_config(domain="keepbreath.ing"):
@@ -530,5 +527,9 @@ def test_live_task_with_local_prometheus(tmp_path):
 def test_live_task_rejects_unlabelled_host_without_printing_tokens(tmp_path):
     result = run_play(tmp_path, missing_label=True)
     assert result.returncode == 2, result.stdout + result.stderr
-    assert "Hosts without one: ['keepbreath.ing']." in result.stdout
+    assert (
+        "Every host under tail4cf2f3.ts.net and keepbreath.ing that a Gatus check reaches over"
+        ' HTTPS or STARTTLS needs a check labelled certificate_ticket: \\"true\\".'
+        " Hosts without one: ['keepbreath.ing']."
+    ) in result.stdout
     assert "fixture-token" not in result.stdout + result.stderr

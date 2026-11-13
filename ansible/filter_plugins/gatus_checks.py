@@ -58,7 +58,7 @@ def gatus_checks_without_reading(checks, domains, results):
 def gatus_rule_keys(rules):
     return sorted(
         {
-            rule.get("annotations", {}).get("gatus_key")
+            rule["annotations"]["gatus_key"]
             for group in rules["groups"]
             for rule in group["rules"]
             if rule.get("annotations", {}).get("gatus_key")

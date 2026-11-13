@@ -41,6 +41,7 @@ openbao_transit_keys: [tofu-durable, tofu-short-lived]
 # iac-durable writes each site's staging service token into iac-short-lived's folder (decision 83).
 # iac-bake and iac-sweep each bind one workflow file on main; iac-sweep also binds scheduled runs
 # and reads the short-lived provider tokens and state-store login by name (decisions 84 and 90).
+# iac-short-lived signs in only for a pull request's run and the site's own schedule (decisions 86 and 90).
 openbao_jwt_audience: "https://openbao.{{ tailnet_domain }}"
 openbao_jwt_roles:
   - name: iac-plan
@@ -61,6 +62,7 @@ openbao_jwt_roles:
     bound_claims:
       repository_id: "1305427147"
       job_workflow_ref: sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main
+      event_name: [pull_request, schedule]
     transit_keys: [tofu-short-lived]
   - name: iac-bake
     bound_claims:

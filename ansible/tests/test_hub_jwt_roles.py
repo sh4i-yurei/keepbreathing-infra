@@ -1,4 +1,4 @@
-"""The hub's GitHub JWT roles (OpenBao on the hub decisions 65, 71, 84 and 90)."""
+"""The hub's GitHub JWT roles (OpenBao on the hub decisions 65, 71, 84, 86 and 90)."""
 
 from pathlib import Path
 
@@ -65,17 +65,21 @@ def test_iac_durable_binds_the_repository_and_the_durable_environment():
     assert all(isinstance(value, str) for value in role["bound_claims"].values())
 
 
-def test_iac_plan_and_iac_short_lived_keep_their_bindings():
+def test_iac_plan_keeps_its_binding():
     assert jwt_role("iac-plan") == {
         "name": "iac-plan",
         "bound_claims": {"repository_id": REPOSITORY_ID},
         "transit_keys": ["tofu-durable"],
     }
+
+
+def test_iac_short_lived_binds_pull_requests_and_the_schedule():
     assert jwt_role("iac-short-lived") == {
         "name": "iac-short-lived",
         "bound_claims": {
             "repository_id": SITE_REPOSITORY_ID,
             "job_workflow_ref": SHORT_LIVED_WORKFLOW,
+            "event_name": ["pull_request", "schedule"],
         },
         "transit_keys": ["tofu-short-lived"],
     }

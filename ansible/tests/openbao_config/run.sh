@@ -1711,15 +1711,36 @@ refused_before_sign_in "$last_play_log" 'a reserved JWT role name'
 play_fails jwt-shared-name role 'openbao_approles and openbao_jwt_roles names must be unique across both, because each names a policy' \
   "${jwt_args[@]}" -e "$(bad_entry testsvc '{"repository_id":"1"}' '[]')"
 refused_before_sign_in "$last_play_log" 'a JWT role name an AppRole also uses'
-play_fails jwt-no-claims role 'openbao_jwt_roles entry test-empty must bind at least one claim, and every claim value must be a string' \
+play_fails jwt-no-claims role 'openbao_jwt_roles entry test-empty must bind at least one claim, and every claim value must be a non-empty string or a non-empty list of non-empty strings' \
   "${jwt_args[@]}" -e "$(bad_entry test-empty '{}' '[]')"
 refused_before_sign_in "$last_play_log" 'a JWT role binding no claim'
-play_fails jwt-number-claim role 'openbao_jwt_roles entry test-number must bind at least one claim, and every claim value must be a string' \
+play_fails jwt-number-claim role 'openbao_jwt_roles entry test-number must bind at least one claim, and every claim value must be a non-empty string or a non-empty list of non-empty strings' \
   "${jwt_args[@]}" -e "$(bad_entry test-number '{"repository_id":1368108961}' '[]')"
 refused_before_sign_in "$last_play_log" 'a JWT role claim that is not a string'
 play_fails jwt-unlisted-key role 'openbao_jwt_roles entry test-key may list only keys in openbao_transit_keys' \
   "${jwt_args[@]}" -e "$(bad_entry test-key '{"repository_id":"1"}' '["tofu-other"]')"
 refused_before_sign_in "$last_play_log" 'a JWT role listing an unlisted transit key'
+
+for claims in \
+  '{"repository_id":""}' \
+  '{"repository_id":[]}' \
+  '{"repository_id":["1305427147",2000000001]}' \
+  '{"repository_id":[["1305427147"]]}' \
+  '{"repository_id":{"a":"b"}}' \
+  '{"repository_id":["1305427147",""]}' \
+  '{"repository_id":["1305427147",null]}'; do
+  play_fails jwt-bad-claim role 'openbao_jwt_roles entry test-claims must bind at least one claim, and every claim value must be a non-empty string or a non-empty list of non-empty strings' \
+    "${jwt_args[@]}" -e "$(bad_entry test-claims "$claims" '[]')"
+  refused_before_sign_in "$last_play_log" 'a JWT role with a malformed claim'
+done
+for claims in \
+  '{"repository_id":"1368108961","environment":["durable"]}' \
+  '{"repository_id":"1368108961","workflow_ref":["sh4i-yurei/keepbreathing-infra/.github/workflows/bake.yml@refs/heads/main"]}' \
+  '{"repository_id":"1305427147","job_workflow_ref":["sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main"]}'; do
+  play_fails jwt-list-claim role 'openbao_jwt_roles entry test-claims may bind a list only to repository_id or event_name' \
+    "${jwt_args[@]}" -e "$(bad_entry test-claims "$claims" '[]')"
+  refused_before_sign_in "$last_play_log" 'a JWT role listing a protected claim'
+done
 
 # Verify reads the config, each role and each policy back, and the next run writes them back.
 api_expect 204 'keepbreath0 changes test-plan bound_claims' POST auth/jwt/role/test-plan admin_token \
@@ -2168,6 +2189,101 @@ diff - "$reach_rows" <<'ROWS' || fail 'each iac-bake and iac-sweep token must re
 ROWS
 revoke_jwt_token bake_token
 revoke_jwt_token sweep_token
+
+# 3.5g reads the hub's list binding and adds a second site's ordered list binding.
+jwt_roles_lists=$work/jwt-roles-lists.json
+python3 - "$jwt_roles_hub" host_vars/hub.yml "$jwt_roles_lists" "$short_ref" <<'PY'
+import json, sys, yaml
+roles = json.load(open(sys.argv[1]))
+hub = yaml.safe_load(open(sys.argv[2]))
+roles['openbao_jwt_roles'].extend(
+    role for role in hub['openbao_jwt_roles'] if role['name'] == 'iac-short-lived')
+roles['openbao_jwt_roles'].append({
+    'name': 'test-sites',
+    'bound_claims': {
+        'repository_id': ['2000000001', '1305427147'],
+        'job_workflow_ref': sys.argv[4] + '@refs/heads/main',
+        'event_name': ['schedule', 'pull_request'],
+    },
+    'transit_keys': ['tofu-short-lived'],
+})
+json.dump(roles, open(sys.argv[3], 'w'))
+PY
+lists_args=(-e "@$full_list" -e "$both_keys" -e "@$jwt_settings" -e "@$jwt_roles_lists")
+play role --check --diff "${lists_args[@]}"
+recap "$last_play_log" 2
+for name in iac-short-lived test-sites; do
+  reports "$last_play_log" "openbao_config would write the policy $name"
+  reports "$last_play_log" "openbao_config would write the JWT role $name"
+done
+for name in test-plan test-durable test-short iac-bake iac-sweep; do
+  reports_not "$last_play_log" "openbao_config would write the policy $name"
+  reports_not "$last_play_log" "openbao_config would write the JWT role $name"
+done
+api_expect 404 'check mode leaves iac-short-lived role absent' GET auth/jwt/role/iac-short-lived admin_token
+api_expect 404 'check mode leaves test-sites policy absent' GET sys/policies/acl/test-sites admin_token
+play role "${lists_args[@]}"
+recap "$last_play_log" 2
+changed_in_loop "$last_play_log" 'OpenBao config | Write each JWT role policy'
+changed_in_loop "$last_play_log" 'OpenBao config | Write each JWT role'
+jwt_role_is iac-short-lived '{"repository_id":"1305427147","job_workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main","event_name":["pull_request","schedule"]}'
+jwt_role_is test-sites '{"repository_id":["2000000001","1305427147"],"job_workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main","event_name":["schedule","pull_request"]}'
+jwt_role_is iac-sweep '{"repository_id":"1368108961","workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/sweep.yml@refs/heads/main","event_name":"schedule"}'
+jwt_policy_is iac-short-lived tofu-short-lived
+jwt_policy_is test-sites tofu-short-lived
+play role "${lists_args[@]}"
+recap "$last_play_log" 0
+play verify "${lists_args[@]}"
+play role --check --diff "${lists_args[@]}"
+recap "$last_play_log" 0
+api_expect 204 'keepbreath0 widens iac-short-lived events' POST auth/jwt/role/iac-short-lived admin_token \
+  '{"role_type":"jwt","user_claim":"sub","bound_audiences":["https://openbao.test"],"bound_claims_type":"string","bound_claims":{"repository_id":"1305427147","job_workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main","event_name":["pull_request","schedule","push"]},"token_policies":["iac-short-lived"],"token_no_default_policy":true,"token_ttl":1800,"token_max_ttl":1800}'
+play_fails jwt-list-drift verify 'JWT role iac-short-lived must match openbao_jwt_roles' "${lists_args[@]}"
+play role "${lists_args[@]}"
+recap "$last_play_log" 1
+changed_in_loop "$last_play_log" 'OpenBao config | Write each JWT role'
+jwt_role_is iac-short-lived '{"repository_id":"1305427147","job_workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/main","event_name":["pull_request","schedule"]}'
+
+list_claims="{\"sub\":\"repo:sh4i-yurei/keepbreathing:pull_request\",\"repository_id\":\"1305427147\",\"job_workflow_ref\":\"$short_ref@refs/heads/main\",\"event_name\":\"pull_request\"}"
+login_rows=$work/list-rows.txt
+: >"$login_rows"
+list_login_row() {
+  local label=$1 role=$2 overrides=$3
+  sign_token "$work/issuer-one.pem" one "$list_claims" "$overrides"
+  login_row "$label" "$role"
+}
+list_login_row "a pull request's run as iac-short-lived" iac-short-lived '{}'
+list_login_row "the site's schedule as iac-short-lived" iac-short-lived '{"event_name":"schedule"}'
+list_login_row 'a push as iac-short-lived' iac-short-lived '{"event_name":"push"}'
+list_login_row 'a manual run as iac-short-lived' iac-short-lived '{"event_name":"workflow_dispatch"}'
+list_login_row 'a pull_request_target run as iac-short-lived' iac-short-lived '{"event_name":"pull_request_target"}'
+sign_token "$work/issuer-one.pem" one "$short_claims"
+login_row 'the test-short token, with no event_name, as iac-short-lived' iac-short-lived
+list_login_row 'a second site as iac-short-lived' iac-short-lived '{"repository_id":"2000000001"}'
+list_login_row 'short-lived.yml on a branch as iac-short-lived' iac-short-lived '{"job_workflow_ref":"sh4i-yurei/keepbreathing-infra/.github/workflows/short-lived.yml@refs/heads/feature"}'
+list_login_row "the first site's pull request as test-sites" test-sites '{}'
+list_login_row "the second site's schedule as test-sites" test-sites '{"repository_id":"2000000001","event_name":"schedule"}'
+list_login_row 'an unlisted site as test-sites' test-sites '{"repository_id":"999"}'
+list_login_row 'a numeric site ID as test-sites' test-sites '{"repository_id":2000000001}'
+list_login_row 'no repository_id as test-sites' test-sites '{"repository_id":null}'
+list_login_row 'a push as test-sites' test-sites '{"event_name":"push"}'
+diff - "$login_rows" <<'ROWS' || fail 'every list-bound sign-in must answer as decisions 86 and 90 say'
+200 a pull request's run as iac-short-lived: iac-short-lived
+200 the site's schedule as iac-short-lived: iac-short-lived
+400 a push as iac-short-lived: error validating claims: claim "event_name" does not match any associated bound claim values
+400 a manual run as iac-short-lived: error validating claims: claim "event_name" does not match any associated bound claim values
+400 a pull_request_target run as iac-short-lived: error validating claims: claim "event_name" does not match any associated bound claim values
+400 the test-short token, with no event_name, as iac-short-lived: error validating claims: claim "event_name" is missing
+400 a second site as iac-short-lived: error validating claims: claim "repository_id" does not match any associated bound claim values
+400 short-lived.yml on a branch as iac-short-lived: error validating claims: claim "job_workflow_ref" does not match any associated bound claim values
+200 the first site's pull request as test-sites: test-sites
+200 the second site's schedule as test-sites: test-sites
+400 an unlisted site as test-sites: error validating claims: claim "repository_id" does not match any associated bound claim values
+400 a numeric site ID as test-sites: error validating claims: claim "repository_id" does not match any associated bound claim values
+400 no repository_id as test-sites: error validating claims: claim "repository_id" is missing
+400 a push as test-sites: error validating claims: claim "event_name" does not match any associated bound claim values
+ROWS
+
 stop_issuer
 no_ansible_tokens '3.5b cases'
 

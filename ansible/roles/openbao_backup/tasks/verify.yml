@@ -17,6 +17,8 @@
           - "{{ openbao_backup_restic_image }}"
           - snapshots
           - --json
+          - --path
+          - /openbao.snap
       become: true
       become_user: "{{ openbao_backup_user }}"
       environment: &openbao_backup_user_environment
@@ -80,6 +82,8 @@
           - "{{ openbao_backup_restic_image }}"
           - snapshots
           - --json
+          - --path
+          - /openbao.snap
       become: true
       become_user: "{{ openbao_backup_user }}"
       environment: *openbao_backup_user_environment

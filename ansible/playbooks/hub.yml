@@ -78,6 +78,15 @@
       vars:
         tailscale_service_name: openbao
         tailscale_service_port: "{{ openbao_port }}"
+    # Grafana's keys come from OpenBao after its tailnet service is available (decision 89).
+    - name: Give Grafana its cloud keys from OpenBao
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: grafana-keys
+    - name: Check Grafana's cloud data sources
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: grafana-keys-verify
     # OpenBao must be served before its Gatus check can provide a certificate reading (decision 81).
     - name: Verify Gatus's ticket readings
       ansible.builtin.import_role:

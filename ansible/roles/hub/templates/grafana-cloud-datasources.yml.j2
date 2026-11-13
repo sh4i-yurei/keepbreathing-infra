@@ -1,0 +1,31 @@
+# Managed by Ansible (roles/hub). Edits here are overwritten.
+# OpenBao on the hub decisions 5 and 89. Double every $ so Grafana preserves each key.
+apiVersion: 1
+datasources:
+  - name: Tailscale
+    type: yesoreyeram-infinity-datasource
+    uid: tailscale
+    editable: false
+    jsonData:
+      auth_method: oauth2
+      oauth2:
+        oauth2_type: client_credentials
+        client_id: {{ hub_grafana_keys.results[0].stdout | replace('$', '$$') | to_json }}
+        token_url: https://api.tailscale.com/api/v2/oauth/token
+      allowedHosts: ["https://api.tailscale.com"]
+      customHealthCheckEnabled: true
+      customHealthCheckUrl: https://api.tailscale.com/api/v2/tailnet/-/devices
+    secureJsonData:
+      oauth2ClientSecret: {{ hub_grafana_keys.results[1].stdout | replace('$', '$$') | to_json }}
+
+  - name: DigitalOcean
+    type: yesoreyeram-infinity-datasource
+    uid: digitalocean
+    editable: false
+    jsonData:
+      auth_method: bearerToken
+      allowedHosts: ["https://api.digitalocean.com"]
+      customHealthCheckEnabled: true
+      customHealthCheckUrl: https://api.digitalocean.com/v2/droplets?per_page=1
+    secureJsonData:
+      bearerToken: {{ hub_grafana_keys.results[2].stdout | replace('$', '$$') | to_json }}

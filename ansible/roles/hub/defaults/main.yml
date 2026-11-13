@@ -103,6 +103,9 @@ hub_grafana_version: "13.2.4"
 # The port Grafana is published on, on 127.0.0.1 only. The Tailscale Service forwards to it.
 hub_grafana_port: 3000
 
+# OpenBao consumer holding the Tailnet and Cloud dashboard's keys (decision 89).
+hub_grafana_keys_consumer: grafana
+
 # Logs are pulled from these gateways. The first four addresses come from the gateway role's
 # host_vars; almaserv is deliberately absent from the Ansible inventory (decision #30).
 hub_journal_sources:

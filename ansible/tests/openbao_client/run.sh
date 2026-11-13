@@ -729,6 +729,118 @@ as_account blother systemctl --user restart podread.service
 wait_for_journal len=22 1
 as_account blother systemctl --user stop podread.service
 [[ $(journalctl --no-pager -o verbose | count_matching "$patterns/both") == 0 ]] || fail 'no journal line may hold either value'
+
+# Grafana's cloud provisioning reads three keys as its account. This unit stands in for Grafana.
+grafana_logs=()
+grafana_play() {
+  play grafana-keys "$@"
+  grafana_logs+=("$last_play_log")
+}
+grafana_play_fails() {
+  play_fails "$@"
+  grafana_logs+=("$last_play_log")
+}
+grafana_changed_task() {
+  local log=$1 title=$2
+  python3 - "$log" "$title" <<'PY' || fail "$title must report changed on localhost"
+import pathlib, sys
+log, title = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2]
+section = log.split('TASK [hub : ' + title + ']', 1)[1].split('\nTASK [', 1)[0]
+assert any(line == 'changed: [localhost]' or line.startswith('changed: [localhost] => ')
+           for line in section.splitlines()), section
+PY
+}
+grafana_file=/home/bltest/.config/grafana/datasources/cloud.yml
+grafana_exact() {
+  GRAFANA_ROTATED=$1 python3 - "$grafana_file" <<'PY' || fail 'cloud.yml must hold the exact two data sources'
+import os, sys, yaml
+tailscale = {
+    'name': 'Tailscale', 'type': 'yesoreyeram-infinity-datasource', 'uid': 'tailscale',
+    'editable': False,
+    'jsonData': {'auth_method': 'oauth2', 'oauth2': {
+        'oauth2_type': 'client_credentials', 'client_id': 'ob5ts-id-not-real',
+        'token_url': 'https://api.tailscale.com/api/v2/oauth/token'},
+        'allowedHosts': ['https://api.tailscale.com'],
+        'customHealthCheckEnabled': True,
+        'customHealthCheckUrl': 'https://api.tailscale.com/api/v2/tailnet/-/devices'},
+    'secureJsonData': {'oauth2ClientSecret': 'ob5ts-se$$cret-not-real'},
+}
+digitalocean = {
+    'name': 'DigitalOcean', 'type': 'yesoreyeram-infinity-datasource', 'uid': 'digitalocean',
+    'editable': False,
+    'jsonData': {'auth_method': 'bearerToken', 'allowedHosts': ['https://api.digitalocean.com'],
+                 'customHealthCheckEnabled': True,
+                 'customHealthCheckUrl': 'https://api.digitalocean.com/v2/droplets?per_page=1'},
+    'secureJsonData': {'bearerToken': 'ob5do-rotated-not-real' if os.environ['GRAFANA_ROTATED'] == 'yes'
+                       else 'ob5do-token-not-real'},
+}
+assert yaml.safe_load(open(sys.argv[1])) == {'apiVersion': 1, 'datasources': [tailscale, digitalocean]}
+PY
+}
+api_expect 200 'Grafana Tailscale ID write' POST secret/data/clientsvc/tailscale-client-id admin_token '{"data":{"value":"ob5ts-id-not-real"}}'
+api_expect 200 'Grafana Tailscale secret write' POST secret/data/clientsvc/tailscale-client-secret admin_token '{"data":{"value":"ob5ts-se$cret-not-real"}}'
+api_expect 200 'Grafana DigitalOcean token write' POST secret/data/clientsvc/digitalocean-token admin_token '{"data":{"value":"ob5do-token-not-real"}}'
+as_account bltest mkdir -p /home/bltest/.config/systemd/user
+printf '[Service]\nExecStart=/usr/bin/sleep infinity\n' | as_account bltest tee /home/bltest/.config/systemd/user/grafana.service >/dev/null
+as_account bltest systemctl --user daemon-reload
+as_account bltest systemctl --user start grafana.service
+grafana_before=$(as_account bltest systemctl --user show -p InvocationID --value grafana.service)
+grafana_play -e hub_container_user=bltest -e hub_grafana_keys_consumer=clientsvc
+[[ $(stat -c '%U:%G %a %F' /home/bltest/.config/grafana/datasources) == 'bltest:bltest 700 directory' ]] || fail 'Grafana data source folder must be bltest 0700'
+[[ $(stat -c '%U:%G %a %F' "$grafana_file") == 'bltest:bltest 600 regular file' ]] || fail 'cloud.yml must be bltest 0600'
+grafana_exact no
+grafana_started=$(as_account bltest systemctl --user show -p InvocationID --value grafana.service)
+[[ -n $grafana_started && $grafana_started != "$grafana_before" ]] || fail 'Grafana must restart after the first file write'
+grafana_play -e hub_container_user=bltest -e hub_grafana_keys_consumer=clientsvc
+recap "$last_play_log" 0
+[[ $(as_account bltest systemctl --user show -p InvocationID --value grafana.service) == "$grafana_started" ]] || fail 'unchanged keys must not restart Grafana'
+grafana_play --check --diff -e hub_container_user=bltest -e hub_grafana_keys_consumer=clientsvc
+recap "$last_play_log" 0
+[[ $(as_account bltest systemctl --user show -p InvocationID --value grafana.service) == "$grafana_started" ]] || fail 'unchanged check mode must not restart Grafana'
+api_expect 200 'Grafana DigitalOcean token rotation' POST secret/data/clientsvc/digitalocean-token admin_token '{"data":{"value":"ob5do-rotated-not-real"}}'
+grafana_play --check --diff -e hub_container_user=bltest -e hub_grafana_keys_consumer=clientsvc
+grafana_changed_task "$last_play_log" 'grafana-keys | Write the cloud data sources'
+grafana_exact no
+[[ $(as_account bltest systemctl --user show -p InvocationID --value grafana.service) == "$grafana_started" ]] || fail 'rotation check mode must not restart Grafana'
+grafana_play -e hub_container_user=bltest -e hub_grafana_keys_consumer=clientsvc
+grafana_exact yes
+grafana_rotated=$(as_account bltest systemctl --user show -p InvocationID --value grafana.service)
+[[ $grafana_rotated != "$grafana_started" ]] || fail 'rotated key must restart Grafana'
+as_account bltest systemctl --user stop grafana.service
+as_account bltest rm -f "$grafana_file"
+as_account bltest rmdir /home/bltest/.config/grafana/datasources
+mkdir "$work/grafana-link-target"
+chmod 0755 "$work/grafana-link-target"
+as_account bltest ln -s "$work/grafana-link-target" /home/bltest/.config/grafana/datasources
+play_index=$((play_index + 1))
+last_play_log=$work/grafana-keys-planted-link-$play_index.log
+if ansible-playbook -i localhost, tests/openbao_client/grafana-keys.yml -e hub_container_user=bltest -e hub_grafana_keys_consumer=clientsvc >"$last_play_log" 2>&1; then
+  fail 'grafana-keys must fail when the datasources folder is a link to a folder root owns'
+fi
+grafana_logs+=("$last_play_log")
+[[ -z $(ls -A "$work/grafana-link-target") ]] || fail 'grafana-keys must not write through a planted link'
+as_account bltest rm /home/bltest/.config/grafana/datasources
+grafana_play_fails othersvc grafana-keys "Grafana's keys could not be read from OpenBao: openbao-read: reading othersvc/tailscale-client-id failed: 404" -e hub_container_user=blother -e hub_grafana_keys_consumer=othersvc
+[[ ! -e /home/blother/.config/grafana ]] || fail 'failed reads must write nothing under blother'
+grafana_play --check --diff -e hub_container_user=blother -e hub_grafana_keys_consumer=clientsvc
+recap "$last_play_log" 1
+grafana_changed_task "$last_play_log" 'grafana-keys | Report the cloud data sources it would write'
+grep -Fq '"msg": "Would write /home/blother/.config/grafana/datasources/cloud.yml"' "$last_play_log" || fail 'blother check mode must report its file'
+[[ ! -e /home/blother/.config/grafana ]] || fail 'blother check mode must write nothing'
+grafana_play_fails no-approle grafana-keys "Grafana's keys could not be read from OpenBao: openbao-read: no AppRole files for clientsvc in /home/blother/.config/openbao/approle/clientsvc" -e hub_container_user=blother -e hub_grafana_keys_consumer=clientsvc
+id -u blnone >/dev/null 2>&1 && fail 'blnone must not exist before the missing-account case'
+grafana_play --check --diff -e hub_container_user=blnone -e hub_grafana_keys_consumer=clientsvc
+recap "$last_play_log" 1
+grep -Fq '"msg": "Would write /home/blnone/.config/grafana/datasources/cloud.yml"' "$last_play_log" || fail 'missing account check mode must report its file'
+grafana_play_fails no-account grafana-keys 'hub_container_user blnone must exist' -e hub_container_user=blnone -e hub_grafana_keys_consumer=clientsvc
+id -u blnone >/dev/null 2>&1 && fail 'grafana-keys must not create blnone'
+[[ ! -e /home/blnone ]] || fail 'grafana-keys must not create blnone home'
+for log in "${grafana_logs[@]}"; do
+  if grep -Eq 'ob5ts-id-not-real|ob5ts-se\$cret-not-real|ob5ts-se\$\$cret-not-real|ob5do-token-not-real|ob5do-rotated-not-real' "$log"; then
+    fail "Grafana key leaked into $log"
+  fi
+done
+printf 'grafana-keys: %s play logs, no key in any\n' "${#grafana_logs[@]}"
 stop_proxy
 
 # The ticket band's receiver pod for tbclient (OpenBao on the hub 4.3b, decisions 23, 24, 28, 36,

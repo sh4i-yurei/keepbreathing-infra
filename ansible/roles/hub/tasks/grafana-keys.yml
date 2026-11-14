@@ -1,0 +1,90 @@
+---
+- name: grafana-keys | Find the Grafana account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ hub_container_user }}"
+    fail_key: false
+
+- name: grafana-keys | Require the account on a real run
+  ansible.builtin.fail:
+    msg: "hub_container_user {{ hub_container_user }} must exist"
+  when:
+    - not ansible_check_mode
+    - ansible_facts.getent_passwd.get(hub_container_user) is none
+
+- name: grafana-keys | Check for the AppRole's role ID
+  ansible.builtin.stat:
+    path: "/home/{{ hub_container_user }}/.config/openbao/approle/{{ hub_grafana_keys_consumer }}/role-id"
+  become: true
+  become_user: "{{ hub_container_user }}"
+  register: hub_grafana_role_id
+  when: ansible_facts.getent_passwd.get(hub_container_user) is not none
+
+- name: grafana-keys | Report the cloud data sources it would write
+  ansible.builtin.debug:
+    msg: "Would write /home/{{ hub_container_user }}/.config/grafana/datasources/cloud.yml"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - ansible_facts.getent_passwd.get(hub_container_user) is none or not hub_grafana_role_id.stat.exists
+
+- name: grafana-keys | Read the cloud keys and write their provisioning file
+  when: ansible_facts.getent_passwd.get(hub_container_user) is not none and (not ansible_check_mode or hub_grafana_role_id.stat.exists)
+  block:
+    - name: grafana-keys | Read the cloud keys from OpenBao
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/openbao-read
+          - "{{ hub_grafana_keys_consumer }}/{{ item }}"
+        chdir: /
+      loop:
+        - tailscale-client-id
+        - tailscale-client-secret
+        - digitalocean-token
+      become: true
+      become_user: "{{ hub_container_user }}"
+      register: hub_grafana_keys
+      no_log: true
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
+    - name: grafana-keys | Report the first OpenBao read failure
+      ansible.builtin.fail:
+        msg: "Grafana's keys could not be read from OpenBao: {{ (hub_grafana_keys.results | selectattr('rc', 'ne', 0) | first).stderr | trim }}"
+      when: hub_grafana_keys.results | selectattr('rc', 'ne', 0) | list | length > 0
+
+    - name: grafana-keys | Make the Grafana data source folders
+      ansible.builtin.file:
+        path: "/home/{{ hub_container_user }}/{{ item }}"
+        state: directory
+        mode: "0700"
+      loop:
+        - .config/grafana
+        - .config/grafana/datasources
+      become: true
+      become_user: "{{ hub_container_user }}"
+
+    - name: grafana-keys | Write the cloud data sources
+      ansible.builtin.template:
+        src: grafana-cloud-datasources.yml.j2
+        dest: "/home/{{ hub_container_user }}/.config/grafana/datasources/cloud.yml"
+        mode: "0600"
+      become: true
+      become_user: "{{ hub_container_user }}"
+      register: hub_grafana_cloud_file
+      no_log: true
+      diff: false
+
+    - name: grafana-keys | Restart Grafana for changed cloud keys
+      ansible.builtin.systemd_service:
+        name: grafana.service
+        state: restarted
+        scope: user
+      become: true
+      become_user: "{{ hub_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[hub_container_user][1] }}"
+      when:
+        - not ansible_check_mode
+        - hub_grafana_cloud_file is changed

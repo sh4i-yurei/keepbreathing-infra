@@ -1,0 +1,41 @@
+---
+- name: grafana-keys-verify | Verify cloud data sources on a real run
+  when: not ansible_check_mode
+  vars:
+    hub_grafana_keys_url: "http://127.0.0.1:{{ hub_grafana_port }}"
+    hub_grafana_keys_admin_password: "{{ lookup('vault_secret', 'grafana admin (hub)') }}"
+  block:
+    - name: grafana-keys-verify | Wait for Grafana to report itself healthy
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_keys_url }}/api/health"
+      register: hub_grafana_keys_health
+      until: hub_grafana_keys_health.status == 200 and hub_grafana_keys_health.json.database == 'ok'
+      retries: 30
+      delay: 2
+
+    - name: grafana-keys-verify | Read both cloud data sources
+      ansible.builtin.uri:
+        url: "{{ hub_grafana_keys_url }}/api/datasources/uid/{{ item }}"
+        url_username: admin
+        url_password: "{{ hub_grafana_keys_admin_password }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+      loop: [tailscale, digitalocean]
+      register: hub_grafana_cloud_sources
+      no_log: true
+
+    - name: grafana-keys-verify | Require both cloud data sources and their keys
+      ansible.builtin.assert:
+        that:
+          - source.status == 200
+          - source.json.type == 'yesoreyeram-infinity-datasource'
+          - source.json.readOnly == true
+          - source.json.jsonData.auth_method == item.auth_method
+          - source.json.secureJsonFields[item.key_field] == true
+        fail_msg: "Grafana's {{ item.name }} data source must be provisioned by grafana-keys.yml with its key"
+        quiet: true
+      loop:
+        - {name: Tailscale, uid: tailscale, auth_method: oauth2, key_field: oauth2ClientSecret}
+        - {name: DigitalOcean, uid: digitalocean, auth_method: bearerToken, key_field: bearerToken}
+      vars:
+        source: "{{ hub_grafana_cloud_sources.results | selectattr('item', 'equalto', item.uid) | first }}"

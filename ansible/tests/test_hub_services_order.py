@@ -101,6 +101,32 @@ def test_gatus_readings_follow_tailnet_service_and_precede_backup():
     assert served < readings < backup
 
 
+def test_grafana_cloud_keys_follow_openbao_service_and_precede_readings():
+    tasks = play_tasks(list_tasks("playbooks/hub.yml"), "Hub services")
+    served = max(
+        i for i, task in enumerate(tasks) if task.startswith("tailscale_service : ")
+    )
+    keys = [
+        i for i, task in enumerate(tasks) if task.startswith("hub : grafana-keys | ")
+    ]
+    verify = [
+        i
+        for i, task in enumerate(tasks)
+        if task.startswith("hub : grafana-keys-verify | ")
+    ]
+    assert keys, "Hub services lists no grafana-keys task"
+    assert verify, "Hub services lists no grafana-keys-verify task"
+    readings = first(
+        tasks,
+        lambda task: task.startswith("hub : gatus-readings-verify | "),
+        "gatus-readings-verify task",
+    )
+    backup = first(tasks, is_openbao_backup, "openbao_backup task")
+    assert (
+        served < min(keys) <= max(keys) < min(verify) <= max(verify) < readings < backup
+    )
+
+
 def test_hub_services_run_openbao_backup_last_after_tailscale_service():
     tasks = play_tasks(list_tasks("playbooks/hub.yml"), "Hub services")
     backup = first(tasks, is_openbao_backup, "openbao_backup task")

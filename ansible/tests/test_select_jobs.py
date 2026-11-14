@@ -104,7 +104,11 @@ DIFF_111 = [
             },
         ),
         (["ansible/roles/tailscale_service/tasks/main.yml"], False, {"backup-server"}),
-        (["ansible/roles/hub/tasks/main.yml"], False, {"hub-backup-disk"}),
+        (
+            ["ansible/roles/hub/tasks/main.yml"],
+            False,
+            {"hub-backup-disk", "openbao-client"},
+        ),
         (
             ["ansible/roles/baseline/tasks/main.yml"],
             False,

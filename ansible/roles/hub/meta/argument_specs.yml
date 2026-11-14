@@ -209,3 +209,20 @@ argument_specs:
         type: str
         required: true
         description: The account the hub's containers run under.
+
+  grafana-keys:
+    short_description: Read Grafana's cloud keys from OpenBao
+    options:
+      hub_container_user:
+        type: str
+        required: true
+      hub_grafana_keys_consumer:
+        type: str
+        default: grafana
+
+  grafana-keys-verify:
+    short_description: Verify Grafana's cloud data sources
+    options:
+      hub_grafana_port:
+        type: int
+        default: 3000

@@ -1,0 +1,10 @@
+---
+- name: Give Grafana its cloud keys from the test OpenBao
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read the keys as Grafana's account
+      ansible.builtin.import_role:
+        name: hub
+        tasks_from: grafana-keys

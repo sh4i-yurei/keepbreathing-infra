@@ -256,3 +256,105 @@ tests:
       - eval_time: 37m
         alertname: CertificateExpiringSoon
         exp_alerts: []
+
+  # BackupStageStale compares each stage's age with its own limit on the same machine (Backups
+  # decision 82). hub's copy of vaultserv never renews and passes its 600-second limit at 11m.
+  # hub's pull of web renews at 9m, so it fires only once it is 12 minutes old again, at 21m.
+  # hub's prune of mail has no limit series and never fires. vaultserv and hub both publish a
+  # backup of vaultserv, with limits 600 and 1200, and each fires only past its own limit.
+  - interval: 1m
+    input_series:
+      - series: 'backup_last_success_timestamp_seconds{job="node",instance="hub",stage="copy",target="vaultserv"}'
+        values: '0+0x21'
+      - series: 'backup_max_age_seconds{job="node",instance="hub",stage="copy",target="vaultserv"}'
+        values: '600+0x21'
+      - series: 'backup_last_success_timestamp_seconds{job="node",instance="hub",stage="pull",target="web"}'
+        values: '0+0x8 540+0x12'
+      - series: 'backup_max_age_seconds{job="node",instance="hub",stage="pull",target="web"}'
+        values: '600+0x21'
+      - series: 'backup_last_success_timestamp_seconds{job="node",instance="hub",stage="prune",target="mail"}'
+        values: '0+0x21'
+      - series: 'backup_last_success_timestamp_seconds{job="node",instance="vaultserv",stage="backup",target="vaultserv"}'
+        values: '0+0x21'
+      - series: 'backup_max_age_seconds{job="node",instance="vaultserv",stage="backup",target="vaultserv"}'
+        values: '600+0x21'
+      - series: 'backup_last_success_timestamp_seconds{job="node",instance="hub",stage="backup",target="vaultserv"}'
+        values: '0+0x21'
+      - series: 'backup_max_age_seconds{job="node",instance="hub",stage="backup",target="vaultserv"}'
+        values: '1200+0x21'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: BackupStageStale
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: BackupStageStale
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: hub
+              stage: copy
+              target: vaultserv
+              severity: warning
+            exp_annotations:
+              summary: A backup stage has not succeeded within its limit.
+              description: >-
+                The copy stage for vaultserv on hub last succeeded 11m 0s ago, longer than its
+                limit allows. Check its timer and its last run on hub.
+          - exp_labels:
+              job: node
+              instance: vaultserv
+              stage: backup
+              target: vaultserv
+              severity: warning
+            exp_annotations:
+              summary: A backup stage has not succeeded within its limit.
+              description: >-
+                The backup stage for vaultserv on vaultserv last succeeded 11m 0s ago, longer than
+                its limit allows. Check its timer and its last run on vaultserv.
+      - eval_time: 21m
+        alertname: BackupStageStale
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: hub
+              stage: copy
+              target: vaultserv
+              severity: warning
+            exp_annotations:
+              summary: A backup stage has not succeeded within its limit.
+              description: >-
+                The copy stage for vaultserv on hub last succeeded 21m 0s ago, longer than its
+                limit allows. Check its timer and its last run on hub.
+          - exp_labels:
+              job: node
+              instance: hub
+              stage: pull
+              target: web
+              severity: warning
+            exp_annotations:
+              summary: A backup stage has not succeeded within its limit.
+              description: >-
+                The pull stage for web on hub last succeeded 12m 0s ago, longer than its limit
+                allows. Check its timer and its last run on hub.
+          - exp_labels:
+              job: node
+              instance: vaultserv
+              stage: backup
+              target: vaultserv
+              severity: warning
+            exp_annotations:
+              summary: A backup stage has not succeeded within its limit.
+              description: >-
+                The backup stage for vaultserv on vaultserv last succeeded 21m 0s ago, longer than
+                its limit allows. Check its timer and its last run on vaultserv.
+          - exp_labels:
+              job: node
+              instance: hub
+              stage: backup
+              target: vaultserv
+              severity: warning
+            exp_annotations:
+              summary: A backup stage has not succeeded within its limit.
+              description: >-
+                The backup stage for vaultserv on hub last succeeded 21m 0s ago, longer than its
+                limit allows. Check its timer and its last run on hub.

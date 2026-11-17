@@ -174,3 +174,21 @@ groups:
           description: >-
             The certificate Gatus's {{ $labels.group }}/{{ $labels.name }} check sees expires in
             {{ $value | humanizeDuration }}.
+
+  # A backup stage whose last success is older than the limit it publishes beside it is a ticket.
+  # The limit is matched on the same machine, stage and target, and a stage with no limit never
+  # fires (Backups decisions 76 and 82).
+  - name: backups
+    rules:
+      - alert: BackupStageStale
+        expr: |
+          time() - backup_last_success_timestamp_seconds{job="node"}
+            > on (instance, job, stage, target) backup_max_age_seconds{job="node"}
+        labels:
+          severity: warning
+        annotations:
+          summary: A backup stage has not succeeded within its limit.
+          description: >-
+            The {{ $labels.stage }} stage for {{ $labels.target }} on {{ $labels.instance }} last
+            succeeded {{ humanizeDuration $value }} ago, longer than its limit allows. Check its
+            timer and its last run on {{ $labels.instance }}.

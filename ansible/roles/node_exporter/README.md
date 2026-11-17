@@ -36,11 +36,19 @@ apart.
    under `/var/log` and `/var/cache/dnf`. It atomically writes `node_reboot_required` only when the
    exit status and message agree: 0 means no reboot, and 1 means a reboot is required. Any other
    result removes the old metric and fails the service.
-8. Starts it and enables it at boot, then checks it: the metrics page answers with the pinned
+8. Installs `/usr/local/libexec/backup-success`, which writes a backup stage's last-success time
+   and maximum age into the textfile folder. `backup-success STAGE TARGET MAX_AGE_SECONDS` writes
+   a file and prints `wrote`; `--if-absent` keeps an existing file and prints `kept`, or writes
+   a missing one; `--read STAGE TARGET` prints the recorded time. A successful call exits 0, an
+   unrecorded stage or missing folder exits 1 with its message, and invalid arguments exit 2 with
+   usage text. The `backup-success` `tasks_from` entry point installs only this writer for backup
+   roles' test drivers.
+9. Starts it and enables it at boot, then checks it: the metrics page answers with the pinned
    version, using the password and checking the certificate when those are on; a request without
    the password gets `401`; plain HTTP is refused; each explicitly enabled collector returns a
    metric, including systemd service restart counts; the reboot-check service's metric agrees with
-   a direct `needs-restarting -r` run; and the process runs as `node_exporter`.
+   a direct `needs-restarting -r` run; the backup success writer answers `--read` for a stage
+   nobody records with exit 1; and the process runs as `node_exporter`.
 
 ## Inputs
 

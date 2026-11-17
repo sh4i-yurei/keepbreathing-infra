@@ -1,0 +1,13 @@
+---
+# The one writer every backup stage's wrapper service calls to record its last success in the
+# textfile collector's folder (Backups decisions 76 and 81). It is its own entry point, so a
+# backup role's test driver can install it with tasks_from and a scratch folder.
+
+- name: Install the backup success writer
+  ansible.builtin.template:
+    src: backup-success
+    dest: /usr/local/libexec/backup-success
+    owner: root
+    group: root
+    mode: "0755"
+  become: true

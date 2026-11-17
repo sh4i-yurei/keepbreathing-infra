@@ -1,0 +1,76 @@
+#!/usr/bin/bash
+# Managed by Ansible (roles/node_exporter). Edits here are overwritten.
+# Records when a backup stage last succeeded, for node_exporter's textfile collector. Each backup
+# stage's wrapper service calls it from ExecStartPost= (Backups decisions 76 and 81).
+set -euo pipefail
+
+folder={{ node_exporter_textfile_directory | quote }}
+
+usage() {
+    printf '%s\n' \
+        'usage: backup-success [--if-absent] STAGE TARGET MAX_AGE_SECONDS' \
+        '       backup-success --read STAGE TARGET' \
+        'STAGE and TARGET are lower-case letters, digits and hyphens, starting with a letter or a' \
+        'digit, and MAX_AGE_SECONDS is a positive whole number.' >&2
+    exit 2
+}
+
+name_ok() {
+    [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]]
+}
+
+mode=write
+case ${1:-} in
+    --if-absent) mode=if-absent; shift ;;
+    --read) mode=read; shift ;;
+esac
+
+if [[ $mode == read ]]; then
+    [[ $# -eq 2 ]] || usage
+else
+    [[ $# -eq 3 ]] || usage
+    [[ $3 =~ ^[1-9][0-9]*$ ]] || usage
+fi
+name_ok "$1" || usage
+name_ok "$2" || usage
+if [[ ! -d $folder ]]; then
+    printf 'backup-success: %s is not a folder\n' "$folder" >&2
+    exit 1
+fi
+stage=$1
+target=$2
+destination="$folder/backup-$stage-$target.prom"
+labels="stage=\"$stage\",target=\"$target\""
+
+if [[ $mode == read ]]; then
+    if [[ -f $destination ]]; then
+        while read -r name value; do
+            if [[ $name == "backup_last_success_timestamp_seconds{$labels}" ]]; then
+                printf '%s\n' "$value"
+                exit 0
+            fi
+        done <"$destination"
+    fi
+    printf 'backup-success: no success recorded for %s %s\n' "$stage" "$target" >&2
+    exit 1
+fi
+
+if [[ $mode == if-absent && -e $destination ]]; then
+    echo kept
+    exit 0
+fi
+
+now=$(date +%s)
+temporary=$(mktemp "${destination}.XXXXXX")
+trap 'rm -f -- "$temporary"' EXIT
+printf '%s\n' \
+    "# HELP backup_last_success_timestamp_seconds Unix time of the stage's last successful run." \
+    '# TYPE backup_last_success_timestamp_seconds gauge' \
+    "backup_last_success_timestamp_seconds{$labels} $now" \
+    "# HELP backup_max_age_seconds Age after which the stage's last success counts as stale." \
+    '# TYPE backup_max_age_seconds gauge' \
+    "backup_max_age_seconds{$labels} $3" >"$temporary"
+chmod 0644 "$temporary"
+mv -f -- "$temporary" "$destination"
+trap - EXIT
+echo wrote

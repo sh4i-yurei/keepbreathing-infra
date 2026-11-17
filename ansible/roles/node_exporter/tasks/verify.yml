@@ -100,6 +100,29 @@
           {{ (node_exporter_reboot_metric.content | b64decode)
              | regex_findall('(?m)^node_reboot_required (.*)$') }}
 
+    - name: verify | Ask the backup success writer about a stage nobody records
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/backup-success
+          - --read
+          - node-exporter-verify
+          - none
+      register: node_exporter_backup_success_read
+      failed_when: false
+      changed_when: false
+      become: true
+
+    - name: verify | The backup success writer runs and reads the textfile folder
+      ansible.builtin.assert:
+        that:
+          - node_exporter_backup_success_read.rc == 1
+          - node_exporter_backup_success_read.stderr == 'backup-success: no success recorded for node-exporter-verify none'
+        fail_msg: >-
+          /usr/local/libexec/backup-success returned
+          {{ node_exporter_backup_success_read.rc }} with stderr
+          {{ node_exporter_backup_success_read.stderr | to_json }}.
+        quiet: true
+
     - name: verify | Without the password it is refused
       ansible.builtin.uri:
         url: "{{ node_exporter_url }}"

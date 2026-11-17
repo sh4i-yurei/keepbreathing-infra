@@ -37,6 +37,9 @@
   become: true
   notify: Run node_exporter reboot-required check
 
+- name: Install the backup success writer
+  ansible.builtin.import_tasks: backup-success.yml
+
 - name: Install the reboot-required service
   ansible.builtin.template:
     src: node-exporter-reboot-required.service.j2

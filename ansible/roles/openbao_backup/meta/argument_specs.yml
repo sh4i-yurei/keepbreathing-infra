@@ -6,6 +6,12 @@ argument_specs:
       openbao_backup_user:
         type: str
         required: true
+      openbao_backup_openbao_user:
+        type: str
+        required: true
+      openbao_backup_self_address:
+        type: str
+        required: true
       openbao_backup_login:
         type: str
         required: true
@@ -37,4 +43,8 @@ argument_specs:
       openbao_backup_timeout:
         type: int
       openbao_backup_wait:
+        type: int
+      openbao_backup_restore_port:
+        type: int
+      openbao_backup_restore_wait:
         type: int

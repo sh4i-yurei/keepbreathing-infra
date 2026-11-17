@@ -9,6 +9,8 @@
     openbao_image: "{{ lookup('ansible.builtin.env', 'TEST_OPENBAO_IMAGE') }}"
     restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
     openbao_backup_user: bbtest
+    openbao_backup_openbao_user: bbbao
+    openbao_backup_self_address: "192.0.2.10"
     openbao_backup_login: testhub
     openbao_backup_password: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
     openbao_backup_restic_password: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"

@@ -20,7 +20,7 @@ done
 for path in /etc/systemd/system/openbao-backup*; do
   if [[ -e $path || -L $path ]]; then fail 'openbao-backup units already exist under /etc/systemd/system'; fi
 done
-for port in 8200 8082 18300 18301 18302; do
+for port in 8200 8082 18200 18300 18301 18302; do
   if listening "$port"; then fail "127.0.0.1:$port is already in use"; fi
 done
 
@@ -238,6 +238,22 @@ run_journal_has() {
 play openbao
 play backup-server
 bb_uid=$(id -u bbtest)
+bao_uid=$(id -u bbbao)
+proof_dir=/run/user/$bao_uid/openbao-restore-check
+as_bao() {
+  (cd / && HOME=/home/bbbao USER=bbbao LOGNAME=bbbao XDG_RUNTIME_DIR="/run/user/$bao_uid" runuser -u bbbao -- "$@")
+}
+newest_bao_id() {
+  restic_bb snapshots --json --path /openbao.snap --latest 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["short_id"])'
+}
+no_proof() {
+  local label=$1
+  [[ ! -e $proof_dir ]] || fail "$label must leave no openbao-restore-check folder"
+  as_bao podman ps -a --format json | python3 -c '
+import json,sys
+sys.exit(1 if "openbao-restore-check" in [n for c in json.load(sys.stdin) for n in c["Names"]] else 0)' \
+    || fail "$label must leave no openbao-restore-check container"
+}
 
 # Case 1: check mode before openbao_config, so the consumer's AppRole files don't exist yet.
 play role --check --diff
@@ -246,6 +262,7 @@ for path in "${files[@]}"; do
   grep -Fq "Would write $path" "$last_play_log" || fail "check mode must report Would write $path"
   [[ ! -e $path ]] || fail "check mode wrote $path"
 done
+no_proof 'check mode'
 printf 'case 1: a fresh check-mode run reports its writes and writes nothing\n'
 
 # Case 2: a real run at the same point stops before writing any unit.
@@ -276,6 +293,10 @@ with tarfile.open(sys.argv[1], mode="r:gz") as archive:
 assert names == sorted(["meta.json", "state.bin", "SHA256SUMS", "SHA256SUMS.sealed"]), names
 PY
 no_backup_container 'the first run'
+id=$(newest_bao_id)
+grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-check" "$last_play_log" \
+  || fail "case 3 must print the restore proof's success line for $id"
+no_proof 'case 3'
 [[ $(systemctl show openbao-backup.timer -p UnitFileState --value) == enabled ]] || fail 'openbao-backup.timer must be enabled'
 next=$(systemctl show openbao-backup.timer -p NextElapseUSecRealtime --value)
 [[ -n $next && $next != n/a ]] || fail "openbao-backup.timer must have a next elapse time, got '$next'"
@@ -373,6 +394,53 @@ assert len(snapshots) == int(sys.argv[2]) + 2, snapshots
 assert snapshots[-2]['paths'] == ['/openbao.snap'], snapshots[-2:]
 assert snapshots[-1]['paths'] == ['/other.snap'], snapshots[-2:]
 PY
+id=$(newest_bao_id)
+grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-check" "$last_play_log" \
+  || fail "case 10 must print the restore proof's success line for $id"
 printf 'case 10: another path saved during the run leaves the verify passing with changed=0\n'
+
+# Case 11: replace a stale proof folder and stopped container.
+as_bao mkdir -m 0700 "$proof_dir"
+as_bao touch "$proof_dir/stale"
+as_bao podman create --name openbao-restore-check "$openbao_image" server >/dev/null
+play role
+recap "$last_play_log" 0 0
+id=$(newest_bao_id)
+grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-check" "$last_play_log" \
+  || fail "case 11 must print the restore proof's success line for $id"
+no_proof 'case 11'
+printf 'case 11: a stale throwaway folder and container are replaced and removed\n'
+
+# Case 12: the new snapshot must be refused under another seal key.
+seal_file=/home/bbbao/.config/openbao/seal/seal.key
+cp -p "$seal_file" "$work/seal-key"
+new_seal_key=$(python3 -c 'import base64,secrets; print(base64.b64encode(secrets.token_bytes(32)).decode())')
+cat > /etc/systemd/system/openbao-backup.service.d/seal-swap.conf <<EOF
+[Service]
+ExecStartPost=/bin/sh -c "printf %%s $new_seal_key > $seal_file"
+EOF
+systemctl daemon-reload
+play_fails 'a snapshot under another seal key' role
+grep -Fq 'openbao restore proof: the throwaway refused the snapshot. OpenBao said: ' "$last_play_log" \
+  || fail 'case 12 must report the snapshot refusal'
+no_proof 'case 12'
+cp -p "$work/seal-key" "$seal_file"
+rm /etc/systemd/system/openbao-backup.service.d/seal-swap.conf
+systemctl daemon-reload
+printf 'case 12: a snapshot under another seal key is refused and nothing is left\n'
+
+# Case 13: removing data packs leaves listing intact but makes the stream fail.
+cat > /etc/systemd/system/openbao-backup.service.d/packs.conf <<EOF
+[Service]
+ExecStartPost=/bin/sh -c "rm -f $work/backup/restic/testhub/data/*/*"
+EOF
+systemctl daemon-reload
+play_fails 'an unreadable snapshot' role
+grep -Fq 'openbao restore proof: the newest /openbao.snap could not be read from the backup server' "$last_play_log" \
+  || fail 'case 13 must report the failed stream'
+no_proof 'case 13'
+rm /etc/systemd/system/openbao-backup.service.d/packs.conf
+systemctl daemon-reload
+printf 'case 13: an unreadable snapshot fails the stream and nothing is left\n'
 
 printf 'openbao_backup driver: all cases passed\n'

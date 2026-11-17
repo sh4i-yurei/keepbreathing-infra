@@ -57,3 +57,9 @@ def test_the_backup_role_signs_in_as_the_hub_with_the_hub_items_passwords():
             f"{{{{ lookup('vault_secret', {ITEM}, field='restic') }}}}"
         ),
     }
+
+
+def test_the_restore_proof_uses_openbaos_account_and_self_address():
+    hub = read("host_vars/hub.yml")
+    assert hub.get("openbao_backup_openbao_user") == "{{ openbao_user }}"
+    assert hub.get("openbao_backup_self_address") == "{{ openbao_self_address }}"

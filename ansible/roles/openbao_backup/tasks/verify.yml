@@ -131,3 +131,6 @@
           - openbao_backup_timer.status.NextElapseUSecRealtime | default('') not in ['', 'n/a']
         fail_msg: openbao-backup.timer must be enabled and scheduled
         quiet: true
+
+    - name: OpenBao backup verify | Prove the newest snapshot restores
+      ansible.builtin.import_tasks: restore-proof.yml

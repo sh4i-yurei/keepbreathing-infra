@@ -1,0 +1,28 @@
+initialize "restore" {
+  request "enable-userpass" {
+    operation = "create"
+    path = "sys/auth/userpass"
+    data = { type = "userpass" }
+  }
+
+  request "restore-only-policy" {
+    operation = "create"
+    path = "sys/policies/acl/restore-only"
+    data = {
+      policy = <<EOP
+path "sys/storage/raft/snapshot" {
+  capabilities = ["update"]
+}
+EOP
+    }
+  }
+
+  request "restore-user" {
+    operation = "create"
+    path = "auth/userpass/users/restore"
+    data = {
+      password = {{ openbao_backup_restore_password | to_json }}
+      token_policies = ["restore-only"]
+    }
+  }
+}

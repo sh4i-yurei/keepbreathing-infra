@@ -6,3 +6,5 @@ openbao_backup_schedule: "*-*-* 02:30:00"
 openbao_backup_lock_wait: 10m
 openbao_backup_timeout: 1800
 openbao_backup_wait: 300
+openbao_backup_restore_port: 18200
+openbao_backup_restore_wait: 300

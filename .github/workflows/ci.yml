@@ -782,7 +782,7 @@ jobs:
           for path in /etc/systemd/system/openbao-backup*; do
             if test -e "$path" || test -L "$path"; then echo "ASSERTION FAILED: full driver left $path"; exit 1; fi
           done
-          for port in 8200 8082 18300 18301 18302; do
+          for port in 8200 8082 18200 18300 18301 18302; do
             if test -n "$(ss -ltnH "sport = :$port")"; then echo "ASSERTION FAILED: full driver left a listener on $port"; exit 1; fi
           done
           sudo cmp /tmp/openbao-backup-environment-before /etc/environment

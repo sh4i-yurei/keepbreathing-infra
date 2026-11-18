@@ -8,12 +8,17 @@
     b2_buckets:
       - machine: testhost
         name: b2prune-locked
+      - machine: otherhost
+        name: b2prune-locked
     b2_copy_user: bptest
     b2_copy_repository_root: "{{ lookup('ansible.builtin.env', 'TEST_MOUNT') }}/restic"
     b2_copy_restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"
     b2_copy_aws_image: "{{ lookup('ansible.builtin.env', 'TEST_AWS_IMAGE') }}"
     b2_copy_passwords:
       testhost:
+        hub: "{{ lookup('ansible.builtin.env', 'TEST_HUB_PASSWORD') }}"
+        b2: "{{ lookup('ansible.builtin.env', 'TEST_B2_PASSWORD') }}"
+      otherhost:
         hub: "{{ lookup('ansible.builtin.env', 'TEST_HUB_PASSWORD') }}"
         b2: "{{ lookup('ansible.builtin.env', 'TEST_B2_PASSWORD') }}"
     b2_copy_timeout: 180

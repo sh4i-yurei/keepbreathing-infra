@@ -50,6 +50,21 @@
   register: b2_copy_locks_before
   changed_when: false
 
+- name: "B2 copy verify | Read recorded copy success before the start for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, copy, "{{ b2_copy_target.machine }}"]
+  register: b2_copy_success_before
+  changed_when: false
+
+- name: "B2 copy verify | Wait past the recorded second for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv: [date, +%s]
+  register: b2_copy_clock
+  until: b2_copy_clock.stdout | int > b2_copy_success_before.stdout | int
+  retries: 3
+  delay: 1
+  changed_when: false
+
 - name: "B2 copy verify | Start timer's system service for {{ b2_copy_target.machine }}"
   ansible.builtin.command:
     argv:
@@ -57,6 +72,18 @@
       - start
       - "b2-copy@{{ b2_copy_target.machine }}.service"
   changed_when: false
+
+- name: "B2 copy verify | Read recorded copy success after the start for {{ b2_copy_target.machine }}"
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, copy, "{{ b2_copy_target.machine }}"]
+  register: b2_copy_success_after
+  changed_when: false
+
+- name: "B2 copy verify | Require a newer copy success for {{ b2_copy_target.machine }}"
+  ansible.builtin.assert:
+    that: b2_copy_success_after.stdout | int > b2_copy_success_before.stdout | int
+    fail_msg: "b2-copy@{{ b2_copy_target.machine }}.service ran without recording a new success for copy {{ b2_copy_target.machine }}."
+    quiet: true
 
 - name: "B2 copy verify | List hub snapshots for {{ b2_copy_target.machine }}"
   ansible.builtin.command:

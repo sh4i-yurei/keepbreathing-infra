@@ -17,3 +17,5 @@ argument_specs:
         type: dict
         required: true
         no_log: true
+      b2_copy_max_age:
+        type: int

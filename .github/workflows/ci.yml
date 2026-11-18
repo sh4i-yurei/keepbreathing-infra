@@ -94,6 +94,14 @@ jobs:
           grep -Fx 'ASSERTION FAILED: s3.us-east-1.seaweedfs.test is already in /etc/hosts' /tmp/backup-prune-existing-host.log
           sudo cp -p /tmp/backup-prune-hosts /etc/hosts
           sudo cmp /tmp/backup-prune-hosts /etc/hosts
+          printf 'planted\n' | sudo tee /usr/local/libexec/backup-success
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_prune/run.sh > /tmp/backup-prune-existing-writer.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted writer'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /usr/local/libexec/backup-success already exists' /tmp/backup-prune-existing-writer.log
+          test "$(cat /usr/local/libexec/backup-success)" = planted
+          if id bptest; then echo 'ASSERTION FAILED: bptest survived writer refusal'; exit 1; fi
+          sudo rm /usr/local/libexec/backup-success
       - name: Backup prune role integration cases and cleanup
         shell: bash
         run: |
@@ -102,7 +110,7 @@ jobs:
           manager_before=$(systemctl show-environment)
           sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/backup_prune/run.sh | tee driver.log
           grep -Fx 'backup-prune driver: all cases passed' driver.log
-          test "$(grep -c '^PASS ' driver.log)" -eq 10
+          test "$(grep -c '^PASS ' driver.log)" -eq 11
           for unit in backup-prune backup-check b2-copy; do
             test -z "$(systemctl list-units --all --no-legend "$unit*")"
           done
@@ -112,6 +120,7 @@ jobs:
           test ! -e /etc/systemd/system/backup-check@.service
           test ! -e /etc/systemd/system/b2-copy@.service
           test ! -e /etc/systemd/system/b2-copy@.timer
+          test ! -e /usr/local/libexec/backup-success
           ! id bptest
           ! sudo losetup --list | grep -F backup.img
           ! sudo podman container exists backup-prune-weed
@@ -144,6 +153,7 @@ jobs:
           test ! -e /etc/systemd/system/backup-check@.service
           test ! -e /etc/systemd/system/b2-copy@.service
           test ! -e /etc/systemd/system/b2-copy@.timer
+          test ! -e /usr/local/libexec/backup-success
           test -z "$(systemctl list-units --all --no-legend 'backup-*')"
           test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
           ! id bptest
@@ -269,6 +279,14 @@ jobs:
           grep -Fx '127.0.0.1 s3.us-east-1.seaweedfs.test' /etc/hosts
           sudo cp -p /tmp/b2-copy-hosts /etc/hosts
           sudo cmp /tmp/b2-copy-hosts /etc/hosts
+          printf 'planted\n' | sudo tee /usr/local/libexec/backup-success
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_copy/run.sh > /tmp/b2-copy-existing-writer.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted writer'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /usr/local/libexec/backup-success already exists' /tmp/b2-copy-existing-writer.log
+          test "$(cat /usr/local/libexec/backup-success)" = planted
+          if id bstest; then echo 'ASSERTION FAILED: bstest survived writer refusal'; exit 1; fi
+          sudo rm /usr/local/libexec/backup-success
       - name: Failure after role cleans up all test resources
         run: |
           hosts_before=$(sudo sha256sum /etc/hosts | cut -d' ' -f1)
@@ -289,6 +307,8 @@ jobs:
           if grep -E '^CLEANUP FAILED:' /tmp/b2-copy-failure.log; then echo 'ASSERTION FAILED: B2 copy cleanup failed'; exit 1; fi
           test ! -e /etc/systemd/system/b2-copy@.timer
           test ! -e /etc/systemd/system/b2-copy@.service
+          test ! -e /usr/local/libexec/backup-success
+          test ! -e /run/systemd/system/b2-copy@testhost.service.d
           test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
           if id bstest; then echo 'ASSERTION FAILED: bstest survived cleanup'; exit 1; fi
           if sudo losetup --list | grep -F backup.img; then echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; fi
@@ -304,6 +324,8 @@ jobs:
           sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/b2_copy/run.sh
           test ! -e /etc/systemd/system/b2-copy@.timer
           test ! -e /etc/systemd/system/b2-copy@.service
+          test ! -e /usr/local/libexec/backup-success
+          test ! -e /run/systemd/system/b2-copy@testhost.service.d
           test -z "$(systemctl list-units --all --no-legend 'b2-copy*')"
           if id bstest; then echo 'ASSERTION FAILED: bstest survived cleanup'; exit 1; fi
           if sudo losetup --list | grep -F backup.img; then echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; fi

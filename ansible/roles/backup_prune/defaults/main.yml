@@ -2,6 +2,8 @@
 backup_prune_restic_image: "{{ restic_image }}"
 backup_prune_schedule: "Sun *-*-* 05:00:00"
 backup_prune_check_schedule: "Sun *-*-* 05:30:00"
+backup_prune_max_age: 612000
+backup_prune_check_max_age: 612000
 backup_prune_keep_daily: 7
 backup_prune_keep_weekly: 4
 backup_prune_keep_monthly: 12

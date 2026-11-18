@@ -1,0 +1,114 @@
+---
+- name: Worker | Read the password database
+  ansible.builtin.getent:
+    database: passwd
+
+- name: Worker | Find the container account
+  ansible.builtin.set_fact:
+    staging_worker_entry: "{{ ansible_facts.getent_passwd[staging_container_user] | default(none) }}"
+
+- name: Worker | Require the container account for a real run
+  ansible.builtin.assert:
+    that: staging_worker_entry is not none
+    fail_msg: "staging_container_user {{ staging_container_user }} must exist"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Worker | Configure the existing account
+  when: staging_worker_entry is not none
+  vars:
+    staging_worker_uid: "{{ staging_worker_entry[1] }}"
+    staging_worker_home: "{{ staging_worker_entry[4] }}"
+  block:
+    - name: Worker | Read the staging authority
+      ansible.builtin.slurp:
+        src: /etc/staging/ca.crt
+      register: staging_worker_authority
+      failed_when: false
+      no_log: true
+      become: true
+
+    - name: Worker | Inspect the authority secret without its value
+      ansible.builtin.command:
+        argv: [podman, secret, inspect, staging-ca]
+      register: staging_worker_secret_inspect
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      no_log: true
+      become: true
+      become_user: "{{ staging_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ staging_worker_uid }}"
+
+    - name: Worker | Decide whether the authority secret needs replacement
+      ansible.builtin.set_fact:
+        staging_worker_secret_changed: >-
+          {{ staging_worker_authority.content is defined and
+             (staging_worker_secret_inspect.rc != 0 or
+              ((staging_worker_secret_inspect.stdout | from_json | first).Spec.Labels.sha256 | default('')) !=
+              (staging_worker_authority.content | b64decode | hash('sha256'))) }}
+      no_log: true
+
+    - name: Worker | Replace the authority secret
+      ansible.builtin.command:
+        argv:
+          - podman
+          - secret
+          - create
+          - --replace
+          - --label
+          - "sha256={{ staging_worker_authority.content | b64decode | hash('sha256') }}"
+          - staging-ca
+          - '-'
+        stdin: "{{ staging_worker_authority.content | b64decode }}"
+        stdin_add_newline: false
+      changed_when: true
+      when: staging_worker_secret_changed
+      no_log: true
+      become: true
+      become_user: "{{ staging_container_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ staging_worker_uid }}"
+
+    - name: Worker | Predict changed authority secret
+      ansible.builtin.debug:
+        msg: "Would replace the account's Podman secret staging-ca"
+      changed_when: true
+      when: ansible_check_mode and staging_worker_secret_changed
+
+    - name: Worker | Make the worker drop-in folder as the account
+      ansible.builtin.file:
+        path: "{{ staging_worker_home }}/.config/containers/systemd/contact-worker.container.d"
+        state: directory
+        mode: "0755"
+      become: true
+      become_user: "{{ staging_container_user }}"
+
+    - name: Worker | Write the authority drop-in as the account
+      ansible.builtin.copy:
+        dest: "{{ staging_worker_home }}/.config/containers/systemd/contact-worker.container.d/60-staging-ca.conf"
+        content: |
+          [Container]
+          Secret=staging-ca,type=mount,target=/etc/staging/ca.crt
+          Environment=SSL_CERT_FILE=/etc/staging/ca.crt
+        mode: "0644"
+      become: true
+      become_user: "{{ staging_container_user }}"
+
+    - name: Worker | Read back the authority drop-in metadata
+      ansible.builtin.stat:
+        path: "{{ staging_worker_home }}/.config/containers/systemd/contact-worker.container.d/60-staging-ca.conf"
+      register: staging_worker_dropin
+      become: true
+      become_user: "{{ staging_container_user }}"
+      when: not ansible_check_mode
+
+    - name: Worker | Verify ownership of the authority drop-in
+      ansible.builtin.assert:
+        that:
+          - staging_worker_dropin.stat.exists
+          - staging_worker_dropin.stat.pw_name == staging_container_user
+        fail_msg: The worker's staging authority drop-in is missing or not the account's
+        quiet: true
+      when: not ansible_check_mode

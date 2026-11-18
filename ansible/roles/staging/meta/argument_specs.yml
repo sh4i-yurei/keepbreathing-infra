@@ -2,4 +2,10 @@
 argument_specs:
   main:
     short_description: Generate staging values and certificates
-    options: {}
+    options:
+      staging_container_user:
+        type: str
+        required: true
+      staging_mailpit_image:
+        type: str
+        default: docker.io/axllent/mailpit@sha256:5040a9c533087d25dcb8f2ac748f45c9be5f7bc1d9fe5b860afb9597a2471d57

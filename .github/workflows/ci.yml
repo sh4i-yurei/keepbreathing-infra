@@ -930,7 +930,17 @@ jobs:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y python3-apt
+      - run: sudo apt-get update && sudo apt-get install -y podman passt python3-apt
+      - name: Existing account is preserved
+        run: |
+          sudo useradd -m stgtest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/staging/run.sh > /tmp/staging-account-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing account was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: stgtest already exists' /tmp/staging-account-existing.log
+          test -d /home/stgtest
+          id stgtest
+          sudo userdel -r stgtest
       - name: Existing staging folder is preserved
         run: |
           sudo mkdir -m 0700 /etc/staging
@@ -958,6 +968,22 @@ jobs:
           if test -e /etc/staging || test -L /etc/staging; then
             echo 'ASSERTION FAILED: full driver left /etc/staging'; exit 1
           fi
+          if id stgtest >/dev/null 2>&1 || test -e /var/lib/systemd/linger/stgtest; then
+            echo 'ASSERTION FAILED: full driver left stgtest'; exit 1
+          fi
+          for unit in /etc/containers/systemd/staging-mail.network /etc/containers/systemd/mailpit.container; do
+            if test -e "$unit" || test -L "$unit"; then
+              echo "ASSERTION FAILED: full driver left $unit"; exit 1
+            fi
+          done
+          if sudo podman network exists staging-mail || sudo podman container exists mailpit; then
+            echo 'ASSERTION FAILED: full driver left Mailpit container or network'; exit 1
+          fi
+          for secret in mailpit-smtp-auth mailpit-tls-cert mailpit-tls-key; do
+            if sudo podman secret exists "$secret"; then
+              echo "ASSERTION FAILED: full driver left $secret"; exit 1
+            fi
+          done
 
   ticket-band:
     needs: changes

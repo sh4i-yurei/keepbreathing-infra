@@ -141,6 +141,12 @@
     (staging_ca_cert.stat.exists and
      staging_key_stats.results | selectattr('stat.exists') | list | length == 3)
 
+- name: Configure root's staging Mailpit
+  ansible.builtin.import_tasks: mailpit.yml
+
+- name: Configure the worker's staging authority
+  ansible.builtin.import_tasks: worker.yml
+
 - name: Read whether each generated value and origin file exists
   ansible.builtin.stat:
     path: "/etc/staging/{{ item }}"

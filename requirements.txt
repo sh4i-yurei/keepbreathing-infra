@@ -1,3 +1,4 @@
 ansible-core>=2.21
 ansible-lint>=26
+jsonschema>=4.26.0
 PyJWT==2.8.0

@@ -44,6 +44,11 @@ printf 'PASS check mode on a fresh machine: changed=%s, nothing created\n' "$fre
 play first
 first_changed=$(changed "$last_log" positive)
 printf 'PASS first run: changed=%s\n' "$first_changed"
+generated_names=(redis-password altcha-hmac-key smtp-password)
+generated_values=()
+for name in "${generated_names[@]}"; do
+  generated_values+=("$(cat "/etc/staging/$name")")
+done
 
 python3 - <<'PY' || fail 'modes and values'
 from pathlib import Path
@@ -132,9 +137,10 @@ if grep -F 'KeptAltchaValue0123456789abcdefghijKLMNO' "$work"/*.log >/dev/null; 
 fi
 printf 'PASS an existing value survives\n'
 
-for name in redis-password altcha-hmac-key smtp-password; do
-  value=$(cat "/etc/staging/$name")
-  if grep -F -- "$value" "$work"/*.log >/dev/null; then fail "$name appeared in run output"; fi
+for index in "${!generated_names[@]}"; do
+  if grep -F -- "${generated_values[index]}" "$work"/*.log >/dev/null; then
+    fail "${generated_names[index]} appeared in run output"
+  fi
 done
 printf 'PASS no value in any run output\n'
 

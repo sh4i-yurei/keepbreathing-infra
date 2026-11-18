@@ -17,14 +17,12 @@ def main(argv):
 
     filename = argv[0]
     try:
-        with open(filename, encoding="utf-8") as catalog_file:
-            catalog = json.load(catalog_file)
+        catalog = json.loads(Path(filename).read_bytes())
     except (OSError, ValueError) as error:
         print(f"{filename}: {error}", file=sys.stderr)
         return 1
 
-    with SCHEMA.open(encoding="utf-8") as schema_file:
-        schema = json.load(schema_file)
+    schema = json.loads(SCHEMA.read_bytes())
     validator = Draft202012Validator(schema)
     problems = sorted(
         f"{'/'.join(map(str, error.absolute_path)) or '(top)'} | {error.message}"

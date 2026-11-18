@@ -5,6 +5,7 @@
   gather_facts: false
   vars:
     openbao_port: 8200
+    openbao_restore_check_value: restore-check-test
     openbao_self_address: "192.0.2.10"
     openbao_approles:
       - name: clientsvc

@@ -23,6 +23,10 @@ argument_specs:
         type: str
         required: true
         no_log: true
+      openbao_backup_ansible_password:
+        type: str
+        required: true
+        no_log: true
       backup_server_port:
         type: int
         required: true
@@ -48,3 +52,5 @@ argument_specs:
         type: int
       openbao_backup_restore_wait:
         type: int
+      openbao_backup_restore_check_value:
+        type: str

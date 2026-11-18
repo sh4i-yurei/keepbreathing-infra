@@ -254,6 +254,39 @@ import json,sys
 sys.exit(1 if "openbao-restore-check" in [n for c in json.load(sys.stdin) for n in c["Names"]] else 0)' \
     || fail "$label must leave no openbao-restore-check container"
 }
+# Require the last play log to hold the restore proof's checks line for the newest OpenBao snapshot.
+checks_passed() {
+  local label=$1 id
+  id=$(newest_bao_id)
+  grep -Fq "openbao restore proof: checks 2 to 5 passed on snapshot $id" "$last_play_log" \
+    || fail "$label must print the restore proof's checks line for $id"
+}
+# Write a value into the live test secret as ansible, through the proxy stand-in. The password
+# reaches python3 through its environment, never a command line.
+live_test_secret() {
+  python3 - "$1" <<'PY' || fail "the live test secret must take the value $1"
+import json, os, sys, urllib.request
+def call(method, path, body=None, token=None):
+    request = urllib.request.Request(
+        'http://127.0.0.1:18300/v1/' + path,
+        data=None if body is None else json.dumps(body).encode(),
+        method=method,
+    )
+    request.add_header('Content-Type', 'application/json')
+    if token:
+        request.add_header('X-Vault-Token', token)
+    with urllib.request.urlopen(request, timeout=30) as response:
+        raw = response.read()
+    return json.loads(raw) if raw else None
+login = call('POST', 'auth/userpass/login/ansible', {'password': os.environ['TEST_ANSIBLE_PASSWORD']})
+token = login['auth']['client_token']
+try:
+    version = call('GET', 'secret/metadata/restore-check/test', token=token)['data']['current_version']
+    call('POST', 'secret/data/restore-check/test', {'options': {'cas': version}, 'data': {'value': sys.argv[1]}}, token)
+finally:
+    call('POST', 'auth/token/revoke-self', token=token)
+PY
+}
 
 # Case 1: check mode before openbao_config, so the consumer's AppRole files don't exist yet.
 play role --check --diff
@@ -296,6 +329,7 @@ no_backup_container 'the first run'
 id=$(newest_bao_id)
 grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-check" "$last_play_log" \
   || fail "case 3 must print the restore proof's success line for $id"
+checks_passed 'case 3'
 no_proof 'case 3'
 [[ $(systemctl show openbao-backup.timer -p UnitFileState --value) == enabled ]] || fail 'openbao-backup.timer must be enabled'
 next=$(systemctl show openbao-backup.timer -p NextElapseUSecRealtime --value)
@@ -397,6 +431,7 @@ PY
 id=$(newest_bao_id)
 grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-check" "$last_play_log" \
   || fail "case 10 must print the restore proof's success line for $id"
+checks_passed 'case 10'
 printf 'case 10: another path saved during the run leaves the verify passing with changed=0\n'
 
 # Case 11: replace a stale proof folder and stopped container.
@@ -408,8 +443,81 @@ recap "$last_play_log" 0 0
 id=$(newest_bao_id)
 grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-check" "$last_play_log" \
   || fail "case 11 must print the restore proof's success line for $id"
+checks_passed 'case 11'
 no_proof 'case 11'
 printf 'case 11: a stale throwaway folder and container are replaced and removed\n'
+
+# Case 14: a wrong ansible password fails check 2.
+play_fails 'a wrong ansible password' role -e openbao_backup_ansible_password=not-the-ansible-password
+grep -Fq 'openbao restore proof: check 2 failed. OpenBao said: invalid username or password' "$last_play_log" \
+  || fail 'case 14 must report check 2'
+no_proof 'case 14'
+printf 'case 14: a wrong ansible password fails check 2 and nothing is left\n'
+
+# Case 15: a self address outside restore-check's bound addresses fails check 3. OpenBao 2.7.2
+# appends ": %!w(<nil>)" to its refusal, so the match ends at the word role.
+play_fails 'an unbound self address' role -e openbao_backup_self_address=192.0.2.99
+grep -Fq 'openbao restore proof: check 3 failed. OpenBao said: source address \"192.0.2.99\" unauthorized by CIDR restrictions on the role' "$last_play_log" \
+  || fail 'case 15 must report check 3'
+no_proof 'case 15'
+printf 'case 15: an unbound self address fails check 3 and nothing is left\n'
+
+# Case 16: another value in the live test secret fails check 4. openbao_config never rewrites a
+# value that differs, so the case writes the expected value back itself.
+live_test_secret restore-check-other
+play_fails 'another test secret value' role
+grep -Fq 'openbao restore proof: check 4 failed. The test secret holds restore-check-other' "$last_play_log" \
+  || fail 'case 16 must report check 4'
+no_proof 'case 16'
+live_test_secret restore-check-test
+printf 'case 16: another test secret value fails check 4 and nothing is left\n'
+
+# Case 17: the live openbao.hcl without its audit stanza, copied into the throwaway, fails check 5.
+# The live server keeps its audit device, because it reads openbao.hcl only when it starts.
+bao_config=/home/bbbao/.config/openbao/config/openbao.hcl
+cp -p "$bao_config" "$work/openbao.hcl"
+python3 - "$bao_config" <<'PY' || fail 'case 17 must remove the audit stanza from the live openbao.hcl'
+import sys
+path = sys.argv[1]
+stanza = 'audit "file" "audit" {\n  options {\n    file_path = "stdout"\n  }\n}\n\n'
+assert len(stanza.encode()) == 67
+with open(path) as source:
+    text = source.read()
+assert text.count(stanza) == 1, text
+with open(path, 'w') as target:
+    target.write(text.replace(stanza, ''))
+PY
+play_fails 'a configuration without audit' role
+grep -Fq "openbao restore proof: check 5 failed. The throwaway's log has no line naming secret/data/restore-check/test" "$last_play_log" \
+  || fail 'case 17 must report check 5'
+no_proof 'case 17'
+cp -p "$work/openbao.hcl" "$bao_config"
+printf 'case 17: a configuration without audit fails check 5 and nothing is left\n'
+
+# Case 18: the live OpenBao stopped right after the snapshot still passes every check.
+cat > /etc/systemd/system/openbao-backup.service.d/live-stop.conf <<EOF
+[Service]
+ExecStartPost=/usr/bin/systemctl --user --machine=bbbao@ stop openbao.service
+EOF
+systemctl daemon-reload
+play role
+recap "$last_play_log" 0 0
+id=$(newest_bao_id)
+grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-check" "$last_play_log" \
+  || fail "case 18 must print the restore proof's success line for $id"
+checks_passed 'case 18'
+[[ $(as_bao systemctl --user is-active openbao.service || true) == inactive ]] \
+  || fail "case 18 must leave bbbao's openbao.service inactive"
+no_proof 'case 18'
+rm /etc/systemd/system/openbao-backup.service.d/live-stop.conf
+systemctl daemon-reload
+as_bao systemctl --user start openbao.service
+deadline=$((SECONDS + 120))
+until [[ $(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:18300/v1/sys/health || true) == 200 ]]; do
+  ((SECONDS < deadline)) || fail 'the live OpenBao must answer 200 again after case 18'
+  sleep 1
+done
+printf 'case 18: the live OpenBao stopped after the snapshot still passes checks 1 to 5\n'
 
 # Case 12: the new snapshot must be refused under another seal key.
 seal_file=/home/bbbao/.config/openbao/seal/seal.key

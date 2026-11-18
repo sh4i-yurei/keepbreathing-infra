@@ -29,3 +29,5 @@ aws_cli_image: docker.io/amazon/aws-cli@sha256:d557b3524475d70dd3104cf44d96568ee
 openbao_image: quay.io/openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
 # OpenBao's address through its Tailscale Service.
 openbao_address: "https://openbao.{{ tailnet_domain }}"
+# The value openbao_config writes into restore-check's test secret and the restore proof reads back.
+openbao_restore_check_value: restore-check-test

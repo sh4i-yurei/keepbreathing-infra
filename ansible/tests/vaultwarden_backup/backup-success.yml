@@ -1,0 +1,14 @@
+---
+# Installs node_exporter's backup success writer with the driver's scratch textfile folder.
+- name: Install the backup success writer for the Vaultwarden backup driver
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Install the writer from node_exporter
+      ansible.builtin.import_role:
+        name: node_exporter
+        tasks_from: backup-success
+      vars:
+        node_exporter_textfile_directory: "{{ lookup('ansible.builtin.env', 'TEST_TEXTFILE') }}"

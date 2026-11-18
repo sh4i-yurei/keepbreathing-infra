@@ -12,6 +12,17 @@
   loop_control:
     label: "{{ item.0.machine }} {{ item.1 }}"
 
+- name: Hub pull | Check the backup success writer
+  ansible.builtin.stat:
+    path: /usr/local/libexec/backup-success
+  register: hub_pull_writer
+
+- name: Hub pull | Require the backup success writer
+  ansible.builtin.assert:
+    that: hub_pull_writer.stat.exists and hub_pull_writer.stat.executable
+    fail_msg: "The backup success writer /usr/local/libexec/backup-success is missing; apply node_exporter first."
+    quiet: true
+
 - name: Hub pull | Read account UID
   ansible.builtin.command:
     argv: [id, -u, "{{ hub_pull_user }}"]
@@ -143,6 +154,41 @@
 
 - name: Hub pull | Apply manager reloads
   ansible.builtin.meta: flush_handlers
+
+- name: Hub pull | Read each machine's recorded success for the rehearsal
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, pull, "{{ item.machine }}"]
+  loop: "{{ hub_pull_machines }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  register: hub_pull_rehearsal_reads
+  check_mode: false
+  changed_when: false
+  failed_when: >-
+    hub_pull_rehearsal_reads.rc != 0
+    and hub_pull_rehearsal_reads.stderr != 'backup-success: no success recorded for pull ' ~ item.machine
+  when: ansible_check_mode
+
+- name: Hub pull | Report each first success the rehearsal would record
+  ansible.builtin.debug:
+    msg: "Would record the install time as the first success of pull {{ item.item.machine }}"
+  loop: "{{ hub_pull_rehearsal_reads.results }}"
+  loop_control:
+    label: "{{ item.item.machine }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - item.rc == 1
+
+- name: Hub pull | Record the install time once as each machine's first success
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --if-absent, pull, "{{ item.machine }}", "{{ hub_pull_max_age }}"]
+  loop: "{{ hub_pull_machines }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  register: hub_pull_first_success
+  changed_when: hub_pull_first_success.stdout == 'wrote'
+  when: not ansible_check_mode
 
 - name: Hub pull | Prepare and verify every machine
   ansible.builtin.include_tasks: pull-one.yml

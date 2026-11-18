@@ -48,3 +48,5 @@ argument_specs:
         type: str
       hub_pull_timeout:
         type: int
+      hub_pull_max_age:
+        type: int

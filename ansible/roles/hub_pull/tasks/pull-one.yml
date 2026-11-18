@@ -54,10 +54,37 @@
     enabled: true
     state: started
 
+- name: "Hub pull | Read the recorded success before the pull for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, pull, "{{ hub_pull_target.machine }}"]
+  register: hub_pull_success_before
+  changed_when: false
+
+- name: "Hub pull | Wait until the clock passes the recorded second for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv: [date, +%s]
+  register: hub_pull_clock
+  until: (hub_pull_clock.stdout | int) > (hub_pull_success_before.stdout | int)
+  retries: 3
+  delay: 1
+  changed_when: false
+
 - name: "Hub pull | Start the same system service as the timer for {{ hub_pull_target.machine }}"
   ansible.builtin.command:
     argv: [systemctl, start, "hub-pull@{{ hub_pull_target.machine }}.service"]
   changed_when: false
+
+- name: "Hub pull | Read the recorded success after the pull for {{ hub_pull_target.machine }}"
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, pull, "{{ hub_pull_target.machine }}"]
+  register: hub_pull_success_after
+  changed_when: false
+
+- name: "Hub pull | Require a newer recorded success for {{ hub_pull_target.machine }}"
+  ansible.builtin.assert:
+    that: (hub_pull_success_after.stdout | int) > (hub_pull_success_before.stdout | int)
+    fail_msg: "hub-pull@{{ hub_pull_target.machine }}.service ran without recording a new success for pull {{ hub_pull_target.machine }}."
+    quiet: true
 
 - name: "Hub pull | Read the snapshots for {{ hub_pull_target.machine }}"
   ansible.builtin.command:

@@ -7,13 +7,21 @@ for account in bstest vwtest; do
     exit 1
   fi
 done
-if [[ -e /etc/systemd/system/vaultwarden-backup.timer || -e /etc/systemd/system/vaultwarden-backup.service ]]; then
+writer=/usr/local/libexec/backup-success
+dropins=/etc/systemd/system/vaultwarden-backup.service.d
+if [[ -e /etc/systemd/system/vaultwarden-backup.timer || -e /etc/systemd/system/vaultwarden-backup.service || -e $dropins ]]; then
   printf 'ASSERTION FAILED: vaultwarden-backup units already exist\n' >&2
+  exit 1
+fi
+if [[ -e $writer ]]; then
+  printf 'ASSERTION FAILED: the backup success writer already exists\n' >&2
   exit 1
 fi
 
 work=$(mktemp -d)
 point=$work/backup
+textfile=$work/textfile
+export TEST_TEXTFILE=$textfile
 bs_uid=
 vw_uid=
 manager_xdg=
@@ -75,10 +83,46 @@ undo_vaultwarden_units() {
     fi
   fi
   rm -f /etc/systemd/system/vaultwarden-backup.timer /etc/systemd/system/vaultwarden-backup.service
+  rm -rf --one-file-system -- "$dropins"
   systemctl daemon-reload
 }
 undo_listener() {
   if [[ -n ${listener:-} ]] && kill -0 "$listener" 2>/dev/null; then kill "$listener"; fi
+}
+undo_writer() { rm -f -- "$writer"; }
+task_status() {
+  python3 - "$1" "$2" <<'PY2'
+import pathlib, re, sys
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+header = re.compile(r'^TASK \[[^\]]*: ' + re.escape(sys.argv[2]) + r'\] \*+$')
+starts = [index for index, line in enumerate(lines) if header.match(line)]
+assert len(starts) == 1, starts
+for line in lines[starts[0] + 1:]:
+    match = re.match(r'^(ok|changed|skipping|fatal): \[localhost\]', line)
+    if match:
+        print(match.group(1))
+        break
+PY2
+}
+# The six lines node_exporter's writer records for a stage, target, time and limit.
+record_lines() {
+  local labels="stage=\"$1\",target=\"$2\""
+  printf '%s\n' \
+    "# HELP backup_last_success_timestamp_seconds Unix time of the stage's last successful run." \
+    '# TYPE backup_last_success_timestamp_seconds gauge' \
+    "backup_last_success_timestamp_seconds{$labels} $3" \
+    "# HELP backup_max_age_seconds Age after which the stage's last success counts as stale." \
+    '# TYPE backup_max_age_seconds gauge' \
+    "backup_max_age_seconds{$labels} $4"
+}
+plant_record() { record_lines "$@" >"$textfile/backup-$1-$2.prom"; }
+read_record() { "$writer" --read "$1" "$2"; }
+require_record() {
+  local stage=$1 target=$2 since=$3 limit=$4 time
+  time=$(read_record "$stage" "$target" 2>/dev/null) || fail "$stage $target must have a recorded success"
+  [[ $time =~ ^[0-9]+$ ]] && ((time >= since)) || fail "$stage $target's record must be no earlier than $since, got $time"
+  cmp -s <(record_lines "$stage" "$target" "$time" "$limit") "$textfile/backup-$stage-$target.prom" ||
+    fail "$stage $target's record must be the writer's six lines with limit $limit"
 }
 
 undo_install
@@ -107,6 +151,8 @@ export TEST_VERIFY_BCRYPT="$(htpasswd -nbB verify "$TEST_VERIFY_PASSWORD" | cut 
 
 mkdir -p "$point" "$TEST_DATA"
 chmod 0755 "$work"
+# Owned by root with mode 0700, so the test accounts cannot enter it (Backups decision 83).
+install -d -o root -g root -m 0700 "$textfile"
 truncate -s 512M "$work/backup.img"
 mkfs.xfs -f -q "$work/backup.img"
 mount -o loop "$work/backup.img" "$point"
@@ -168,6 +214,17 @@ systemctl start "user@$vw_uid.service"
 as_vw systemctl --user start vaultwarden.service
 printf 'PASS role requires baseline lingering before changes\n'
 
+if ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml >"$work/no-writer.log" 2>&1; then fail 'role must require the backup success writer'; fi
+grep -Fq "\"msg\": \"The backup success writer $writer is missing; apply node_exporter first.\"" "$work/no-writer.log" ||
+  { tail -25 "$work/no-writer.log"; fail 'a missing writer must show the exact node_exporter message'; }
+[[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'a missing writer must create no role files'
+printf 'PASS role requires the backup success writer before changes\n'
+undo_add 'remove the backup success writer' undo_writer
+if ! ansible-playbook -i localhost, tests/vaultwarden_backup/backup-success.yml >"$work/writer.log" 2>&1; then
+  tail -30 "$work/writer.log"
+  fail 'the backup success writer must install'
+fi
+
 if ! ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml --check --diff >"$work/check.log" 2>&1; then
   tail -30 "$work/check.log"
   fail 'fresh Vaultwarden backup check mode must pass'
@@ -175,6 +232,9 @@ fi
 grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/check.log" || fail 'check mode recap must report failed=0'
 [[ ! -e $env_file && ! -e $run_unit && ! -e /etc/systemd/system/vaultwarden-backup.timer && ! -e /etc/systemd/system/vaultwarden-backup.service ]] || fail 'check mode must leave no role files'
 [[ ! -e $point/restic/vwbackup/config ]] || fail 'check mode must leave no repository snapshot'
+grep -Fxq '    "msg": "Would record the install time as the first success of backup localhost"' "$work/check.log" ||
+  fail 'fresh check mode must report the first success'
+[[ ! -e $textfile/backup-backup-localhost.prom ]] || fail 'check mode recorded a success'
 printf 'PASS fresh check mode leaves no state\n'
 
 play() {
@@ -210,7 +270,9 @@ assert_no_restore_state() {
 if [[ ${TEST_FAIL_AT_IMAGE_PULL:-} == 1 ]]; then
   export TEST_RESTIC_IMAGE="localhost/vaultwarden-backup-unpullable@sha256:$(printf '0%.0s' {1..64})"
 fi
+started=$(date +%s)
 play "$work/first.log"
+require_record backup localhost "$started" 93600
 for folder in /home/vwtest/.config /home/vwtest/.local /home/vwtest/.config/systemd /home/vwtest/.config/systemd/user; do
   [[ $(stat -c '%a:%U:%G' "$folder") == 755:vwtest:root ]] || fail "role must preserve shared folder mode, owner and group: $folder"
 done
@@ -253,9 +315,20 @@ grep -Eq 'localhost[[:space:]]+:.*changed=0' "$work/second.log" || fail 'second 
 [[ $(snapshot_count) == 2 ]] || fail 'second verified role run must create two snapshots'
 printf 'PASS second role run changed=0 and two snapshots\n'
 
+if ! ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml --check --diff >"$work/check-installed.log" 2>&1; then
+  tail -30 "$work/check-installed.log"
+  fail 'check mode on an installed role must pass'
+fi
+grep -Eq 'localhost[[:space:]]+:.*changed=0 .*failed=0' "$work/check-installed.log" || fail 'check mode on an installed role must report changed=0'
+! grep -Fq 'Would record ' "$work/check-installed.log" || fail 'check mode on an installed role reported a first success'
+printf 'PASS check mode on an installed role reports no change\n'
+
 python3 tests/vaultwarden_backup/api.py third || fail 'API must create third item'
+plant_record backup localhost 1 93600
+started=$(date +%s)
 systemctl start vaultwarden-backup.service || fail 'system service must succeed after third item'
 [[ $(systemctl show vaultwarden-backup.service -p Result --value) == success ]] || fail 'system service must end with Result=success'
+require_record backup localhost "$started" 93600
 install -d -o vwtest -g vwtest "$work/third"
 restic restore latest --exclude-xattr '*' --target "$work/third" >/dev/null
 new_copy=$(find "$work/third/backup/data" -maxdepth 1 -name 'db_*.sqlite3' -print -quit)
@@ -267,9 +340,11 @@ PY
 printf 'PASS direct system service run captures third item\n'
 
 before=$(snapshot_count)
+plant_record backup localhost 1 93600
 as_bs systemctl --user stop backup-server.service
 if systemctl start vaultwarden-backup.service; then fail 'system service must fail when backup server is stopped'; fi
 [[ $(systemctl is-failed vaultwarden-backup.service) == failed ]] || fail 'system service must report failed when backup server is stopped'
+[[ $(read_record backup localhost) == 1 ]] || fail 'a failed backup must not record a success'
 [[ -z $(find "$TEST_DATA" -maxdepth 1 -name 'db_*.sqlite3' -print -quit) ]] || fail 'failed restic run must delete database copy'
 as_bs systemctl --user start backup-server.service
 [[ $(snapshot_count) == "$before" ]] || fail 'backup server outage must create no snapshot'
@@ -278,6 +353,7 @@ printf 'PASS backup server outage propagates failure and cleans copy\n'
 as_vw systemctl --user stop vaultwarden.service
 if systemctl start vaultwarden-backup.service; then fail 'system service must fail when Vaultwarden is stopped'; fi
 [[ $(systemctl is-failed vaultwarden-backup.service) == failed ]] || fail 'system service must report failed when Vaultwarden is stopped'
+[[ $(read_record backup localhost) == 1 ]] || fail 'a failed backup must not record a success'
 [[ $(snapshot_count) == "$before" ]] || fail 'Vaultwarden outage must create no snapshot'
 as_vw systemctl --user start vaultwarden.service
 printf 'PASS Vaultwarden outage propagates failure\n'
@@ -311,12 +387,29 @@ cp "$work/original-run.service" "$run_unit"
 as_vw systemctl --user daemon-reload
 printf 'PASS verify detects stale database counts\n'
 
+# A wrapper whose ExecStartPost= list is emptied backs up without recording, and verify fails.
+mkdir "$dropins"
+printf '%s\n' '[Service]' 'ExecStartPost=' >"$dropins/no-success.conf"
+systemctl daemon-reload
+if ansible-playbook -i localhost, tests/vaultwarden_backup/verify.yml >"$work/no-success.log" 2>&1; then fail 'verify must detect a backup that records no success'; fi
+grep -Fq '"msg": "vaultwarden-backup.service ran without recording a new success for backup localhost."' "$work/no-success.log" ||
+  { tail -25 "$work/no-success.log"; fail 'verify must name the backup that recorded no success'; }
+rm -rf --one-file-system -- "$dropins"
+systemctl daemon-reload
+printf 'PASS verify detects a backup that records no success\n'
+
 before_wrong_password=$(snapshot_count)
 correct_restic_password=$TEST_RESTIC_PASSWORD
 export TEST_RESTIC_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_hex(24))')"
+rm -f -- "$textfile/backup-backup-localhost.prom"
+started=$(date +%s)
 if ansible-playbook -i localhost, tests/vaultwarden_backup/vaultwarden.yml >"$work/wrong-password.log" 2>&1; then fail 'wrong restic password must fail the play'; fi
 grep -Fq 'wrong password' "$work/wrong-password.log" || { tail -25 "$work/wrong-password.log"; fail 'wrong password error must be shown'; }
 ! grep -Fq 'repository master key and config already initialized' "$work/wrong-password.log" || fail 'wrong password must not attempt init'
+[[ $(task_status "$work/wrong-password.log" 'Vaultwarden backup verify | Require available or absent repository') == fatal ]] ||
+  { tail -25 "$work/wrong-password.log"; fail 'the repository check must be the task reported fatal'; }
+require_record backup localhost "$started" 93600
+printf 'PASS a play whose backup cannot run still records the install time\n'
 export TEST_RESTIC_PASSWORD=$correct_restic_password
 play "$work/right-password.log"
 [[ $(snapshot_count) == $((before_wrong_password + 1)) ]] || fail 'correct password must preserve existing snapshots'

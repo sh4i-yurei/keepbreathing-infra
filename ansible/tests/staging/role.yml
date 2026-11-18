@@ -1,0 +1,18 @@
+---
+- name: Exercise staging's generated values and certificates on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run the staging role
+      ansible.builtin.import_role:
+        name: staging
+
+    - name: Save the role's web inputs for external assertions
+      ansible.builtin.copy:
+        dest: "{{ inputs_path }}"
+        content: "{{ staging_web_inputs | to_json }}"
+        mode: "0600"
+      no_log: true
+      changed_when: false
+      when: not ansible_check_mode

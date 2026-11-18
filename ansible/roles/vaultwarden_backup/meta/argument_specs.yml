@@ -29,3 +29,5 @@ argument_specs:
         type: str
         required: true
         no_log: true
+      vaultwarden_backup_max_age:
+        type: int

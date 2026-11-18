@@ -1,0 +1,27 @@
+---
+# The hub side of the three-machine cases, passed as -e @tests/hub_pull/three.yml: testdb sits
+# between testweb and testmail.
+hub_pull_machines:
+  - machine: testweb
+    host: localhost
+    address: 127.0.0.1
+    stream: web-redis.rdb
+  - machine: testdb
+    host: localhost
+    address: 127.0.0.1
+    stream: testdb.rdb
+  - machine: testmail
+    host: localhost
+    address: 127.0.0.1
+    stream: testmail-config.tar
+hub_pull_logins:
+  testweb: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
+  testdb: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
+  testmail: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
+b2_copy_passwords:
+  testweb:
+    hub: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"
+  testdb:
+    hub: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"
+  testmail:
+    hub: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"

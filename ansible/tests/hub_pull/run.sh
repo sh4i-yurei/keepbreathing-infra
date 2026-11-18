@@ -9,9 +9,12 @@ for account in hptest kbtest hubexport; do
 done
 units=(/home/hptest/.config/systemd/user/hub-pull-run@.service
   /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer)
+writer=/usr/local/libexec/backup-success
+dropins=/etc/systemd/system/hub-pull@.service.d
 for path in "${units[@]}" /etc/sudoers.d/hub-export /usr/local/libexec/hub-export \
   /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf \
-  /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test; do
+  /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test \
+  "$writer" "$dropins"; do
   [[ ! -e $path ]] || fail 'hub pull files already exist'
 done
 
@@ -19,6 +22,8 @@ source tests/lib/undo.sh
 source tests/lib/runner.sh
 work=$(mktemp -d)
 point=$work/backup
+textfile=$work/textfile
+export TEST_TEXTFILE=$textfile
 manager_xdg=
 hp_uid=
 kb_uid=
@@ -101,7 +106,28 @@ for line in lines[starts[0] + 1:]:
         break
 PY2
 }
+# The six lines node_exporter's writer records for a stage, target, time and limit.
+record_lines() {
+  local labels="stage=\"$1\",target=\"$2\""
+  printf '%s\n' \
+    "# HELP backup_last_success_timestamp_seconds Unix time of the stage's last successful run." \
+    '# TYPE backup_last_success_timestamp_seconds gauge' \
+    "backup_last_success_timestamp_seconds{$labels} $3" \
+    "# HELP backup_max_age_seconds Age after which the stage's last success counts as stale." \
+    '# TYPE backup_max_age_seconds gauge' \
+    "backup_max_age_seconds{$labels} $4"
+}
+plant_record() { record_lines "$@" >"$textfile/backup-$1-$2.prom"; }
+read_record() { "$writer" --read "$1" "$2"; }
+require_record() {
+  local stage=$1 target=$2 since=$3 limit=$4 time
+  time=$(read_record "$stage" "$target" 2>/dev/null) || fail "$stage $target must have a recorded success"
+  [[ $time =~ ^[0-9]+$ ]] && ((time >= since)) || fail "$stage $target's record must be no earlier than $since, got $time"
+  cmp -s <(record_lines "$stage" "$target" "$time" "$limit") "$textfile/backup-$stage-$target.prom" ||
+    fail "$stage $target's record must be the writer's six lines with limit $limit"
+}
 undo_scratch() { rm -rf --one-file-system -- "$work"; }
+undo_writer() { rm -f -- "$writer"; }
 undo_mount() { if mountpoint -q "$point"; then umount "$point"; fi; }
 undo_hptest() { runner_undo_account hptest; }
 undo_kbtest() { runner_undo_account kbtest; }
@@ -123,12 +149,13 @@ undo_ssh() {
 }
 undo_units() {
   local machine
-  for machine in testweb testmail; do
+  for machine in testweb testdb testmail; do
     if systemctl is-enabled --quiet "hub-pull@$machine.timer"; then systemctl disable --now "hub-pull@$machine.timer" >/dev/null; fi
     if systemctl is-active --quiet "hub-pull@$machine.service"; then systemctl stop "hub-pull@$machine.service"; fi
     if systemctl is-failed --quiet "hub-pull@$machine.service"; then systemctl reset-failed "hub-pull@$machine.service"; fi
   done
   rm -f "${units[@]}"
+  rm -rf --one-file-system -- "$dropins"
   systemctl daemon-reload
 }
 undo_tar_etc() { rm -rf --one-file-system -- /etc/hub-export-test; }
@@ -143,6 +170,8 @@ undo_add 'remove kbtest account' undo_kbtest
 undo_add 'remove hptest account' undo_hptest
 mkdir -p "$point"
 chmod 0755 "$work"
+# Owned by root with mode 0700, so the test accounts cannot enter it (Backups decision 83).
+install -d -o root -g root -m 0700 "$textfile"
 mount -t tmpfs -o size=256m tmpfs "$point"
 undo_add 'unmount backup tmpfs' undo_mount
 undo_add 'remove hub pull units' undo_units
@@ -184,6 +213,15 @@ done
 undo_add 'stop the ssh units the driver started' undo_ssh
 systemctl start ssh.service
 
+# A missing backup success writer stops the role before it plans or writes a file.
+pull_play "$work/no-writer.log" --check --diff && fail 'hub pull without the backup success writer must fail'
+assert_failure_message "$work/no-writer.log" "The backup success writer $writer is missing; apply node_exporter first."
+! grep -Fq "Would write ${units[0]}" "$work/no-writer.log" || fail 'a missing writer must stop the role before it plans a file'
+printf 'PASS a missing backup success writer fails before changes\n'
+undo_add 'remove the backup success writer' undo_writer
+ansible-playbook -i localhost, tests/hub_pull/backup-success.yml >"$work/writer.log" 2>&1 ||
+  { tail -35 "$work/writer.log" >&2; fail 'the backup success writer must install'; }
+
 # Case 2: a fresh check-mode run plans every file and writes none.
 pull_play "$work/check-first.log" --check --diff ||
   { tail -35 "$work/check-first.log" >&2; fail 'fresh check mode must pass'; }
@@ -193,6 +231,9 @@ for path in "${units[@]}" "$key" "$conf_dir/testweb.conf" "$conf_dir/testweb.env
   [[ ! -e $path ]] || fail "check mode wrote $path"
 done
 if id -u hubexport >/dev/null 2>&1; then fail 'check mode made hubexport'; fi
+grep -Fxq '    "msg": "Would record the install time as the first success of pull testweb"' "$work/check-first.log" ||
+  fail "check mode must report testweb's first pull"
+[[ ! -e $textfile/backup-pull-testweb.prom ]] || fail 'check mode recorded a success for testweb'
 printf 'PASS fresh check mode plans every file without writing\n'
 
 # The same fresh check with the tar kind, which defines no container setting.
@@ -216,8 +257,10 @@ printf 'token\n' >/root/.hub-export-test/token.ini
 chmod 0600 /root/.hub-export-test/token.ini
 
 # Case 3: the first real run installs everything and its verify tasks take one snapshot.
+started=$(date +%s)
 pull_play "$work/first.log" || { tail -35 "$work/first.log" >&2; fail 'first hub pull play must pass'; }
 grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/first.log" || fail 'first play recap failed'
+require_record pull testweb "$started" 93600
 id -u hubexport >/dev/null || fail 'hubexport must exist'
 ! grep -q '^hubexport:' /etc/subuid || fail 'hubexport must have no subordinate IDs'
 mapfile -t entries </etc/ssh/authorized_keys/hubexport
@@ -264,6 +307,7 @@ require_recap 0 "$work/second.log"
 pull_play "$work/check-existing.log" --check --diff || fail 'existing check mode must pass'
 require_recap 0 "$work/check-existing.log"
 ! grep -Fq 'Would write ' "$work/check-existing.log" || fail 'existing check mode planned a file'
+! grep -Fq 'Would record ' "$work/check-existing.log" || fail 'existing check mode reported a first success'
 printf 'PASS second play and check mode report no changes\n'
 
 # Case 5: the hub's key gets only the export, whatever it asks for.
@@ -302,8 +346,10 @@ printf 'PASS the sudo rule allows only the bare script\n'
 # Case 7: a stopped container fails the pull without a snapshot or a retry.
 count=$(snapshot_count testweb)
 as_kb podman stop keepbreath-redis >/dev/null
+plant_record pull testweb 1 93600
 cursor=$(run_cursor)
 if systemctl start hub-pull@testweb.service; then fail 'a stopped container must fail the pull'; fi
+[[ $(read_record pull testweb) == 1 ]] || fail 'a failed pull must not record a success'
 run_output "$cursor" testweb "$work/stopped.log"
 grep -Fq 'command failed: exit status' "$work/stopped.log" || fail 'restic must report the failed export'
 [[ $(snapshot_count testweb) == "$count" ]] || fail 'a failed export must leave no snapshot'
@@ -340,9 +386,23 @@ printf 'PASS an unknown host key fails before login\n'
 printf 'AuthorizedKeysFile /etc/ssh/authorized_keys/%%u\n' > /etc/ssh/sshd_config.d/11-authorized-keys.conf
 sshd -t && systemctl reload ssh.service
 count=$(snapshot_count testweb)
+plant_record pull testweb 1 93600
+started=$(date +%s)
 systemctl start hub-pull@testweb.service || fail 'the pull must work with the access drop-in'
 [[ $(snapshot_count testweb) == $((count + 1)) ]] || fail 'the access drop-in pull must add one snapshot'
 printf 'PASS the access drop-in keeps the pull working\n'
+require_record pull testweb "$started" 93600
+printf 'PASS a successful pull records its success through the writer\n'
+
+# A wrapper whose ExecStartPost= list is emptied pulls without recording, and verify fails.
+mkdir "$dropins"
+printf '%s\n' '[Service]' 'ExecStartPost=' >"$dropins/no-success.conf"
+systemctl daemon-reload
+pull_play "$work/no-success.log" && fail 'a pull that records no success must fail verify'
+assert_failure_message "$work/no-success.log" 'hub-pull@testweb.service ran without recording a new success for pull testweb.'
+rm -rf --one-file-system -- "$dropins"
+systemctl daemon-reload
+printf 'PASS verify fails when a pull records no success\n'
 
 # Case 9: a wrong Redis password fails the pull.
 as_kb podman rm -f keepbreath-redis >/dev/null
@@ -419,5 +479,30 @@ grep -Fxq 'subprocess ssh: tar: root/.hub-export-test: Cannot stat: No such file
 [[ $(snapshot_count testmail) == "$count" ]] || fail 'a missing tar path must leave no snapshot'
 [[ $(as_hp systemctl --user show hub-pull-run@testmail.service -p NRestarts --value) == 0 ]] || fail 'the tar pull must not restart'
 printf 'PASS a missing tar path fails without a snapshot or retry\n'
+
+# Three machines with testdb in the middle: only testdb has no record, so only it is reported and
+# recorded. A wrong restic password stops the real run at testweb's repository check, after the
+# write at install and before any pull.
+three_vars=(-e @tests/hub_pull/three.yml)
+plant_record pull testweb 1 93600
+plant_record pull testmail 1 93600
+[[ ! -e $textfile/backup-pull-testdb.prom ]] || fail 'testdb must start with no record'
+pull_play "$work/check-three.log" --check --diff "${three_vars[@]}" ||
+  { tail -35 "$work/check-three.log" >&2; fail 'check mode with three machines must pass'; }
+mapfile -t reports < <(grep -F '"msg": "Would record ' "$work/check-three.log")
+[[ ${#reports[@]} -eq 1 && ${reports[0]} == '    "msg": "Would record the install time as the first success of pull testdb"' ]] ||
+  fail 'check mode with three machines must report exactly one first pull'
+[[ ! -e $textfile/backup-pull-testdb.prom ]] || fail 'check mode recorded a success for testdb'
+started=$(date +%s)
+TEST_RESTIC_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))') \
+  pull_play "$work/three.log" "${three_vars[@]}" && fail 'a wrong restic password must fail the three-machine play'
+[[ $(task_status "$work/three.log" 'Hub pull | Require an available or absent repository for testweb') == fatal ]] ||
+  { tail -35 "$work/three.log" >&2; fail "testweb's repository check must be the task reported fatal"; }
+[[ $(grep -c '^fatal: \[localhost\]' "$work/three.log") == 1 ]] || fail 'the three-machine play must report one fatal task'
+for machine in testweb testmail; do
+  [[ $(read_record pull "$machine") == 1 ]] || fail "the write at install must keep pull $machine's record"
+done
+require_record pull testdb "$started" 93600
+printf 'PASS three machines: only the middle one has its first pull reported and recorded\n'
 
 printf 'hub_pull driver: all cases passed\n'

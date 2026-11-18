@@ -73,6 +73,27 @@
       register: vaultwarden_backup_live_counts
       changed_when: false
 
+    - name: Vaultwarden backup verify | Read the recorded success before the run
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/backup-success
+          - --read
+          - backup
+          - "{{ inventory_hostname }}"
+      register: vaultwarden_backup_success_before
+      changed_when: false
+
+    - name: Vaultwarden backup verify | Wait until the clock passes the recorded second
+      ansible.builtin.command:
+        argv:
+          - date
+          - +%s
+      register: vaultwarden_backup_clock
+      until: (vaultwarden_backup_clock.stdout | int) > (vaultwarden_backup_success_before.stdout | int)
+      retries: 3
+      delay: 1
+      changed_when: false
+
     - name: Vaultwarden backup verify | Start the same system service as the timer
       ansible.builtin.command:
         argv:
@@ -80,6 +101,22 @@
           - start
           - vaultwarden-backup.service
       changed_when: false
+
+    - name: Vaultwarden backup verify | Read the recorded success after the run
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/backup-success
+          - --read
+          - backup
+          - "{{ inventory_hostname }}"
+      register: vaultwarden_backup_success_after
+      changed_when: false
+
+    - name: Vaultwarden backup verify | Require a newer recorded success
+      ansible.builtin.assert:
+        that: (vaultwarden_backup_success_after.stdout | int) > (vaultwarden_backup_success_before.stdout | int)
+        fail_msg: "vaultwarden-backup.service ran without recording a new success for backup {{ inventory_hostname }}."
+        quiet: true
 
     - name: Vaultwarden backup verify | Create a temporary restore folder
       ansible.builtin.tempfile:

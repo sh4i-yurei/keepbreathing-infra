@@ -358,6 +358,14 @@ jobs:
             if id bstest || id vwtest; then echo "ASSERTION FAILED: $unit refusal created an account"; exit 1; fi
             sudo rm "/etc/systemd/system/$unit"
           done
+          echo keep | sudo tee /usr/local/libexec/backup-success >/dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/vaultwarden_backup/run.sh > /tmp/vw-existing-writer.log 2>&1; then
+            echo 'ASSERTION FAILED: Vaultwarden driver accepted an existing backup success writer'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: the backup success writer already exists' /tmp/vw-existing-writer.log || { echo 'ASSERTION FAILED: backup success writer refusal message missing'; exit 1; }
+          test "$(sudo cat /usr/local/libexec/backup-success)" = keep || { echo 'ASSERTION FAILED: the existing backup success writer changed'; exit 1; }
+          if id bstest || id vwtest; then echo 'ASSERTION FAILED: backup success writer refusal created an account'; exit 1; fi
+          sudo rm /usr/local/libexec/backup-success
       - name: Backup server failure leaves no driver state
         run: |
           before_file=$(sudo sha256sum /etc/environment | cut -d' ' -f1)
@@ -370,6 +378,7 @@ jobs:
           test ! -e /home/bstest || { echo 'ASSERTION FAILED: bstest home survived cleanup'; exit 1; }
           test ! -e /var/lib/systemd/linger/bstest || { echo 'ASSERTION FAILED: bstest lingering survived cleanup'; exit 1; }
           if sudo losetup --list | grep -F 'backup.img'; then echo 'ASSERTION FAILED: loop device survived cleanup'; exit 1; fi
+          test ! -e /usr/local/libexec/backup-success || { echo 'ASSERTION FAILED: backup success writer survived cleanup'; exit 1; }
           test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
           test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
       - name: Busy mount reports cleanup failure and restores environment
@@ -402,6 +411,7 @@ jobs:
           test ! -e /etc/systemd/system/vaultwarden-backup.service || { echo 'ASSERTION FAILED: Vaultwarden service file survived image pull cleanup'; exit 1; }
           test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded after image pull failure'; exit 1; }
           if id vwtest || id bstest; then echo 'ASSERTION FAILED: test account survived image pull cleanup'; exit 1; fi
+          test ! -e /usr/local/libexec/backup-success || { echo 'ASSERTION FAILED: backup success writer survived image pull cleanup'; exit 1; }
           test "$before_file" = "$(sudo sha256sum /etc/environment | cut -d' ' -f1)" || { echo 'ASSERTION FAILED: /etc/environment changed'; exit 1; }
           test "$before_manager" = "$(systemctl show-environment)" || { echo 'ASSERTION FAILED: system manager environment changed'; exit 1; }
       - name: Vaultwarden driver restores the runner environment
@@ -417,6 +427,8 @@ jobs:
           test ! -e /etc/systemd/system/vaultwarden-backup.timer || { echo 'ASSERTION FAILED: Vaultwarden timer file survived cleanup'; exit 1; }
           test ! -e /etc/systemd/system/vaultwarden-backup.service || { echo 'ASSERTION FAILED: Vaultwarden service file survived cleanup'; exit 1; }
           test -z "$(systemctl list-units --all --no-legend 'vaultwarden-backup*')" || { echo 'ASSERTION FAILED: Vaultwarden units remain loaded'; exit 1; }
+          test ! -e /usr/local/libexec/backup-success || { echo 'ASSERTION FAILED: backup success writer survived cleanup'; exit 1; }
+          test ! -e /etc/systemd/system/vaultwarden-backup.service.d || { echo 'ASSERTION FAILED: Vaultwarden service drop-in folder survived cleanup'; exit 1; }
 
   b2-bucket:
     needs: changes
@@ -972,18 +984,25 @@ jobs:
           grep -Fx 'ASSERTION FAILED: hub pull files already exist' /tmp/hub-pull-existing-files.log
           test "$(sudo cat /etc/hub-export-test/keep)" = keep
           sudo rm -r /etc/hub-export-test
+          echo keep | sudo tee /usr/local/libexec/backup-success >/dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_pull/run.sh > /tmp/hub-pull-existing-writer.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted an existing backup success writer'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: hub pull files already exist' /tmp/hub-pull-existing-writer.log
+          test "$(sudo cat /usr/local/libexec/backup-success)" = keep
+          sudo rm /usr/local/libexec/backup-success
       - name: Hub pull role integration cases and cleanup
         shell: bash
         run: |
           ssh_before=$(systemctl is-active ssh.service ssh.socket || :)
           sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/hub_pull/run.sh 2>&1 | tee driver.log
           grep -Fxq 'hub_pull driver: all cases passed' driver.log
-          test "$(grep -c '^PASS ' driver.log)" -eq 17
+          test "$(grep -c '^PASS ' driver.log)" -eq 21
           if grep -E '^CLEANUP FAILED:' driver.log; then echo 'ASSERTION FAILED: driver cleanup failed'; exit 1; fi
           for account in hptest kbtest hubexport; do
             if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: driver left $account"; exit 1; fi
           done
-          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test; do
+          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test /usr/local/libexec/backup-success /etc/systemd/system/hub-pull@.service.d; do
             if sudo test -e "$path"; then echo "ASSERTION FAILED: driver left $path"; exit 1; fi
           done
           if findmnt -rn -t tmpfs -o TARGET | grep -Eq '^/tmp/tmp\.[^/]+/backup$'; then echo 'ASSERTION FAILED: driver left backup tmpfs mounted'; exit 1; fi
@@ -1002,7 +1021,7 @@ jobs:
           for account in hptest kbtest hubexport; do
             if id "$account" >/dev/null 2>&1; then echo "ASSERTION FAILED: failure run left $account"; exit 1; fi
           done
-          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test; do
+          for path in /home/hptest/.config/systemd/user/hub-pull-run@.service /etc/systemd/system/hub-pull@.service /etc/systemd/system/hub-pull@.timer /etc/sudoers.d/hub-export /usr/local/libexec/hub-export /etc/ssh/authorized_keys/hubexport /etc/ssh/sshd_config.d/12-hub-export.conf /etc/ssh/sshd_config.d/11-authorized-keys.conf /etc/hub-export-test /root/.hub-export-test /usr/local/libexec/backup-success /etc/systemd/system/hub-pull@.service.d; do
             if sudo test -e "$path"; then echo "ASSERTION FAILED: failure run left $path"; exit 1; fi
           done
           if findmnt -rn -t tmpfs -o TARGET | grep -Eq '^/tmp/tmp\.[^/]+/backup$'; then echo 'ASSERTION FAILED: failure run left backup tmpfs mounted'; exit 1; fi

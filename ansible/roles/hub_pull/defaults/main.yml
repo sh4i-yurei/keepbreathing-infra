@@ -1,5 +1,6 @@
 ---
 hub_pull_restic_image: "{{ restic_image }}"
 hub_pull_schedule: "*-*-* 02:30:00"
+hub_pull_max_age: 93600
 hub_pull_lock_wait: 10m
 hub_pull_timeout: 1800

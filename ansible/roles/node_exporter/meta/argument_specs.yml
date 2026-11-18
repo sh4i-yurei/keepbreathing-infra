@@ -35,10 +35,19 @@ argument_specs:
         type: path
         default: /var/lib/node_exporter/textfile_collector
         description: Directory node_exporter's textfile collector reads. The reboot-required
-          timer writes its metric here only when needs-restarting's exit status and message agree.
+          timer writes its metric here only when needs-restarting's exit status and message agree,
+          and the backup success writer writes each backup stage's file here.
       node_exporter_allowed_sources:
         type: list
         elements: str
         default: []
         description: The complete set of addresses firewalld lets reach node_exporter's port.
           Rich rules for addresses outside this list are removed; empty removes all managed rules.
+  backup-success:
+    short_description: Install the writer that records each backup stage's last success
+    options:
+      node_exporter_textfile_directory:
+        type: path
+        default: /var/lib/node_exporter/textfile_collector
+        description: Directory node_exporter's textfile collector reads, which the writer writes
+          each stage's file into.

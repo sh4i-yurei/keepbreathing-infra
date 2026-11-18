@@ -1,0 +1,225 @@
+---
+- name: Install the Python cryptography library
+  ansible.builtin.package:
+    name: python3-cryptography
+    state: present
+  become: true
+
+- name: Make the staging private folder
+  ansible.builtin.file:
+    path: /etc/staging
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  become: true
+
+- name: Read whether the staging folder exists
+  ansible.builtin.stat:
+    path: /etc/staging
+  register: staging_folder
+  become: true
+
+- name: Generate each value once on the managed machine
+  ansible.builtin.copy:
+    dest: "/etc/staging/{{ item }}"
+    content: "{{ lookup('ansible.builtin.password', '/dev/null', chars=['ascii_letters', 'digits'], length=40) }}"
+    force: false
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - redis-password
+    - altcha-hmac-key
+    - smtp-password
+  no_log: true
+  become: true
+  when: not ansible_check_mode or staging_folder.stat.isdir | default(false)
+
+- name: Make the staging private keys
+  community.crypto.openssl_privatekey:
+    path: "/etc/staging/{{ item }}.key"
+    type: ECC
+    curve: secp256r1
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - ca
+    - mailpit
+    - origin
+  become: true
+  when: not ansible_check_mode or staging_folder.stat.isdir | default(false)
+
+- name: Read whether every private key exists
+  ansible.builtin.stat:
+    path: "/etc/staging/{{ item }}.key"
+  loop:
+    - ca
+    - mailpit
+    - origin
+  register: staging_key_stats
+  become: true
+
+- name: Build the authority's certificate request in memory
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: /etc/staging/ca.key
+    common_name: keepbreath staging CA
+    basic_constraints:
+      - CA:TRUE
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+  register: staging_ca_csr
+  changed_when: false
+  become: true
+  when: not ansible_check_mode or staging_key_stats.results | selectattr('stat.exists') | list | length == 3
+
+- name: Make the staging authority certificate
+  community.crypto.x509_certificate:
+    path: /etc/staging/ca.crt
+    csr_content: "{{ staging_ca_csr.csr }}"
+    privatekey_path: /etc/staging/ca.key
+    provider: selfsigned
+    selfsigned_not_after: "+30d"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when: not ansible_check_mode or staging_key_stats.results | selectattr('stat.exists') | list | length == 3
+
+- name: Read whether the authority certificate exists
+  ansible.builtin.stat:
+    path: /etc/staging/ca.crt
+  register: staging_ca_cert
+  become: true
+
+- name: Build the leaf certificate requests in memory
+  community.crypto.openssl_csr_pipe:
+    privatekey_path: "/etc/staging/{{ item.name }}.key"
+    common_name: "{{ item.common_name }}"
+    subject_alt_name: "{{ item.subject_alt_name }}"
+    extended_key_usage:
+      - serverAuth
+  loop:
+    - name: mailpit
+      common_name: mailpit.staging
+      subject_alt_name:
+        - DNS:mailpit.staging
+    - name: origin
+      common_name: keepbreath.ing
+      subject_alt_name:
+        - DNS:*.keepbreath.ing
+        - DNS:keepbreath.ing
+  register: staging_leaf_csrs
+  changed_when: false
+  become: true
+  when: not ansible_check_mode or staging_key_stats.results | selectattr('stat.exists') | list | length == 3
+
+- name: Make the staging leaf certificates
+  community.crypto.x509_certificate:
+    path: "/etc/staging/{{ item }}.crt"
+    csr_content: "{{ staging_leaf_csrs.results[staging_index].csr }}"
+    provider: ownca
+    ownca_path: /etc/staging/ca.crt
+    ownca_privatekey_path: /etc/staging/ca.key
+    ownca_create_authority_key_identifier: true
+    ownca_not_after: "+30d"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - mailpit
+    - origin
+  loop_control:
+    index_var: staging_index
+  become: true
+  when: not ansible_check_mode or staging_ca_cert.stat.exists
+
+- name: Read whether each generated value and origin file exists
+  ansible.builtin.stat:
+    path: "/etc/staging/{{ item }}"
+  loop:
+    - redis-password
+    - altcha-hmac-key
+    - smtp-password
+    - origin.crt
+    - origin.key
+  register: staging_read_stats
+  become: true
+
+- name: Read the generated values and origin pair from the managed machine
+  ansible.builtin.slurp:
+    src: "/etc/staging/{{ item }}"
+  loop:
+    - redis-password
+    - altcha-hmac-key
+    - smtp-password
+    - origin.crt
+    - origin.key
+  register: staging_readback
+  loop_control:
+    index_var: staging_read_index
+  no_log: true
+  become: true
+  when: not ansible_check_mode or staging_read_stats.results[staging_read_index].stat.exists
+
+- name: Hand the web role its exact generated inputs
+  ansible.builtin.set_fact:
+    staging_web_inputs:
+      web_redis_password: >-
+        {{ staging_readback.results[0].content | b64decode
+           if staging_readback.results[0].content is defined
+           else 'check mode: not generated yet' }}
+      web_altcha_hmac_key: >-
+        {{ staging_readback.results[1].content | b64decode
+           if staging_readback.results[1].content is defined
+           else 'check mode: not generated yet' }}
+      web_smtp_host: mailpit.staging
+      web_smtp_host_address: 10.89.200.10
+      web_smtp_port: 1025
+      web_smtp_user: staging
+      web_smtp_password: >-
+        {{ staging_readback.results[2].content | b64decode
+           if staging_readback.results[2].content is defined
+           else 'check mode: not generated yet' }}
+      web_origin_certificate: >-
+        {{ staging_readback.results[3].content | b64decode
+           if staging_readback.results[3].content is defined
+           else 'check mode: not generated yet' }}
+      web_origin_key: >-
+        {{ staging_readback.results[4].content | b64decode
+           if staging_readback.results[4].content is defined
+           else 'check mode: not generated yet' }}
+  no_log: true
+
+- name: Read the live staging files for verification
+  ansible.builtin.stat:
+    path: "/etc/staging/{{ item }}"
+  loop:
+    - redis-password
+    - altcha-hmac-key
+    - smtp-password
+    - ca.key
+    - mailpit.key
+    - origin.key
+    - ca.crt
+    - mailpit.crt
+    - origin.crt
+  register: staging_live_files
+  become: true
+  when: not ansible_check_mode
+
+- name: Verify the staging files exist with their protected modes
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+      - item.stat.pw_name == 'root'
+      - item.stat.gr_name == 'root'
+      - item.stat.mode == ('0644' if item.item.endswith('.crt') else '0600')
+    fail_msg: A staging file is missing or has an unsafe owner or mode
+  loop: "{{ staging_live_files.results }}"
+  no_log: true
+  when: not ansible_check_mode

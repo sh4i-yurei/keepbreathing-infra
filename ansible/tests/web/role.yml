@@ -1,0 +1,14 @@
+---
+- name: Exercise the web account and checkouts on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Create the web account before baseline
+      ansible.builtin.import_role:
+        name: web
+        tasks_from: account
+
+    - name: Apply the web role
+      ansible.builtin.import_role:
+        name: web

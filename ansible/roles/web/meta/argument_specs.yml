@@ -1,0 +1,24 @@
+---
+argument_specs:
+  main:
+    short_description: Prepare the site and contact API checkouts
+    options:
+      web_container_user:
+        type: str
+        required: false
+        description: The account the site and contact API run under, defaulting to baseline_container_user.
+      web_site_ref:
+        type: str
+        required: true
+        description: The commit or branch used when the site checkout is missing.
+      web_contact_api_ref:
+        type: str
+        required: true
+        description: The commit or branch used when the contact API checkout is missing.
+  account:
+    short_description: Create the account the site and the contact API run under
+    options:
+      web_container_user:
+        type: str
+        required: false
+        description: The account the site and contact API run under, defaulting to baseline_container_user.

@@ -136,7 +136,10 @@
   loop_control:
     index_var: staging_index
   become: true
-  when: not ansible_check_mode or staging_ca_cert.stat.exists
+  when: >-
+    not ansible_check_mode or
+    (staging_ca_cert.stat.exists and
+     staging_key_stats.results | selectattr('stat.exists') | list | length == 3)
 
 - name: Read whether each generated value and origin file exists
   ansible.builtin.stat:

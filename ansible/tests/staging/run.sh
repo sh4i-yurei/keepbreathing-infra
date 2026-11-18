@@ -107,11 +107,13 @@ play repeat-check --check --diff
 test "$(changed "$last_log" zero)" = 0
 printf 'PASS check mode after a run: changed=0\n'
 
-for name in redis-password altcha-hmac-key smtp-password; do
-  value=$(cat "/etc/staging/$name")
-  if grep -F -- "$value" "$work"/*.log >/dev/null; then fail "$name appeared in run output"; fi
-done
-printf 'PASS no value in any run output\n'
+cp /etc/staging/mailpit.key "$work/mailpit.key"
+rm /etc/staging/mailpit.key
+play missing-key-check --check --diff
+test ! -e /etc/staging/mailpit.key || fail 'missing-key check created mailpit.key'
+cp "$work/mailpit.key" /etc/staging/mailpit.key
+chmod 0600 /etc/staging/mailpit.key
+printf 'PASS check mode with a missing leaf key\n'
 
 redis_before=$(cat /etc/staging/redis-password)
 printf %s 'KeptAltchaValue0123456789abcdefghijKLMNO' >/etc/staging/altcha-hmac-key
@@ -129,5 +131,11 @@ if grep -F 'KeptAltchaValue0123456789abcdefghijKLMNO' "$work"/*.log >/dev/null; 
   fail 'planted altcha-hmac-key appeared in run output'
 fi
 printf 'PASS an existing value survives\n'
+
+for name in redis-password altcha-hmac-key smtp-password; do
+  value=$(cat "/etc/staging/$name")
+  if grep -F -- "$value" "$work"/*.log >/dev/null; then fail "$name appeared in run output"; fi
+done
+printf 'PASS no value in any run output\n'
 
 printf 'staging driver: all cases passed\n'

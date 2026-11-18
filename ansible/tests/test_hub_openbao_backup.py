@@ -63,3 +63,12 @@ def test_the_restore_proof_uses_openbaos_account_and_self_address():
     hub = read("host_vars/hub.yml")
     assert hub.get("openbao_backup_openbao_user") == "{{ openbao_user }}"
     assert hub.get("openbao_backup_self_address") == "{{ openbao_self_address }}"
+
+
+def test_the_restore_checks_sign_in_as_ansible_and_compare_the_shared_test_value():
+    hub = read("host_vars/hub.yml")
+    shared = read("group_vars/all.yml")
+    config_defaults = read("roles/openbao_config/defaults/main.yml")
+    assert hub.get("openbao_backup_ansible_password") == "{{ openbao_ansible_password }}"
+    assert shared.get("openbao_restore_check_value") == "restore-check-test"
+    assert "openbao_restore_check_value" not in config_defaults

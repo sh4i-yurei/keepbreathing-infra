@@ -270,6 +270,147 @@
         msg: "openbao restore proof: restored snapshot {{ openbao_backup_restore_snapshot.short_id }} into openbao-restore-check"
       changed_when: false
 
+    - name: OpenBao restore proof | Check 2, sign in as ansible
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/auth/userpass/login/ansible"
+        method: POST
+        body_format: json
+        body:
+          password: "{{ openbao_backup_ansible_password }}"
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+      register: openbao_backup_restore_ansible_login
+      failed_when: false
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require check 2
+      ansible.builtin.assert:
+        that: openbao_backup_restore_ansible_login.status | default(0) == 200
+        fail_msg: >-
+          openbao restore proof: check 2 failed. OpenBao said:
+          {{ openbao_backup_restore_ansible_login.json.errors | default([]) | join('; ') }}
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Check 3, read restore-check's role ID
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/auth/approle/role/restore-check/role-id"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+          X-Vault-Token: "{{ openbao_backup_restore_ansible_login.json.auth.client_token }}"
+      register: openbao_backup_restore_role_id
+      failed_when: false
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require check 3's role ID
+      ansible.builtin.assert:
+        that: openbao_backup_restore_role_id.status | default(0) == 200
+        fail_msg: >-
+          openbao restore proof: check 3 failed. OpenBao said:
+          {{ openbao_backup_restore_role_id.json.errors | default([]) | join('; ') }}
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Check 3, issue restore-check a secret ID
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/auth/approle/role/restore-check/secret-id"
+        method: POST
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+          X-Vault-Token: "{{ openbao_backup_restore_ansible_login.json.auth.client_token }}"
+      register: openbao_backup_restore_secret_id
+      failed_when: false
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require check 3's secret ID
+      ansible.builtin.assert:
+        that: openbao_backup_restore_secret_id.status | default(0) == 200
+        fail_msg: >-
+          openbao restore proof: check 3 failed. OpenBao said:
+          {{ openbao_backup_restore_secret_id.json.errors | default([]) | join('; ') }}
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Check 3, sign in as restore-check
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ openbao_backup_restore_role_id.json.data.role_id }}"
+          secret_id: "{{ openbao_backup_restore_secret_id.json.data.secret_id }}"
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+      register: openbao_backup_restore_check_login
+      failed_when: false
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require check 3's sign-in
+      ansible.builtin.assert:
+        that: openbao_backup_restore_check_login.status | default(0) == 200
+        fail_msg: >-
+          openbao restore proof: check 3 failed. OpenBao said:
+          {{ openbao_backup_restore_check_login.json.errors | default([]) | join('; ') }}
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Check 4, read the test secret as restore-check
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/secret/data/restore-check/test"
+        method: GET
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+          X-Vault-Token: "{{ openbao_backup_restore_check_login.json.auth.client_token }}"
+      register: openbao_backup_restore_test_secret
+      failed_when: false
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require check 4's read
+      ansible.builtin.assert:
+        that: openbao_backup_restore_test_secret.status | default(0) == 200
+        fail_msg: >-
+          openbao restore proof: check 4 failed. OpenBao said:
+          {{ openbao_backup_restore_test_secret.json.errors | default([]) | join('; ') }}
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require check 4's value
+      ansible.builtin.assert:
+        that: openbao_backup_restore_test_secret.json.data.data.value | default('') == openbao_backup_restore_check_value
+        fail_msg: >-
+          openbao restore proof: check 4 failed. The test secret holds
+          {{ openbao_backup_restore_test_secret.json.data.data.value | default('') }}
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Check 5, read the throwaway's log
+      ansible.builtin.command:
+        argv: [podman, logs, openbao-restore-check]
+        chdir: /
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      environment: *bao_environment
+      register: openbao_backup_restore_logs
+      changed_when: false
+
+    - name: OpenBao restore proof | Require check 5
+      ansible.builtin.assert:
+        that: "'secret/data/restore-check/test' in openbao_backup_restore_logs.stdout"
+        fail_msg: "openbao restore proof: check 5 failed. The throwaway's log has no line naming secret/data/restore-check/test"
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Report checks 2 to 5
+      ansible.builtin.debug:
+        msg: "openbao restore proof: checks 2 to 5 passed on snapshot {{ openbao_backup_restore_snapshot.short_id }}"
+      changed_when: false
+
   always:
     - name: OpenBao restore proof | Remove the throwaway container
       ansible.builtin.command:

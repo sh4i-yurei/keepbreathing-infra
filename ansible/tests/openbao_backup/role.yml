@@ -14,6 +14,8 @@
     openbao_backup_login: testhub
     openbao_backup_password: "{{ lookup('ansible.builtin.env', 'TEST_LOGIN_PASSWORD') }}"
     openbao_backup_restic_password: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_PASSWORD') }}"
+    openbao_backup_ansible_password: "{{ lookup('ansible.builtin.env', 'TEST_ANSIBLE_PASSWORD') }}"
+    openbao_restore_check_value: restore-check-test
     backup_server_port: 8082
     openbao_backup_address: http://127.0.0.1:18300
     openbao_approles:

@@ -9,6 +9,9 @@ import subprocess
 import time
 
 import pytest
+from ansible.plugins.test.core import TestModule as CoreTests
+from jinja2 import Environment
+import yaml
 
 
 ANSIBLE = Path(__file__).resolve().parents[1]
@@ -268,3 +271,69 @@ def test_every_play_with_node_exporter_installs_the_writer(playbook, title):
         "node_exporter : Install the atomic reboot-required metric writer"
     )
     assert tasks[index + 1] == "node_exporter : Install the backup success writer"
+
+
+def test_node_exporter_verify_accepts_only_an_unrecorded_stage_in_a_real_folder(
+    writer, tmp_path
+):
+    tasks = yaml.safe_load(
+        (ANSIBLE / "roles/node_exporter/tasks/verify.yml").read_text()
+    )[0]["block"]
+
+    def task_named(name):
+        matches = [task for task in tasks if task["name"] == name]
+        assert len(matches) == 1
+        return matches[0]
+
+    read_task = task_named(
+        "verify | Ask the backup success writer about a stage nobody records"
+    )
+    assert_task = task_named(
+        "verify | The backup success writer runs and reads the textfile folder"
+    )
+    argv = read_task["ansible.builtin.command"]["argv"]
+    assert argv[0] == "/usr/local/libexec/backup-success"
+    conditions = assert_task["ansible.builtin.assert"]["that"]
+    assert all(isinstance(condition, str) for condition in conditions), conditions
+    environment = Environment()
+    environment.tests.update(CoreTests().tests())
+
+    def accepts(script):
+        result = run(script, *argv[1:])
+        registered = {
+            "rc": result.returncode,
+            "stderr": result.stderr.rstrip("\r\n"),
+        }
+        passed = all(
+            bool(
+                environment.compile_expression(condition)(
+                    node_exporter_backup_success_read=registered
+                )
+            )
+            for condition in conditions
+        )
+        return result, passed
+
+    script, folder = writer
+    empty_result, empty_passed = accepts(script)
+    assert (empty_result.returncode, empty_result.stderr) == (
+        1,
+        "backup-success: no success recorded for node-exporter-verify none\n",
+    )
+    assert empty_passed
+
+    recorded = run(script, "node-exporter-verify", "none", "93600")
+    assert recorded.returncode == 0, recorded.stderr
+    recorded_result, recorded_passed = accepts(script)
+    assert recorded_result.returncode == 0
+    assert not recorded_passed
+
+    missing_folder = tmp_path / "missing text files"
+    missing_script = tmp_path / "backup-success"
+    render(missing_script, missing_folder)
+    missing_result, missing_passed = accepts(missing_script)
+    assert (missing_result.returncode, missing_result.stderr) == (
+        1,
+        f"backup-success: {missing_folder} is not a folder\n",
+    )
+    assert not missing_passed

@@ -116,7 +116,7 @@
       ansible.builtin.assert:
         that:
           - node_exporter_backup_success_read.rc == 1
-          - node_exporter_backup_success_read.stderr == 'backup-success: no success recorded for node-exporter-verify none'
+          - "node_exporter_backup_success_read.stderr == 'backup-success: no success recorded for node-exporter-verify none'"
         fail_msg: >-
           /usr/local/libexec/backup-success returned
           {{ node_exporter_backup_success_read.rc }} with stderr

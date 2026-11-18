@@ -154,6 +154,8 @@ openbao_backup_user: "{{ backup_server_user }}"
 openbao_backup_login: hub
 openbao_backup_password: "{{ lookup('vault_secret', 'rclone hub (hub)') }}"
 openbao_backup_restic_password: "{{ lookup('vault_secret', 'rclone hub (hub)', field='restic') }}"
+openbao_backup_openbao_user: "{{ openbao_user }}"
+openbao_backup_self_address: "{{ openbao_self_address }}"
 
 # The account the hub's containers run under (Notification service decision #12). The hub
 # role creates it; baseline sets it up for rootless Podman.

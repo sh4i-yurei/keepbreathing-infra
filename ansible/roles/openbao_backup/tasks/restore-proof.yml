@@ -1,0 +1,290 @@
+---
+- name: OpenBao restore proof | Read the OpenBao account uid
+  ansible.builtin.command:
+    argv: [id, -u, "{{ openbao_backup_openbao_user }}"]
+  register: openbao_backup_restore_bao_uid
+  changed_when: false
+
+- name: OpenBao restore proof | Read the backup account uid
+  ansible.builtin.command:
+    argv: [id, -u, "{{ openbao_backup_user }}"]
+  register: openbao_backup_restore_backup_uid
+  changed_when: false
+
+- name: OpenBao restore proof | Remove the prior throwaway container
+  ansible.builtin.command:
+    argv: [podman, rm, --force, --ignore, --time, '0', openbao-restore-check]
+    chdir: /
+  become: true
+  become_user: "{{ openbao_backup_openbao_user }}"
+  environment: &bao_environment
+    XDG_RUNTIME_DIR: "/run/user/{{ openbao_backup_restore_bao_uid.stdout }}"
+  changed_when: false
+
+- name: OpenBao restore proof | Remove the prior throwaway folder
+  ansible.builtin.command:
+    argv: [podman, unshare, rm, -rf, --one-file-system, "{{ openbao_backup_restore_dir }}"]
+    chdir: /
+  vars: &restore_dir
+    openbao_backup_restore_dir: "/run/user/{{ openbao_backup_restore_bao_uid.stdout }}/openbao-restore-check"
+  become: true
+  become_user: "{{ openbao_backup_openbao_user }}"
+  environment: *bao_environment
+  changed_when: false
+
+- name: OpenBao restore proof | Check the loopback port
+  ansible.builtin.shell: |
+    port=$(printf '%04X' {{ openbao_backup_restore_port | int }})
+    for table in /proc/net/tcp /proc/net/tcp6; do
+      while read -r _ address _ state _; do
+        [[ $state == 0A && ${address##*:} == "$port" ]] || continue
+        host=${address%:*}
+        [[ $host == 0100007F ]] && exit 0
+        [[ $host == 00000000 ]] && exit 0
+        [[ $host == 00000000000000000000000001000000 ]] && exit 0
+        [[ $host == 00000000000000000000000000000000 ]] && exit 0
+      done < "$table"
+    done
+    exit 1
+  args:
+    executable: /bin/bash
+  register: openbao_backup_restore_port_probe
+  failed_when: false
+  changed_when: false
+
+- name: OpenBao restore proof | Require a free loopback port
+  ansible.builtin.assert:
+    that: openbao_backup_restore_port_probe.rc == 1
+    fail_msg: "openbao restore proof: 127.0.0.1:{{ openbao_backup_restore_port }} is already in use"
+    quiet: true
+  changed_when: false
+
+- name: OpenBao restore proof | Build and check the throwaway
+  vars: *restore_dir
+  block:
+    - name: OpenBao restore proof | Make private folders
+      ansible.builtin.file:
+        path: "{{ openbao_backup_restore_dir }}/{{ item }}"
+        state: directory
+        mode: '0700'
+      loop: ['', config, raft]
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      changed_when: false
+
+    - name: OpenBao restore proof | Copy the live configuration
+      ansible.builtin.copy:
+        src: "/home/{{ openbao_backup_openbao_user }}/.config/openbao/config/openbao.hcl"
+        dest: "{{ openbao_backup_restore_dir }}/config/openbao.hcl"
+        remote_src: true
+        mode: '0600'
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      changed_when: false
+
+    - name: OpenBao restore proof | Generate the restore password
+      ansible.builtin.set_fact:
+        openbao_backup_restore_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=32, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Write the first-start configuration
+      ansible.builtin.template:
+        src: restore-first-start.hcl.j2
+        dest: "{{ openbao_backup_restore_dir }}/config/first-start.hcl"
+        mode: '0600'
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Select the newest OpenBao snapshot
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - --rm
+          - --network
+          - host
+          - --security-opt
+          - label=disable
+          - --env-file
+          - "/home/{{ openbao_backup_user }}/.config/openbao-backup/restic.env"
+          - "{{ openbao_backup_restic_image }}"
+          - snapshots
+          - --json
+          - --path
+          - /openbao.snap
+          - --latest
+          - '1'
+        chdir: /
+      become: true
+      become_user: "{{ openbao_backup_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ openbao_backup_restore_backup_uid.stdout }}"
+      register: openbao_backup_restore_listing
+      changed_when: false
+
+    - name: OpenBao restore proof | Keep the selected snapshot ID
+      ansible.builtin.set_fact:
+        openbao_backup_restore_snapshot: "{{ (openbao_backup_restore_listing.stdout | from_json | first) }}"
+      changed_when: false
+
+    - name: OpenBao restore proof | Stream the snapshot between accounts
+      ansible.builtin.shell: |
+        set -o pipefail
+        runuser -u {{ openbao_backup_user | quote }} -- env \
+          XDG_RUNTIME_DIR={{ ('/run/user/' ~ openbao_backup_restore_backup_uid.stdout) | quote }} \
+          sh -c {{ dump_command | quote }} |
+          runuser -u {{ openbao_backup_openbao_user | quote }} -- \
+          sh -c {{ sink_command | quote }}
+      args:
+        executable: /bin/bash
+      vars:
+        dump_command: >-
+          cd / && podman run --rm --network host --security-opt label=disable
+          --env-file {{ ('/home/' ~ openbao_backup_user ~ '/.config/openbao-backup/restic.env') | quote }}
+          {{ openbao_backup_restic_image | quote }} dump --retry-lock
+          {{ openbao_backup_lock_wait | quote }} {{ openbao_backup_restore_snapshot.id | quote }} /openbao.snap
+        sink_command: "umask 077; cat > {{ (openbao_backup_restore_dir ~ '/restored.snap') | quote }}"
+      register: openbao_backup_restore_stream
+      failed_when: false
+      changed_when: false
+
+    - name: OpenBao restore proof | Require a readable snapshot
+      ansible.builtin.assert:
+        that: openbao_backup_restore_stream.rc == 0
+        fail_msg: "openbao restore proof: the newest /openbao.snap could not be read from the backup server"
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Start the throwaway
+      ansible.builtin.command:
+        argv:
+          - podman
+          - run
+          - -d
+          - --name
+          - openbao-restore-check
+          - --userns
+          - keep-id:uid=100,gid=1000
+          - --network
+          - pasta:--host-lo-to-ns-lo
+          - --security-opt
+          - label=disable
+          - -p
+          - "127.0.0.1:{{ openbao_backup_restore_port }}:8200"
+          - -v
+          - "{{ openbao_backup_restore_dir }}/config:/openbao/config:ro"
+          - -v
+          - "/home/{{ openbao_backup_openbao_user }}/.config/openbao/seal/seal.key:/openbao/seal/seal.key:ro"
+          - -v
+          - "{{ openbao_backup_restore_dir }}/raft:/openbao/raft"
+          - "{{ openbao_backup_image }}"
+          - server
+        chdir: /
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      environment: *bao_environment
+      changed_when: false
+
+    - name: OpenBao restore proof | Wait for the throwaway
+      ansible.builtin.uri: &restore_health
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/sys/health"
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+        status_code: 200
+      register: openbao_backup_restore_health
+      until: openbao_backup_restore_health.status | default(0) == 200
+      retries: "{{ ((openbao_backup_restore_wait | int) + 4) // 5 }}"
+      delay: 5
+      ignore_errors: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require a healthy throwaway
+      ansible.builtin.assert:
+        that: openbao_backup_restore_health.status | default(0) == 200
+        fail_msg: "openbao restore proof: the throwaway did not answer within {{ openbao_backup_restore_wait }} seconds"
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Sign in as restore
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/auth/userpass/login/restore"
+        method: POST
+        body_format: json
+        body:
+          password: "{{ openbao_backup_restore_password }}"
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+        status_code: 200
+      register: openbao_backup_restore_login
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Restore the snapshot
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ openbao_backup_restore_port }}/v1/sys/storage/raft/snapshot"
+        method: POST
+        src: "{{ openbao_backup_restore_dir }}/restored.snap"
+        remote_src: true
+        headers:
+          X-Forwarded-For: "{{ openbao_backup_self_address }}"
+          X-Vault-Token: "{{ openbao_backup_restore_login.json.auth.client_token }}"
+        status_code: 204
+        return_content: true
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      register: openbao_backup_restore_result
+      failed_when: false
+      no_log: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require accepted snapshot
+      ansible.builtin.assert:
+        that: openbao_backup_restore_result.status | default(0) == 204
+        fail_msg: >-
+          openbao restore proof: the throwaway refused the snapshot. OpenBao said:
+          {{ openbao_backup_restore_result.json.errors | default([]) | join('; ') }}
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Wait for restored health
+      ansible.builtin.uri: *restore_health
+      register: openbao_backup_restore_health_after
+      until: openbao_backup_restore_health_after.status | default(0) == 200
+      retries: "{{ ((openbao_backup_restore_wait | int) + 4) // 5 }}"
+      delay: 5
+      ignore_errors: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Require restored health
+      ansible.builtin.assert:
+        that: openbao_backup_restore_health_after.status | default(0) == 200
+        fail_msg: "openbao restore proof: the throwaway did not answer within {{ openbao_backup_restore_wait }} seconds"
+        quiet: true
+      changed_when: false
+
+    - name: OpenBao restore proof | Report the restored snapshot
+      ansible.builtin.debug:
+        msg: "openbao restore proof: restored snapshot {{ openbao_backup_restore_snapshot.short_id }} into openbao-restore-check"
+      changed_when: false
+
+  always:
+    - name: OpenBao restore proof | Remove the throwaway container
+      ansible.builtin.command:
+        argv: [podman, rm, --force, --ignore, --time, '0', openbao-restore-check]
+        chdir: /
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      environment: *bao_environment
+      changed_when: false
+
+    - name: OpenBao restore proof | Remove the throwaway folder
+      ansible.builtin.command:
+        argv: [podman, unshare, rm, -rf, --one-file-system, "{{ openbao_backup_restore_dir }}"]
+        chdir: /
+      become: true
+      become_user: "{{ openbao_backup_openbao_user }}"
+      environment: *bao_environment
+      changed_when: false

@@ -792,6 +792,18 @@ jobs:
           test -d /home/bbtest
           id bbtest
           sudo userdel -r bbtest
+      - name: Existing backup success writer is preserved
+        run: |
+          printf 'planted' | sudo tee /usr/local/libexec/backup-success >/dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/openbao_backup/run.sh > /tmp/openbao-backup-existing-writer.log 2>&1; then
+            echo 'ASSERTION FAILED: driver accepted an existing backup success writer'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /usr/local/libexec/backup-success already exists' /tmp/openbao-backup-existing-writer.log
+          test "$(cat /usr/local/libexec/backup-success)" = planted
+          if id bbtest >/dev/null 2>&1 || id bbbao >/dev/null 2>&1; then
+            echo 'ASSERTION FAILED: backup success writer refusal created an account'; exit 1
+          fi
+          sudo rm /usr/local/libexec/backup-success
       - name: openbao_backup role integration cases
         run: |
           sudo cp -p /etc/environment /tmp/openbao-backup-environment-before
@@ -819,6 +831,7 @@ jobs:
           for port in 8200 8082 18200 18300 18301 18302; do
             if test -n "$(ss -ltnH "sport = :$port")"; then echo "ASSERTION FAILED: full driver left a listener on $port"; exit 1; fi
           done
+          if test -e /usr/local/libexec/backup-success; then echo 'ASSERTION FAILED: full driver left /usr/local/libexec/backup-success'; exit 1; fi
           sudo cmp /tmp/openbao-backup-environment-before /etc/environment
           sudo systemctl show-environment | cmp /tmp/openbao-backup-manager-before -
 

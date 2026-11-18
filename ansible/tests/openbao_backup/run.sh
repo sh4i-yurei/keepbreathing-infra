@@ -20,6 +20,8 @@ done
 for path in /etc/systemd/system/openbao-backup*; do
   if [[ -e $path || -L $path ]]; then fail 'openbao-backup units already exist under /etc/systemd/system'; fi
 done
+writer=/usr/local/libexec/backup-success
+if [[ -e $writer || -L $writer ]]; then fail "$writer already exists"; fi
 for port in 8200 8082 18200 18300 18301 18302; do
   if listening "$port"; then fail "127.0.0.1:$port is already in use"; fi
 done
@@ -33,6 +35,10 @@ runner_save_environment
 
 mkdir -p "$point"
 chmod 0755 "$work"
+textfile=$work/textfile
+export TEST_TEXTFILE=$textfile
+# Owned by root with mode 0700, so the test accounts cannot enter it (Backups decision 83).
+install -d -o root -g root -m 0700 "$textfile"
 mount -t tmpfs -o size=256m tmpfs "$point"
 undo_mount() { if mountpoint -q "$point"; then umount "$point"; fi; }
 undo_add 'unmount backup tmpfs' undo_mount
@@ -233,6 +239,29 @@ run_journal_has() {
   cat "$work/run-journal.log" >&2
   fail "bbtest's openbao-backup-run.service journal must hold: $text"
 }
+record_lines() {
+  local stage=$1 target=$2 time=$3 limit=$4 labels
+  labels="stage=\"$stage\",target=\"$target\""
+  printf '%s\n' \
+    "# HELP backup_last_success_timestamp_seconds Unix time of the stage's last successful run." \
+    '# TYPE backup_last_success_timestamp_seconds gauge' \
+    "backup_last_success_timestamp_seconds{$labels} $time" \
+    "# HELP backup_max_age_seconds Age after which the stage's last success counts as stale." \
+    '# TYPE backup_max_age_seconds gauge' \
+    "backup_max_age_seconds{$labels} $limit"
+}
+record=$textfile/backup-openbao-localhost.prom
+read_record() { "$writer" --read openbao localhost; }
+require_record() {
+  local since=$1 recorded
+  recorded=$(read_record) || fail 'openbao localhost must have a recorded success'
+  [[ $recorded =~ ^[0-9]+$ ]] && ((recorded >= since)) \
+    || fail "openbao localhost's record must be no earlier than $since, got $recorded"
+  diff -u <(record_lines openbao localhost "$recorded" 93600) "$record" >/dev/null \
+    || fail "openbao localhost's record must be the writer's six lines with limit 93600"
+}
+first_success_line='    "msg": "Would record the install time as the first success of openbao localhost"'
+undo_writer() { rm -f -- "$writer"; }
 
 # OpenBao and the backup server, before the role.
 play openbao
@@ -288,6 +317,19 @@ finally:
 PY
 }
 
+# Case 19: the role must refuse a missing writer before any planned file.
+play_fails 'a rehearsal without the backup success writer' role --check --diff
+failed_at "$last_play_log" 'OpenBao backup | Require the backup success writer' \
+  'The backup success writer /usr/local/libexec/backup-success is missing; apply node_exporter first.'
+if grep -Fq 'Would write ' "$last_play_log"; then fail 'a missing writer must stop the role before it plans a file'; fi
+printf 'case 19: a missing backup success writer stops a rehearsal before it plans a file\n'
+undo_add 'remove the backup success writer' undo_writer
+run_play backup-success
+if ((play_status != 0)); then
+  tail -40 "$last_play_log"
+  fail 'the backup success writer must install'
+fi
+
 # Case 1: check mode before openbao_config, so the consumer's AppRole files don't exist yet.
 play role --check --diff
 recap "$last_play_log" '[1-9][0-9]*' 0
@@ -295,6 +337,8 @@ for path in "${files[@]}"; do
   grep -Fq "Would write $path" "$last_play_log" || fail "check mode must report Would write $path"
   [[ ! -e $path ]] || fail "check mode wrote $path"
 done
+grep -Fxq "$first_success_line" "$last_play_log" || fail 'check mode must report the first success of openbao localhost'
+[[ ! -e $record ]] || fail 'check mode wrote the backup success record'
 no_proof 'check mode'
 printf 'case 1: a fresh check-mode run reports its writes and writes nothing\n'
 
@@ -309,7 +353,10 @@ play config
 start_proxy 192.0.2.10
 
 # Case 3: the real run saves a snapshot through the proxy.
+since=$(date +%s)
+since=$(date +%s)
 play role
+require_record "$since"
 recap "$last_play_log" '[0-9]+' 0
 restic_bb snapshots --json >"$work/snapshots.json"
 python3 - "$work/snapshots.json" <<'PY' || fail 'the first run must leave one snapshot of exactly /openbao.snap'
@@ -339,9 +386,27 @@ printf 'case 3: the real run saves a snapshot through the proxy and leaves no co
 # Case 4: a second run changes nothing.
 play role
 recap "$last_play_log" 0 0
+play role --check --diff
+recap "$last_play_log" 0 0
+if grep -Fq 'Would record ' "$last_play_log"; then fail 'a recorded success must not be planned again'; fi
+mv -- "$record" "$work/record-aside.prom"
+play role --check --diff
+recap "$last_play_log" 1 0
+grep -Fxq "$first_success_line" "$last_play_log" || fail 'check mode must report the first success of openbao localhost'
+[[ ! -e $record ]] || fail 'check mode wrote the missing backup success record'
+mv -- "$work/record-aside.prom" "$record"
 printf 'case 4: a second run reports changed=0\n'
 
+# Case 20: another writer error is not mistaken for an absent record.
+mv -- "$textfile" "$work/textfile-aside"
+play_fails 'a rehearsal without the textfile folder' role --check --diff
+failed_at "$last_play_log" 'OpenBao backup | Read the recorded success for the rehearsal' \
+  "backup-success: $textfile is not a folder"
+mv -- "$work/textfile-aside" "$textfile"
+printf 'case 20: a rehearsal fails when the writer gives any other answer\n'
+
 # Case 5: a refused sign-in fails the job and saves nothing.
+before=$(read_record) || fail 'case 5 needs a recorded success to compare'
 as_bb cat "$secret_id" >"$work/secret-id"
 count=$(snapshot_count)
 printf '%s' 00000000-0000-0000-0000-000000000000 | as_bb tee "$secret_id" >/dev/null
@@ -350,13 +415,16 @@ if systemctl start openbao-backup.service; then fail 'a refused sign-in must fai
 run_journal_has "$cursor" 'invalid role or secret ID'
 [[ $(snapshot_count) == "$count" ]] || fail 'a refused sign-in must save no snapshot'
 no_backup_container 'a refused sign-in'
+[[ $(read_record) == "$before" ]] || fail 'a failed run must not record a success'
 as_bb tee "$secret_id" <"$work/secret-id" >/dev/null
 printf 'case 5: a refused sign-in fails without a snapshot or a container\n'
 
 # Case 6: an OpenBao that can't be reached fails after the bounded wait.
+before=$(read_record) || fail 'case 6 needs a recorded success to compare'
 count=$(snapshot_count)
 cursor=$(run_cursor)
 play_fails 'an unreachable OpenBao' role -e openbao_backup_address=http://127.0.0.1:18302 -e openbao_backup_wait=10
+[[ $(read_record) == "$before" ]] || fail 'a failed play must keep the recorded success'
 failed_at "$last_play_log" "$start_task"
 run_journal_has "$cursor" 'openbao-backup: OpenBao at http://127.0.0.1:18302 did not answer unsealed within 10 seconds'
 [[ $(snapshot_count) == "$count" ]] || fail 'an unreachable OpenBao must save no snapshot'
@@ -446,6 +514,20 @@ grep -Fq "openbao restore proof: restored snapshot $id into openbao-restore-chec
 checks_passed 'case 11'
 no_proof 'case 11'
 printf 'case 11: a stale throwaway folder and container are replaced and removed\n'
+
+# Case 21: a successful run without the writer's system post-start line fails verification.
+cat > /etc/systemd/system/openbao-backup.service.d/no-success.conf <<'EOF'
+[Service]
+ExecStartPost=
+EOF
+systemctl daemon-reload
+play_fails 'a run that records no success' role
+failed_at "$last_play_log" 'OpenBao backup verify | Require a newer recorded success' \
+  'openbao-backup.service ran without recording a new success for openbao localhost.'
+no_proof 'case 21'
+rm -- /etc/systemd/system/openbao-backup.service.d/no-success.conf
+systemctl daemon-reload
+printf 'case 21: a run that records no success fails the verify before the restore proof\n'
 
 # Case 14: a wrong ansible password fails check 2.
 play_fails 'a wrong ansible password' role -e openbao_backup_ansible_password=not-the-ansible-password

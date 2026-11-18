@@ -51,6 +51,17 @@
     quiet: true
   when: not ansible_check_mode
 
+- name: OpenBao backup | Check the backup success writer
+  ansible.builtin.stat:
+    path: /usr/local/libexec/backup-success
+  register: openbao_backup_writer
+
+- name: OpenBao backup | Require the backup success writer
+  ansible.builtin.assert:
+    that: openbao_backup_writer.stat.exists and openbao_backup_writer.stat.executable
+    fail_msg: "The backup success writer /usr/local/libexec/backup-success is missing; apply node_exporter first."
+    quiet: true
+
 - name: OpenBao backup | Check file paths for the rehearsal
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -168,6 +179,41 @@
 
 - name: OpenBao backup | Apply manager reloads before enabling the timer
   ansible.builtin.meta: flush_handlers
+
+- name: OpenBao backup | Read the recorded success for the rehearsal
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/backup-success
+      - --read
+      - openbao
+      - "{{ inventory_hostname }}"
+  register: openbao_backup_rehearsal_read
+  check_mode: false
+  changed_when: false
+  failed_when: >-
+    openbao_backup_rehearsal_read.rc != 0
+    and openbao_backup_rehearsal_read.stderr != 'backup-success: no success recorded for openbao ' ~ inventory_hostname
+  when: ansible_check_mode
+
+- name: OpenBao backup | Report the first success the rehearsal would record
+  ansible.builtin.debug:
+    msg: "Would record the install time as the first success of openbao {{ inventory_hostname }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - openbao_backup_rehearsal_read.rc == 1
+
+- name: OpenBao backup | Record the install time once as the first success
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/backup-success
+      - --if-absent
+      - openbao
+      - "{{ inventory_hostname }}"
+      - "{{ openbao_backup_max_age }}"
+  register: openbao_backup_first_success
+  changed_when: openbao_backup_first_success.stdout == 'wrote'
+  when: not ansible_check_mode
 
 - name: OpenBao backup | Enable and start the system timer
   ansible.builtin.systemd_service:

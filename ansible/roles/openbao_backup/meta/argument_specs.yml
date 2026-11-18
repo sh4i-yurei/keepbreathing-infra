@@ -42,6 +42,8 @@ argument_specs:
         type: str
       openbao_backup_schedule:
         type: str
+      openbao_backup_max_age:
+        type: int
       openbao_backup_lock_wait:
         type: str
       openbao_backup_timeout:

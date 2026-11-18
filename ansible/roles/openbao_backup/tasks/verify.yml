@@ -59,6 +59,27 @@
           {{ (openbao_backup_repository_probe.stdout | from_json | length)
              if openbao_backup_repository_probe.rc == 0 else 0 }}
 
+    - name: OpenBao backup verify | Read the recorded success before the run
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/backup-success
+          - --read
+          - openbao
+          - "{{ inventory_hostname }}"
+      register: openbao_backup_success_before
+      changed_when: false
+
+    - name: OpenBao backup verify | Wait until the clock passes the recorded second
+      ansible.builtin.command:
+        argv:
+          - date
+          - +%s
+      register: openbao_backup_clock
+      until: (openbao_backup_clock.stdout | int) > (openbao_backup_success_before.stdout | int)
+      retries: 3
+      delay: 1
+      changed_when: false
+
     - name: OpenBao backup verify | Start the same system service as the timer
       ansible.builtin.command:
         argv:
@@ -66,6 +87,22 @@
           - start
           - openbao-backup.service
       changed_when: false
+
+    - name: OpenBao backup verify | Read the recorded success after the run
+      ansible.builtin.command:
+        argv:
+          - /usr/local/libexec/backup-success
+          - --read
+          - openbao
+          - "{{ inventory_hostname }}"
+      register: openbao_backup_success_after
+      changed_when: false
+
+    - name: OpenBao backup verify | Require a newer recorded success
+      ansible.builtin.assert:
+        that: (openbao_backup_success_after.stdout | int) > (openbao_backup_success_before.stdout | int)
+        fail_msg: "openbao-backup.service ran without recording a new success for openbao {{ inventory_hostname }}."
+        quiet: true
 
     - name: OpenBao backup verify | Read the snapshots after the run
       ansible.builtin.command:

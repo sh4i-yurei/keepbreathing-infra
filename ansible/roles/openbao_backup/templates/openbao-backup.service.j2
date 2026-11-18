@@ -6,3 +6,4 @@ Description=Start and wait for the OpenBao snapshot backup
 Type=oneshot
 TimeoutStartSec={{ openbao_backup_timeout | int + 300 }}
 ExecStart=/usr/bin/systemctl --user --machine={{ openbao_backup_user }}@ start --wait openbao-backup-run.service
+ExecStartPost=/usr/local/libexec/backup-success openbao {{ inventory_hostname }} {{ openbao_backup_max_age }}

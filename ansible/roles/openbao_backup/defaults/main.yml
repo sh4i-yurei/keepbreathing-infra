@@ -3,6 +3,7 @@ openbao_backup_image: "{{ openbao_image }}"
 openbao_backup_restic_image: "{{ restic_image }}"
 openbao_backup_address: "{{ openbao_address }}"
 openbao_backup_schedule: "*-*-* 02:30:00"
+openbao_backup_max_age: 93600
 openbao_backup_lock_wait: 10m
 openbao_backup_timeout: 1800
 openbao_backup_wait: 300

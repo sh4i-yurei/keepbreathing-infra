@@ -124,3 +124,22 @@
   loop: "{{ backup_prune_timers.results }}"
   loop_control:
     label: "backup-{{ item.item }}@{{ backup_prune_target.machine }}.timer"
+
+- name: "Backup prune verify | Read recorded successes for {{ backup_prune_target.machine }}"
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, "{{ item }}", "{{ backup_prune_target.machine }}"]
+  loop:
+    - prune
+    - check
+  register: backup_prune_successes
+  changed_when: false
+  failed_when: false
+
+- name: "Backup prune verify | Require recorded successes for {{ backup_prune_target.machine }}"
+  ansible.builtin.assert:
+    that: item.rc == 0
+    fail_msg: "{{ item.stderr }}"
+    quiet: true
+  loop: "{{ backup_prune_successes.results }}"
+  loop_control:
+    label: "{{ item.item }} {{ backup_prune_target.machine }}"

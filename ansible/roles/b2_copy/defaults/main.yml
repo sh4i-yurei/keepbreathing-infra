@@ -2,5 +2,6 @@
 b2_copy_restic_image: "{{ restic_image }}"
 b2_copy_aws_image: "{{ aws_cli_image }}"
 b2_copy_schedule: "*-*-* 03:30:00"
+b2_copy_max_age: 93600
 b2_copy_lock_wait: 10m
 b2_copy_timeout: 1800

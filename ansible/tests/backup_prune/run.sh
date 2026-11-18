@@ -13,11 +13,15 @@ done
 if grep -Eq '(^|[[:space:]])s3\.us-east-1\.seaweedfs\.test([[:space:]]|$)' /etc/hosts; then
   fail 's3.us-east-1.seaweedfs.test is already in /etc/hosts'
 fi
+writer=/usr/local/libexec/backup-success
+if [[ -e $writer ]]; then fail "$writer already exists"; fi
 
 source tests/lib/undo.sh
 source tests/lib/runner.sh
 work=$(mktemp -d)
 point=$work/backup
+textfile=$work/textfile
+export TEST_TEXTFILE=$textfile
 manager_xdg=
 bp_uid=
 weed_name=backup-prune-weed
@@ -34,10 +38,13 @@ export TEST_VERIFY_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_he
 export TEST_VERIFY_RESTIC_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
 export TEST_VERIFY_BCRYPT=$(printf '%s\n' "$TEST_VERIFY_PASSWORD" | htpasswd -niB verify | cut -d: -f2-)
 cred=/home/bptest/.config/b2/testhost.env
+other_cred=/home/bptest/.config/b2/otherhost.env
 password_dir=/home/bptest/.config/b2-copy/testhost
 hub_password=$password_dir/hub-password
 b2_password=$password_dir/b2-password
 repository=s3:http://s3.us-east-1.seaweedfs.test:8333/b2prune-locked/restic
+other_repository=s3:http://s3.us-east-1.seaweedfs.test:8333/b2prune-locked/otherhost
+records=(prune-testhost check-testhost prune-otherhost check-otherhost)
 
 as_bp() {
   (cd "$work" && HOME=/home/bptest USER=bptest LOGNAME=bptest \
@@ -93,12 +100,59 @@ assert {item['id'] for item in hub} == wanted
 assert {item['original'] for item in b2} == wanted
 PY
 }
+read_time() { "$writer" --read "$1" "$2"; }
+wait_past() { while (( $(date +%s) <= $1 )); do sleep 0.1; done; }
+assert_record() {
+  local stage=$1 target=$2 time=$3 limit=$4 labels
+  labels="stage=\"$stage\",target=\"$target\""
+  printf '%s\n' \
+    "# HELP backup_last_success_timestamp_seconds Unix time of the stage's last successful run." \
+    '# TYPE backup_last_success_timestamp_seconds gauge' \
+    "backup_last_success_timestamp_seconds{$labels} $time" \
+    "# HELP backup_max_age_seconds Age after which the stage's last success counts as stale." \
+    '# TYPE backup_max_age_seconds gauge' \
+    "backup_max_age_seconds{$labels} $limit" >"$work/expected-record"
+  cmp -s "$work/expected-record" "$textfile/backup-$stage-$target.prom" ||
+    fail "the $stage record for $target must hold time $time and limit $limit"
+}
+read_records() {
+  local record
+  for record in "${records[@]}"; do
+    times[$record]=$(read_time "${record%%-*}" "${record#*-}")
+  done
+}
+# Waits past every recorded second, so a write after this point gives a newer time.
+wait_past_records() {
+  local record newest=0
+  for record in "${records[@]}"; do
+    (( ${times[$record]} > newest )) && newest=${times[$record]}
+  done
+  wait_past "$newest"
+}
+# Requires each record but the named ones to keep the time read before.
+require_kept() {
+  local record time
+  for record in "${records[@]}"; do
+    [[ " $* " == *" $record "* ]] && continue
+    time=$(read_time "${record%%-*}" "${record#*-}")
+    [[ $time == "${times[$record]}" ]] || fail "the ${record%%-*} record for ${record#*-} must keep its time"
+  done
+}
+# Requires the named record to hold a newer time than the one read before, in the writer's format.
+require_newer() {
+  local record=$1 message=$2 time
+  time=$(read_time "${record%%-*}" "${record#*-}")
+  (( time > ${times[$record]} )) || fail "$message"
+  assert_record "${record%%-*}" "${record#*-}" "$time" 612000
+}
+declare -A times
 run_cursor() { journalctl --no-pager -n 1 --show-cursor -o cat | sed -n 's/^-- cursor: //p'; }
 run_output() {
   journalctl --no-pager -o cat --after-cursor="$1" "_UID=$bp_uid" \
     "_SYSTEMD_USER_UNIT=$2" SYSLOG_IDENTIFIER=podman >"$3"
 }
 undo_scratch() { rm -rf --one-file-system -- "$work"; }
+undo_writer() { rm -f -- "$writer"; }
 undo_mount() { if mountpoint -q "$point"; then umount "$point"; fi; }
 undo_bptest() { runner_undo_account bptest; }
 undo_hosts() { cp -p -- "$work/hosts" /etc/hosts; }
@@ -112,10 +166,12 @@ undo_lock() {
   fi
 }
 undo_units() {
-  for unit in backup-prune@testhost.timer backup-check@testhost.timer b2-copy@testhost.timer; do
+  for unit in backup-prune@testhost.timer backup-check@testhost.timer b2-copy@testhost.timer \
+      backup-prune@otherhost.timer backup-check@otherhost.timer b2-copy@otherhost.timer; do
     if systemctl is-enabled --quiet "$unit"; then systemctl disable --now "$unit" >/dev/null; fi
   done
-  for unit in backup-prune@testhost.service backup-check@testhost.service b2-copy@testhost.service; do
+  for unit in backup-prune@testhost.service backup-check@testhost.service b2-copy@testhost.service \
+      backup-prune@otherhost.service backup-check@otherhost.service b2-copy@otherhost.service; do
     if systemctl is-active --quiet "$unit"; then systemctl stop "$unit"; fi
     if systemctl is-failed --quiet "$unit"; then systemctl reset-failed "$unit"; fi
   done
@@ -161,6 +217,10 @@ printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nRESTIC_REPOSITORY=%s\n' 
   "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$repository" >"$cred"
 chown bptest:bptest "$cred"
 chmod 0600 "$cred"
+printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nRESTIC_REPOSITORY=%s\n' \
+  "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$other_repository" >"$other_cred"
+chown bptest:bptest "$other_cred"
+chmod 0600 "$other_cred"
 aws create-bucket --bucket b2prune-locked --object-lock-enabled-for-bucket >"$work/bucket.json" 2>&1 ||
   { tail -20 "$work/bucket.json" >&2; fail 'locked bucket must be created'; }
 aws put-object-lock-configuration --bucket b2prune-locked \
@@ -189,6 +249,18 @@ backup_at '2026-10-01 02:00:00' "$work/s2.log"
 dd if=/dev/urandom of="$work/source/c" bs=1048576 count=1 status=none
 chown bptest:bptest "$work/source/c"
 backup_at '2026-10-02 01:00:00' "$work/s3.log"
+install -d -o bptest -g bptest -m 0700 "$point/restic/otherhost"
+as_bp podman run --rm --network host --security-opt label=disable \
+  --volume "$point/restic/otherhost:/repo:rw" --volume "$work/hub-password:/password:ro" \
+  "$restic_image" --repo /repo --password-file /password init >"$work/other-init.log"
+as_bp podman run --rm --network host --security-opt label=disable \
+  --volume "$point/restic/otherhost:/repo:rw" --volume "$work/hub-password:/password:ro" \
+  --volume "$work/source:/source:ro" "$restic_image" \
+  --repo /repo --password-file /password backup /source >"$work/other-backup.log"
+install -d -o root -g root -m 0750 "$textfile"
+undo_add 'remove backup success writer' undo_writer
+ansible-playbook -i localhost, tests/backup_prune/backup-success.yml >"$work/writer.log" 2>&1 ||
+  { tail -35 "$work/writer.log" >&2; fail 'backup success writer play must pass'; }
 restic_hub snapshots --json >"$work/hub-initial.json"
 python3 - "$work/hub-initial.json" "$work/initial.json" <<'PY' || fail 'fixture must have four ordered snapshots'
 import json, sys
@@ -210,6 +282,11 @@ for path in "$hub_password" "$b2_password" "$cred"; do
   for unit in "${units[@]}"; do [[ ! -e $unit ]] || fail 'preflight created a unit'; done
   mv "$work/missing-file" "$path"
 done
+mv "$writer" "$work/writer-aside"
+if prune_play "$work/missing-writer.log"; then fail 'missing writer must fail'; fi
+assert_failure_message "$work/missing-writer.log" "The backup success writer $writer is missing; apply node_exporter first."
+for unit in "${units[@]}"; do [[ ! -e $unit ]] || fail 'the writer check created a unit'; done
+mv "$work/writer-aside" "$writer"
 printf 'PASS missing input files fail before unit changes\n'
 
 prune_play "$work/check-first.log" --check --diff ||
@@ -219,12 +296,30 @@ for unit in "${units[@]}"; do
   grep -Fq "Would write $unit" "$work/check-first.log" || fail "check mode must name $unit"
   [[ ! -e $unit ]] || fail 'check mode wrote a unit'
 done
+for machine in testhost otherhost; do
+  for stage in prune check; do
+    grep -Fq "Would record the install time as the first success of $stage $machine" "$work/check-first.log" ||
+      fail "check mode must name the $stage record for $machine"
+  done
+done
+[[ $(ls -A "$textfile" | sort | paste -sd ' ') == 'backup-copy-otherhost.prom backup-copy-testhost.prom' ]] ||
+  fail 'check mode must not write a record'
 snapshots
 assert_snapshot_ids 0 1 2 3
 printf 'PASS fresh check mode plans six units without changing repositories\n'
 
+first_start=$(date +%s)
 prune_play "$work/first.log" ||
   { tail -35 "$work/first.log" >&2; fail 'first prune role play must pass'; }
+first_end=$(date +%s)
+mkdir "$work/records-first"
+for record in "${records[@]}"; do
+  time=$(read_time "${record%%-*}" "${record#*-}") || fail "the first play must record the ${record%%-*} of ${record#*-}"
+  (( first_start <= time && time <= first_end )) ||
+    fail "the ${record%%-*} record for ${record#*-} must hold the install time"
+  assert_record "${record%%-*}" "${record#*-}" "$time" 612000
+  cp -p "$textfile/backup-$record.prom" "$work/records-first/"
+done
 grep -Eq 'localhost[[:space:]]+:.*failed=0' "$work/first.log" || fail 'first play recap failed'
 for unit in "${units[@]}"; do [[ -f $unit ]] || fail "missing unit $unit"; done
 for kind in prune check; do
@@ -252,11 +347,17 @@ if [[ ${TEST_FAIL_AFTER_PRUNE_ROLE:-} == 1 ]]; then
   fail 'deliberate failure after backup prune'
 fi
 
+wait_past "$first_end"
 prune_play "$work/second.log" || fail 'second role play must pass'
 require_recap 0 "$work/second.log"
+for record in "${records[@]}"; do
+  cmp -s "$work/records-first/backup-$record.prom" "$textfile/backup-$record.prom" ||
+    fail "a second play must keep the ${record%%-*} record for ${record#*-}"
+done
 prune_play "$work/check-existing.log" --check --diff || fail 'existing check mode must pass'
 require_recap 0 "$work/check-existing.log"
 ! grep -Fq 'Would write ' "$work/check-existing.log" || fail 'existing check mode planned a unit'
+! grep -Fq 'Would record ' "$work/check-existing.log" || fail 'existing check mode planned a record'
 printf 'PASS second play and check mode report no changes\n'
 
 prune_play "$work/check-diff.log" --check --diff -e backup_prune_keep_daily=8 ||
@@ -270,8 +371,12 @@ grep -Fq -- '--keep-daily 7' /home/bptest/.config/systemd/user/backup-prune-run@
 printf 'PASS changed keep count rehearsal shows diff without writing units\n'
 
 aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-before.json"
+read_records
+wait_past_records
 cursor=$(run_cursor)
 systemctl start backup-prune@testhost.service || fail 'prune system service must succeed'
+require_newer prune-testhost 'a successful prune must record a newer time'
+require_kept prune-testhost
 run_output "$cursor" backup-prune-run@testhost.service "$work/prune-output.log"
 [[ $(grep -Fc 'remove 1 snapshots:' "$work/prune-output.log") == 2 ]] ||
   fail 'prune must report removing one snapshot on each side'
@@ -320,14 +425,28 @@ assert any(key.startswith('restic/snapshots/') for key in hidden)
 PY
 printf 'PASS prune removes S1 on both sides and hides B2 objects\n'
 
+read_records
+wait_past_records
 cursor=$(run_cursor)
 systemctl start backup-check@testhost.service || fail 'check system service must succeed'
+require_newer check-testhost 'a successful check must record a newer time'
+require_kept check-testhost
 run_output "$cursor" backup-check-run@testhost.service "$work/check-output.log"
 [[ $(grep -Fc 'no errors were found' "$work/check-output.log") == 2 ]] ||
   fail 'check must report no errors on each side'
 [[ $(grep -Fc 'read all data' "$work/check-output.log") == 2 ]] ||
   fail 'both checks must read all data'
 printf 'PASS check reads every repository without errors\n'
+
+read_records
+wait_past_records
+systemctl start backup-prune@otherhost.service || fail 'prune system service for otherhost must succeed'
+require_newer prune-otherhost 'a successful prune of otherhost must record a newer time'
+require_kept prune-otherhost
+systemctl start backup-check@otherhost.service || fail 'check system service for otherhost must succeed'
+require_newer check-otherhost 'a successful check of otherhost must record a newer time'
+require_kept prune-otherhost check-otherhost
+printf 'PASS each machine records only its own prune and check\n'
 
 lock_container=backup-prune-held-lock
 as_bp podman run -d --name "$lock_container" --network host --security-opt label=disable \
@@ -343,9 +462,12 @@ find "$point/restic/testhost/locks" -maxdepth 1 -type f -regextype posix-extende
   -regex '.*/[0-9a-f]{64}' | grep -q . || fail 'exclusive lock must exist'
 as_bp podman pause "$lock_container" >"$work/pause.log"
 aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-before-lock.json"
+read_records
+wait_past_records
 cursor=$(run_cursor)
 lock_start=$SECONDS
 if systemctl start backup-prune@testhost.service; then fail 'held lock must fail prune'; fi
+[[ $(read_time prune testhost) == "${times[prune-testhost]}" ]] || fail 'a failed prune must keep the recorded success'
 (( SECONDS - lock_start >= 5 )) || fail 'prune must wait at least five seconds for the lock'
 run_output "$cursor" backup-prune-run@testhost.service "$work/locked-output.log"
 grep -Fq 'repository is already locked exclusively' "$work/locked-output.log" ||
@@ -371,8 +493,11 @@ grep -Fq 'Read-only prune preview failed for testhost on the hub: ' "$work/wrong
 grep -Fq 'wrong password or no key found' "$work/wrong-password-play.log" ||
   fail 'preview must show wrong password'
 aws list-object-versions --bucket b2prune-locked --prefix restic/ >"$work/versions-before-wrong.json"
+read_records
+wait_past_records
 cursor=$(run_cursor)
 if systemctl start backup-prune@testhost.service; then fail 'wrong password system service must fail'; fi
+[[ $(read_time prune testhost) == "${times[prune-testhost]}" ]] || fail 'a prune with a wrong password must keep the recorded success'
 run_output "$cursor" backup-prune-run@testhost.service "$work/wrong-password-output.log"
 grep -Fq 'wrong password or no key found' "$work/wrong-password-output.log" ||
   fail 'wrong password must appear in run unit output'
@@ -410,7 +535,10 @@ for ((attempt=0; attempt<40; attempt++)); do [[ -s $work/listener-ready ]] && br
 [[ -s $work/listener-ready ]] || fail 'hanging listener must start'
 listener_port=$(<"$work/listener-ready")
 sed -i "s@:8333/b2prune-locked@:$listener_port/b2prune-locked@" "$cred"
+read_records
+wait_past_records
 if systemctl start backup-prune@testhost.service; then fail 'hanging B2 run must time out'; fi
+[[ $(read_time prune testhost) == "${times[prune-testhost]}" ]] || fail 'a prune that times out must keep the recorded success'
 [[ $(as_bp systemctl --user show backup-prune-run@testhost.service -p Result --value) == timeout ]] ||
   fail 'run unit must report timeout'
 [[ $(systemctl show backup-prune@testhost.service -p Result --value) == exit-code ]] ||

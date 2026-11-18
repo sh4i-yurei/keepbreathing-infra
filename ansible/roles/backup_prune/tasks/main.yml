@@ -17,6 +17,19 @@
     loop_var: backup_prune_target
     label: "{{ backup_prune_target.machine }}"
 
+- name: Backup prune | Check backup success writer
+  ansible.builtin.stat:
+    path: /usr/local/libexec/backup-success
+  register: backup_prune_writer
+
+- name: Backup prune | Require backup success writer
+  ansible.builtin.assert:
+    that:
+      - backup_prune_writer.stat.exists
+      - backup_prune_writer.stat.executable
+    fail_msg: "The backup success writer /usr/local/libexec/backup-success is missing; apply node_exporter first."
+    quiet: true
+
 - name: Backup prune | Read account UID
   ansible.builtin.command:
     argv: [id, -u, "{{ backup_prune_user }}"]
@@ -87,6 +100,46 @@
 
 - name: Backup prune | Apply manager reloads
   ansible.builtin.meta: flush_handlers
+
+- name: Backup prune | Read each stage's recorded success for the rehearsal
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, "{{ item.1 }}", "{{ item.0.machine }}"]
+  loop: "{{ b2_buckets | product(['prune', 'check']) | list }}"
+  loop_control:
+    label: "{{ item.1 }} {{ item.0.machine }}"
+  register: backup_prune_records
+  check_mode: false
+  changed_when: false
+  failed_when: >-
+    backup_prune_records.rc != 0 and
+    backup_prune_records.stderr != 'backup-success: no success recorded for ' ~ item.1 ~ ' ' ~ item.0.machine
+  when: ansible_check_mode
+
+- name: Backup prune | Report stage records the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would record the install time as the first success of {{ item.item.1 }} {{ item.item.0.machine }}"
+  loop: "{{ backup_prune_records.results }}"
+  loop_control:
+    label: "{{ item.item.1 }} {{ item.item.0.machine }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - item.rc == 1
+
+- name: Backup prune | Record the install time as each stage's first success
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/backup-success
+      - --if-absent
+      - "{{ item.1 }}"
+      - "{{ item.0.machine }}"
+      - "{{ (backup_prune_max_age if item.1 == 'prune' else backup_prune_check_max_age) | string }}"
+  loop: "{{ b2_buckets | product(['prune', 'check']) | list }}"
+  loop_control:
+    label: "{{ item.1 }} {{ item.0.machine }}"
+  register: backup_prune_install_records
+  changed_when: backup_prune_install_records.stdout == 'wrote'
+  when: not ansible_check_mode
 
 - name: Backup prune | Verify every machine
   ansible.builtin.include_tasks: verify-one.yml

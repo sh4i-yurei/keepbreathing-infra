@@ -9,11 +9,15 @@ fi
 if grep -Eq '(^|[[:space:]])s3\.us-east-1\.seaweedfs\.test([[:space:]]|$)' /etc/hosts; then
   fail 's3.us-east-1.seaweedfs.test is already in /etc/hosts'
 fi
+writer=/usr/local/libexec/backup-success
+if [[ -e $writer ]]; then fail "$writer already exists"; fi
 
 source tests/lib/undo.sh
 source tests/lib/runner.sh
 work=$(mktemp -d)
 point=$work/backup
+textfile=$work/textfile
+export TEST_TEXTFILE=$textfile
 manager_xdg=
 bs_uid=
 weed_name=b2-copy-weed
@@ -30,12 +34,15 @@ export TEST_VERIFY_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_he
 export TEST_VERIFY_RESTIC_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
 export TEST_VERIFY_BCRYPT=$(printf '%s\n' "$TEST_VERIFY_PASSWORD" | htpasswd -niB verify | cut -d: -f2-)
 cred=/home/bstest/.config/b2/testhost.env
+other_cred=/home/bstest/.config/b2/otherhost.env
 hub_password=/home/bstest/.config/b2-copy/testhost/hub-password
 b2_password=/home/bstest/.config/b2-copy/testhost/b2-password
 run_unit=/home/bstest/.config/systemd/user/b2-copy-run@.service
 timer=/etc/systemd/system/b2-copy@.timer
 service=/etc/systemd/system/b2-copy@.service
 repository=s3:http://s3.us-east-1.seaweedfs.test:8333/b2copy-locked/restic
+other_repository=s3:http://s3.us-east-1.seaweedfs.test:8333/b2copy-locked/otherhost
+no_record=/run/systemd/system/b2-copy@testhost.service.d
 
 as_bs() {
   (cd "$work" && HOME=/home/bstest USER=bstest LOGNAME=bstest \
@@ -75,17 +82,39 @@ no_role_files() {
   [[ ! -e /home/bstest/.config/b2-copy && ! -e $timer && ! -e $service && ! -e $run_unit ]] ||
     fail 'preflight or check mode created role files'
 }
+read_time() { "$writer" --read "$1" "$2"; }
+wait_past() { while (( $(date +%s) <= $1 )); do sleep 0.1; done; }
+assert_record() {
+  local stage=$1 target=$2 time=$3 limit=$4 labels
+  labels="stage=\"$stage\",target=\"$target\""
+  printf '%s\n' \
+    "# HELP backup_last_success_timestamp_seconds Unix time of the stage's last successful run." \
+    '# TYPE backup_last_success_timestamp_seconds gauge' \
+    "backup_last_success_timestamp_seconds{$labels} $time" \
+    "# HELP backup_max_age_seconds Age after which the stage's last success counts as stale." \
+    '# TYPE backup_max_age_seconds gauge' \
+    "backup_max_age_seconds{$labels} $limit" >"$work/expected-record"
+  cmp -s "$work/expected-record" "$textfile/backup-$stage-$target.prom" ||
+    fail "the $stage record for $target must hold time $time and limit $limit"
+}
 undo_scratch() { rm -rf --one-file-system -- "$work"; }
+undo_writer() { rm -f -- "$writer"; }
+undo_no_record() {
+  if [[ -e $no_record ]]; then
+    rm -rf -- "$no_record"
+    systemctl daemon-reload
+  fi
+}
 undo_mount() { if mountpoint -q "$point"; then umount "$point"; fi; }
 undo_bstest() { runner_undo_account bstest; }
 undo_hosts() { cp -p -- "$work/hosts" /etc/hosts; }
 undo_weed() { if podman container exists "$weed_name"; then podman rm -f "$weed_name"; fi; }
 undo_listener() { if [[ -n \${listener:-} ]] && kill -0 "$listener" 2>/dev/null; then kill "$listener"; fi; }
 undo_units() {
-  if systemctl is-enabled --quiet b2-copy@testhost.timer; then
-    systemctl disable --now b2-copy@testhost.timer
-  fi
-  for unit in b2-copy@testhost.timer b2-copy@testhost.service; do
+  for unit in b2-copy@testhost.timer b2-copy@otherhost.timer; do
+    if systemctl is-enabled --quiet "$unit"; then systemctl disable --now "$unit"; fi
+  done
+  for unit in b2-copy@testhost.timer b2-copy@testhost.service b2-copy@otherhost.timer b2-copy@otherhost.service; do
     if systemctl is-active --quiet "$unit"; then systemctl stop "$unit"; fi
     if systemctl is-failed --quiet "$unit"; then systemctl reset-failed "$unit"; fi
   done
@@ -122,6 +151,14 @@ as_bs podman run --rm --network host --security-opt label=disable \
   --volume "$point/restic/testhost:/repo:rw" --volume "$work/hub-password:/password:ro" \
   --volume "$work/source:/source:ro" "$restic_image" \
   --repo /repo --password-file /password backup /source >"$work/hub-backup.log"
+install -d -o bstest -g bstest -m 0700 "$point/restic/otherhost"
+as_bs podman run --rm --network host --security-opt label=disable \
+  --volume "$point/restic/otherhost:/repo:rw" --volume "$work/hub-password:/password:ro" \
+  "$restic_image" --repo /repo --password-file /password init >"$work/other-init.log"
+as_bs podman run --rm --network host --security-opt label=disable \
+  --volume "$point/restic/otherhost:/repo:rw" --volume "$work/hub-password:/password:ro" \
+  --volume "$work/source:/source:ro" "$restic_image" \
+  --repo /repo --password-file /password backup /source >"$work/other-backup.log"
 
 podman run -d --name "$weed_name" --network host \
   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
@@ -140,6 +177,10 @@ printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nRESTIC_REPOSITORY=%s\n' 
   "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$repository" >"$cred"
 chown bstest:bstest "$cred"
 chmod 0600 "$cred"
+printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nRESTIC_REPOSITORY=%s\n' \
+  "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" "$other_repository" >"$other_cred"
+chown bstest:bstest "$other_cred"
+chmod 0600 "$other_cred"
 aws create-bucket --bucket b2copy-locked --object-lock-enabled-for-bucket >"$work/bucket.json"
 aws put-object-lock-configuration --bucket b2copy-locked \
   --object-lock-configuration '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Days":1}}}'
@@ -158,6 +199,16 @@ grep -Fq 'B2 credentials for testhost are missing; run playbooks/b2.yml first.' 
   { tail -30 "$work/missing-credential.log"; fail 'missing credential failure must be exact'; }
 no_role_files
 mv "$work/credential" "$cred"
+if ansible-playbook -i localhost, tests/b2_copy/copy.yml >"$work/missing-writer.log" 2>&1; then
+  fail 'missing writer must fail'
+fi
+grep -Fq "The backup success writer $writer is missing; apply node_exporter first." "$work/missing-writer.log" ||
+  { tail -30 "$work/missing-writer.log"; fail 'missing writer failure must be exact'; }
+no_role_files
+install -d -o root -g root -m 0750 "$textfile"
+undo_add 'remove backup success writer' undo_writer
+ansible-playbook -i localhost, tests/b2_copy/backup-success.yml >"$work/writer.log" 2>&1 ||
+  { tail -35 "$work/writer.log"; fail 'backup success writer play must pass'; }
 printf 'PASS preflight refuses missing passwords and credentials before changes\n'
 
 play "$work/check-fresh.log" --check --diff
@@ -165,7 +216,12 @@ grep -Eq 'localhost[[:space:]]+:.*changed=[1-9]' "$work/check-fresh.log" || fail
 for file in "$hub_password" "$b2_password" "$timer" "$service" "$run_unit"; do
   grep -Fq "$file" "$work/check-fresh.log" || fail "check mode must name $file"
 done
+for machine in testhost otherhost; do
+  grep -Fq "Would record the install time as the first success of copy $machine" "$work/check-fresh.log" ||
+    fail "check mode must name the copy record for $machine"
+done
 no_role_files
+[[ -z $(ls -A "$textfile") ]] || fail 'check mode must not write a record'
 aws list-objects-v2 --bucket b2copy-locked --prefix restic/ >"$work/check-objects.json"
 python3 - "$work/check-objects.json" <<'PY' || fail 'check mode must not create B2 repository'
 import json, sys
@@ -196,6 +252,12 @@ b2 = json.load(open(sys.argv[2]))
 assert len(hub) == len(b2) == 1
 assert [s['id'] for s in hub] == [s['original'] for s in b2]
 PY
+[[ $(ls -A "$textfile" | sort | paste -sd ' ') == 'backup-copy-otherhost.prom backup-copy-testhost.prom' ]] ||
+  fail 'the first play must record exactly the copy of testhost and otherhost'
+for machine in testhost otherhost; do
+  time=$(read_time copy "$machine") || fail "the first play must record the copy of $machine"
+  assert_record copy "$machine" "$time" 93600
+done
 printf 'PASS first role run copies snapshot and starts timer\n'
 if [[ ${TEST_FAIL_AFTER_COPY_ROLE:-} == 1 ]]; then
   TEST_POST_RUN_FAILURE_ARMED=1 play "$work/post-run-failure.log"
@@ -205,6 +267,7 @@ fi
 play "$work/check-existing.log" --check --diff
 grep -Eq 'localhost[[:space:]]+:.*changed=0.*failed=0' "$work/check-existing.log" ||
   fail 'existing check mode must report changed=0 failed=0'
+! grep -Fq 'Would record ' "$work/check-existing.log" || fail 'existing check mode must not plan a record'
 play "$work/second.log"
 grep -Eq 'localhost[[:space:]]+:.*changed=0.*failed=0' "$work/second.log" ||
   fail 'second run must report changed=0 failed=0'
@@ -220,7 +283,14 @@ as_bs podman run --rm --network host --security-opt label=disable \
   --volume "$point/restic/testhost:/repo:rw" --volume "$work/hub-password:/password:ro" \
   --volume "$work/source:/source:ro" "$restic_image" \
   --repo /repo --password-file /password backup /source >"$work/hub-second.log"
+test_before=$(read_time copy testhost)
+other_before=$(read_time copy otherhost)
+wait_past "$test_before"
 systemctl start b2-copy@testhost.service || fail 'system service must copy second snapshot'
+test_after=$(read_time copy testhost)
+(( test_after > test_before )) || fail 'a successful copy of testhost must record a newer time'
+assert_record copy testhost "$test_after" 93600
+[[ $(read_time copy otherhost) == "$other_before" ]] || fail 'a copy of testhost must keep the copy record of otherhost'
 [[ $(systemctl show b2-copy@testhost.service -p Result --value) == success ]] || fail 'system service must succeed'
 restic_hub snapshots --json >"$work/hub-two.json"
 restic_b2 snapshots --json >"$work/b2-two.json"
@@ -239,7 +309,25 @@ versions = {v['Key'] for v in data.get('Versions', [])}
 markers = {v['Key'] for v in data.get('DeleteMarkers', []) if v['IsLatest']}
 assert versions and versions == markers
 PY
+wait_past "$other_before"
+systemctl start b2-copy@otherhost.service || fail 'system service must copy otherhost'
+other_after=$(read_time copy otherhost)
+(( other_after > other_before )) || fail 'a successful copy of otherhost must record a newer time'
+assert_record copy otherhost "$other_after" 93600
+[[ $(read_time copy testhost) == "$test_after" ]] || fail 'a copy of otherhost must keep the copy record of testhost'
 printf 'PASS system service copies second snapshot and hides locks\n'
+
+undo_add 'remove no-record drop-in' undo_no_record
+mkdir -p "$no_record"
+printf '[Service]\nExecStartPost=\n' >"$no_record/no-record.conf"
+systemctl daemon-reload
+if ansible-playbook -i localhost, tests/b2_copy/copy.yml >"$work/no-record.log" 2>&1; then
+  fail 'a copy that records no success must fail the verify'
+fi
+grep -Fq 'b2-copy@testhost.service ran without recording a new success for copy testhost.' "$work/no-record.log" ||
+  { tail -30 "$work/no-record.log"; fail 'a copy that records no success must fail with the exact message'; }
+undo_no_record
+printf 'PASS the verify fails a copy that records no success\n'
 
 mkdir "$work/fixtures"
 for ((n=0; n<1001; n++)); do
@@ -278,6 +366,9 @@ grep -Fq "B2 deleted the copy's lock file instead of hiding it" "$work/plain.log
 sed -i 's@b2copy-plain/restic@b2copy-locked/restic@' "$cred"
 printf 'PASS unlocked bucket fails the hidden-lock check\n'
 
+test_before=$(read_time copy testhost)
+other_before=$(read_time copy otherhost)
+wait_past "$(( test_before > other_before ? test_before : other_before ))"
 correct_password=$TEST_B2_PASSWORD
 export TEST_B2_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))')
 if ansible-playbook -i localhost, tests/b2_copy/copy.yml >"$work/wrong-password.log" 2>&1; then
@@ -286,6 +377,8 @@ fi
 grep -Fq 'wrong password or no key found' "$work/wrong-password.log" ||
   fail 'wrong B2 password must show restic error'
 export TEST_B2_PASSWORD=$correct_password
+[[ $(read_time copy testhost) == "$test_before" && $(read_time copy otherhost) == "$other_before" ]] ||
+  fail 'a failed play must keep every recorded copy success'
 restic_b2 snapshots --json >"$work/b2-after-wrong.json"
 python3 - "$work/b2-after-wrong.json" <<'PY' || fail 'wrong password must preserve snapshots'
 import json, sys
@@ -311,7 +404,10 @@ for ((attempt=0; attempt<40; attempt++)); do [[ -s $work/listener-ready ]] && br
 [[ -s $work/listener-ready ]] || fail 'hanging listener must start'
 listener_port=$(<"$work/listener-ready")
 sed -i "s@:8333/b2copy-locked@:$listener_port/b2copy-locked@" "$cred"
+test_before=$(read_time copy testhost)
+wait_past "$test_before"
 if systemctl start b2-copy@testhost.service; then fail 'hanging S3 run must time out'; fi
+[[ $(read_time copy testhost) == "$test_before" ]] || fail 'a copy that times out must keep the recorded success'
 [[ $(as_bs systemctl --user show b2-copy-run@testhost.service -p Result --value) == timeout ]] ||
   fail 'run unit must report timeout'
 [[ $(systemctl show b2-copy@testhost.service -p Result --value) == exit-code ]] ||

@@ -38,6 +38,19 @@
   loop_control:
     label: "{{ item.item.machine }}"
 
+- name: B2 copy | Check backup success writer
+  ansible.builtin.stat:
+    path: /usr/local/libexec/backup-success
+  register: b2_copy_writer
+
+- name: B2 copy | Require backup success writer
+  ansible.builtin.assert:
+    that:
+      - b2_copy_writer.stat.exists
+      - b2_copy_writer.stat.executable
+    fail_msg: "The backup success writer /usr/local/libexec/backup-success is missing; apply node_exporter first."
+    quiet: true
+
 - name: B2 copy | Read account UID
   ansible.builtin.command:
     argv: [id, -u, "{{ b2_copy_user }}"]
@@ -172,6 +185,46 @@
 
 - name: B2 copy | Apply manager reloads
   ansible.builtin.meta: flush_handlers
+
+- name: B2 copy | Read each copy's recorded success for the rehearsal
+  ansible.builtin.command:
+    argv: [/usr/local/libexec/backup-success, --read, copy, "{{ item.machine }}"]
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  register: b2_copy_records
+  check_mode: false
+  changed_when: false
+  failed_when: >-
+    b2_copy_records.rc != 0 and
+    b2_copy_records.stderr != 'backup-success: no success recorded for copy ' ~ item.machine
+  when: ansible_check_mode
+
+- name: B2 copy | Report copy records the rehearsal would write
+  ansible.builtin.debug:
+    msg: "Would record the install time as the first success of copy {{ item.item.machine }}"
+  loop: "{{ b2_copy_records.results }}"
+  loop_control:
+    label: "{{ item.item.machine }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - item.rc == 1
+
+- name: B2 copy | Record the install time as each copy's first success
+  ansible.builtin.command:
+    argv:
+      - /usr/local/libexec/backup-success
+      - --if-absent
+      - copy
+      - "{{ item.machine }}"
+      - "{{ b2_copy_max_age | string }}"
+  loop: "{{ b2_buckets }}"
+  loop_control:
+    label: "{{ item.machine }}"
+  register: b2_copy_install_records
+  changed_when: b2_copy_install_records.stdout == 'wrote'
+  when: not ansible_check_mode
 
 - name: B2 copy | Prepare and verify every machine
   ansible.builtin.include_tasks: copy-one.yml

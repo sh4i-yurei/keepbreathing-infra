@@ -8,6 +8,8 @@
     b2_buckets:
       - machine: testhost
         name: b2prune-locked
+      - machine: otherhost
+        name: b2prune-locked
     backup_prune_user: bptest
     backup_prune_repository_root: "{{ lookup('ansible.builtin.env', 'TEST_MOUNT') }}/restic"
     backup_prune_restic_image: "{{ lookup('ansible.builtin.env', 'TEST_RESTIC_IMAGE') }}"

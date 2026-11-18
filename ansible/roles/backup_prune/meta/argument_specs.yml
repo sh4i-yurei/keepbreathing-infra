@@ -13,3 +13,7 @@ argument_specs:
       backup_prune_repository_root:
         type: path
         required: true
+      backup_prune_max_age:
+        type: int
+      backup_prune_check_max_age:
+        type: int

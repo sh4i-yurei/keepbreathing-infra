@@ -6,3 +6,4 @@ Description=Start and wait for B2 copy for %i
 Type=oneshot
 TimeoutStartSec={{ b2_copy_timeout | int + 300 }}
 ExecStart=/usr/bin/systemctl --user --machine={{ b2_copy_user }}@ start --wait b2-copy-run@%i.service
+ExecStartPost=/usr/local/libexec/backup-success copy %i {{ b2_copy_max_age }}

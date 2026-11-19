@@ -131,14 +131,14 @@ def test_python_job_and_pull_request_trigger() -> None:
     assert data["on"] == {"push": {"branches": ["main"]}, "pull_request": {}}
     assert data["jobs"]["python"]["uses"] == (
         "sh4i-yurei/ci-workflows/.github/workflows/python.yml"
-        "@6fa70095587800bf834d27d1cf2313a7b8dbb168"
+        "@abf03158b1efda671529abb6b5b5c6f430d18fc4"
     )
     assert data["jobs"]["python"]["with"] == {
         "coverage_floor": "100",
         "caller_workflow": ".github/workflows/ci.yml",
         "caller_job": "python",
+        "system_packages": '["podman"]',
         "install_command": (
-            "sudo apt-get update && sudo apt-get install -y podman && "
             "python -m pip install -r requirements.txt pytest==9.1.1 "
             "pytest-cov==7.1.0 && ansible-galaxy collection install "
             "-r ansible/collections/requirements.yml"

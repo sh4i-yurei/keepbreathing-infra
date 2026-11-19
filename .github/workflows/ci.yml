@@ -1006,7 +1006,7 @@ jobs:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y python3-apt
+      - run: sudo apt-get update && sudo apt-get install -y podman passt libpam-systemd dbus-user-session python3-apt
       - name: Existing account and folders are preserved
         run: |
           sudo useradd -m webtest

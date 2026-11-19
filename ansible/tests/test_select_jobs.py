@@ -121,7 +121,7 @@ DIFF_111 = [
         (
             ["ansible/roles/baseline/tasks/main.yml"],
             False,
-            {"baseline-container-account"},
+            {"baseline-container-account", "web"},
         ),
         (["ansible/tests/test_ci_python.py", "README.md"], False, set()),
         (["ansible/tests/test_run_driver.py", "ci/run_driver.py"], False, set()),

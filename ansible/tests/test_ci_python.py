@@ -25,6 +25,7 @@ COLLECTION_JOBS = (
     "staging",
     "ticket-band",
     "vaultwarden-backup",
+    "web",
     "ansible-lint",
     "syntax-check",
 )
@@ -74,6 +75,7 @@ def test_collection_install_has_immediately_preceding_cache():
         "staging",
         "openbao-client",
         "openbao-backup",
+        "web",
     ),
 )
 def test_local_runner_run_steps_match_main(job, tmp_path):
@@ -98,7 +100,7 @@ def test_architecture_describes_collection_cache_and_python_exception():
         if line.startswith("| `.github/workflows/ci.yml` |")
     )
     assert (
-        "seventeen jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
+        "eighteen jobs restore Ansible collections from a cache keyed on `ansible/collections/requirements.yml`"
         in row
     )
     assert (

@@ -1,0 +1,31 @@
+{
+  "digitalocean": {
+    "region": "atl1",
+    "bake_class": "bake",
+    "classes": {
+      "bake": {
+        "sizes": [
+          "s-1vcpu-1gb-intel",
+          "s-1vcpu-1gb-amd"
+        ]
+      },
+      "small": {
+        "sizes": [
+          "s-1vcpu-1gb-35gb-intel",
+          "s-1vcpu-1gb-amd"
+        ]
+      }
+    },
+    "machines": {
+      "web": {
+        "class": "small"
+      },
+      "mail": {
+        "class": "small"
+      },
+      "control": {
+        "class": "small"
+      }
+    }
+  }
+}

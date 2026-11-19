@@ -1,0 +1,10 @@
+---
+web_checkouts:
+  - name: keepbreathing
+    path: /srv/keepbreathing
+    repo: https://github.com/sh4i-yurei/keepbreathing.git
+    ref: "{{ web_site_ref }}"
+  - name: keepbreath-contact-api
+    path: /srv/keepbreath-contact-api
+    repo: https://github.com/sh4i-yurei/keepbreath-contact-api.git
+    ref: "{{ web_contact_api_ref }}"

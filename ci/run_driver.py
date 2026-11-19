@@ -24,7 +24,7 @@ from ci.select_jobs import driver_jobs
 
 # Jobs proven to run in a rootless container on 2026-11-05, with ticket-band and
 # openbao-config added on 2026-11-06, openbao-backup on 2026-11-08 and
-# baseline-container-account on 2026-11-11 and staging on 2026-11-18. The other driver jobs mount
+# baseline-container-account on 2026-11-11, and staging and web on 2026-11-18. The other driver jobs mount
 # loop devices or set security.* attributes, which need root in the host's own namespace.
 LOCAL_JOBS = (
     "b2-bucket",
@@ -36,6 +36,7 @@ LOCAL_JOBS = (
     "openbao-config",
     "staging",
     "ticket-band",
+    "web",
 )
 IMAGE = "localhost/kbi-driver-runner"
 BOOT_SECONDS = 60

@@ -1,0 +1,132 @@
+---
+- name: Find the web container account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ web_container_user }}"
+    fail_key: false
+
+- name: Require the account before a real run
+  ansible.builtin.fail:
+    msg: "web: the account {{ web_container_user }} does not exist; run the web role's account entry point before baseline"
+  when:
+    - not ansible_check_mode
+    - ansible_facts.getent_passwd.get(web_container_user) is none
+
+- name: Install git
+  ansible.builtin.package:
+    name: git
+    state: present
+  become: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Read checkout paths
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ web_checkouts }}"
+  register: web_checkout_paths
+  become: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Read checkout git directories
+  ansible.builtin.stat:
+    path: "{{ item.path }}/.git"
+  loop: "{{ web_checkouts }}"
+  register: web_checkout_git
+  become: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Refuse a path that is not a git checkout
+  ansible.builtin.fail:
+    msg: "web: {{ item.0.item.path }} exists but is not a git checkout; move it aside before running the web role"
+  loop: "{{ web_checkout_paths.results | zip(web_checkout_git.results) | list }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - item.0.stat.exists
+    - not item.1.stat.exists
+
+- name: Make missing checkout directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ web_container_user }}"
+    group: "{{ web_container_user }}"
+    mode: "0755"
+  loop: "{{ web_checkouts }}"
+  loop_control:
+    index_var: web_index
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not web_checkout_git.results[web_index].stat.exists
+
+- name: Clone missing checkouts as the container account
+  ansible.builtin.git:
+    repo: "{{ item.repo }}"
+    dest: "{{ item.path }}"
+    version: "{{ item.ref }}"
+    update: false
+  loop: "{{ web_checkouts }}"
+  loop_control:
+    index_var: web_index
+  become: true
+  become_user: "{{ web_container_user }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not web_checkout_git.results[web_index].stat.exists
+
+- name: Read the site's container unit
+  ansible.builtin.slurp:
+    src: /srv/keepbreathing/deploy/quadlet/keepbreath.container
+  register: web_site_unit
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Require the site's loopback server
+  ansible.builtin.assert:
+    that: "'PublishPort=127.0.0.1:8080:8080' in (web_site_unit.content | b64decode).splitlines()"
+    fail_msg: >-
+      web: the site checkout /srv/keepbreathing does not publish 127.0.0.1:8080
+      (no line PublishPort=127.0.0.1:8080:8080 in deploy/quadlet/keepbreath.container);
+      deploy keepbreathing #39, the loopback server, first
+      (Ansible configuration management decision 61.9)
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Read checkout ownership for verification
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  loop: "{{ web_checkouts }}"
+  register: web_verify_paths
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Verify checkout ownership
+  ansible.builtin.assert:
+    that: "item.stat.pw_name == web_container_user and item.stat.gr_name == web_container_user"
+    fail_msg: "web: {{ item.item.path }} is not owned by {{ web_container_user }}"
+  loop: "{{ web_verify_paths.results }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Read checkout HEADs as the container account
+  ansible.builtin.command:
+    argv:
+      - git
+      - rev-parse
+      - HEAD
+    chdir: "{{ item.path }}"
+  loop: "{{ web_checkouts }}"
+  register: web_verify_heads
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ web_container_user }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists

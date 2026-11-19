@@ -19,7 +19,11 @@ for secret in mailpit-smtp-auth mailpit-tls-cert mailpit-tls-key; do
 done
 if podman network exists staging-mail; then fail 'staging-mail already exists'; fi
 as_user() {
-  runuser -u "$user" -- env HOME="$home" USER="$user" LOGNAME="$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" "$@"
+  (
+    cd "$home"
+    HOME="$home" USER="$user" LOGNAME="$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" \
+      XDG_CONFIG_HOME="$home/.config" runuser -u "$user" -- "$@"
+  )
 }
 
 work=$(mktemp -d)
@@ -209,6 +213,7 @@ as_user podman pull docker.io/library/python:3.13-alpine@sha256:42825e7ec3437b3b
 printf %s "${generated_values[2]}" >"$home/staging-pw"
 chown "$user:$user" "$home/staging-pw"
 chmod 0600 "$home/staging-pw"
+install -o "$user" -g "$user" -m 0644 tests/staging/send.py "$home/staging-send.py"
 send() {
   local mode=$1 authority=$2
   local -a authority_args=()
@@ -216,7 +221,7 @@ send() {
     authority_args=(--secret staging-ca,type=mount,target=/etc/staging-ca.crt --env SSL_CERT_FILE=/etc/staging-ca.crt)
   fi
   as_user podman run --rm --network keepbreath-net --add-host mailpit.staging:10.89.200.10 \
-    "${authority_args[@]}" --mount "type=bind,src=$PWD/tests/staging/send.py,dst=/t/send.py,ro=true" \
+    "${authority_args[@]}" --mount "type=bind,src=$home/staging-send.py,dst=/t/send.py,ro=true" \
     --mount "type=bind,src=$home/staging-pw,dst=/t/pw,ro=true" \
     docker.io/library/python:3.13-alpine@sha256:42825e7ec3437b3bce923c237484eb23d32128476e18307d2f48951bf86f1db2 \
     python /t/send.py "$mode"

@@ -1,0 +1,6 @@
+---
+# Baseline checks subordinate ID ranges, enables lingering and starts the user manager afterwards.
+- name: account | Create the container account
+  ansible.builtin.user:
+    name: "{{ web_container_user }}"
+  become: true

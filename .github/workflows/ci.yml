@@ -31,6 +31,7 @@ jobs:
       staging: ${{ steps.select.outputs.staging }}
       ticket_band: ${{ steps.select.outputs.ticket_band }}
       vaultwarden_backup: ${{ steps.select.outputs.vaultwarden_backup }}
+      web: ${{ steps.select.outputs.web }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -958,6 +959,79 @@ jobs:
           if test -e /etc/staging || test -L /etc/staging; then
             echo 'ASSERTION FAILED: full driver left /etc/staging'; exit 1
           fi
+
+  web:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.full == 'true' || needs.changes.outputs.web == 'true') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r ../requirements.txt
+      - uses: actions/cache@v6
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
+      - run: ansible-galaxy collection install -r collections/requirements.yml
+      - run: sudo apt-get update && sudo apt-get install -y python3-apt
+      - name: Existing account and folders are preserved
+        run: |
+          sudo useradd -m webtest
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/web/run.sh > /tmp/web-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing webtest was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: webtest already exists' /tmp/web-existing.log
+          id webtest
+          test -d /home/webtest
+          test ! -e /srv/keepbreathing
+          test ! -e /srv/keepbreath-contact-api
+          sudo userdel -r webtest
+          sudo mkdir /srv/keepbreathing
+          printf keep | sudo tee /srv/keepbreathing/keep >/dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/web/run.sh > /tmp/web-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing site folder was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /srv/keepbreathing already exists' /tmp/web-existing.log
+          test "$(sudo cat /srv/keepbreathing/keep)" = keep
+          if id webtest >/dev/null 2>&1; then echo 'ASSERTION FAILED: webtest was created'; exit 1; fi
+          test ! -e /srv/keepbreath-contact-api
+          sudo rm -rf /srv/keepbreathing
+          sudo mkdir /srv/keepbreath-contact-api
+          printf keep | sudo tee /srv/keepbreath-contact-api/keep >/dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/web/run.sh > /tmp/web-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing contact API folder was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: /srv/keepbreath-contact-api already exists' /tmp/web-existing.log
+          test "$(sudo cat /srv/keepbreath-contact-api/keep)" = keep
+          if id webtest >/dev/null 2>&1; then echo 'ASSERTION FAILED: webtest was created'; exit 1; fi
+          test ! -e /srv/keepbreathing
+          sudo rm -rf /srv/keepbreath-contact-api
+      - name: Web role integration cases
+        run: |
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/web/run.sh > /tmp/web-full.log 2>&1; then
+            cat /tmp/web-full.log
+          else
+            tail -80 /tmp/web-full.log
+            exit 1
+          fi
+          if test "$(tail -1 /tmp/web-full.log)" != 'web driver: all cases passed'; then
+            echo 'ASSERTION FAILED: web driver success message was not its last line'
+            exit 1
+          fi
+      - name: Full driver cleans up
+        run: |
+          for thing in webtest /home/webtest /srv/keepbreathing /srv/keepbreath-contact-api; do
+            if { test "$thing" = webtest && id webtest >/dev/null 2>&1; } || { test "$thing" != webtest && { test -e "$thing" || test -L "$thing"; }; }; then
+              echo "ASSERTION FAILED: full driver left $thing"; exit 1
+            fi
+          done
 
   ticket-band:
     needs: changes

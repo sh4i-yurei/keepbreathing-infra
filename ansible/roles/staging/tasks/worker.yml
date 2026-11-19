@@ -38,6 +38,7 @@
       become_user: "{{ staging_container_user }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ staging_worker_uid }}"
+        HOME: "{{ staging_worker_home }}"
 
     - name: Worker | Decide whether the authority secret needs replacement
       ansible.builtin.set_fact:
@@ -66,6 +67,7 @@
       become_user: "{{ staging_container_user }}"
       environment:
         XDG_RUNTIME_DIR: "/run/user/{{ staging_worker_uid }}"
+        HOME: "{{ staging_worker_home }}"
 
     - name: Worker | Predict changed authority secret
       ansible.builtin.debug:

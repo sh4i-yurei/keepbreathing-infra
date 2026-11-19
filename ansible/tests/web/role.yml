@@ -9,6 +9,14 @@
         name: web
         tasks_from: account
 
+    - name: Start the web container account
+      ansible.builtin.import_role:
+        name: baseline
+        tasks_from: container-account
+      vars:
+        baseline_container_user: "{{ web_container_user }}"
+      when: not ansible_check_mode
+
     - name: Apply the web role
       ansible.builtin.import_role:
         name: web

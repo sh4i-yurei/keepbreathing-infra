@@ -59,6 +59,18 @@
     - ansible_facts.getent_passwd.get(web_container_user) is not none
     - not web_checkout_git.results[web_index].stat.exists
 
+- name: Predict each clone
+  ansible.builtin.debug:
+    msg: "Would clone {{ item.repo }} at {{ item.ref }} into {{ item.path }}"
+  loop: "{{ web_checkouts }}"
+  loop_control:
+    index_var: web_index
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not web_checkout_git.results[web_index].stat.exists
+
 - name: Clone missing checkouts as the container account
   ansible.builtin.git:
     repo: "{{ item.repo }}"
@@ -71,6 +83,7 @@
   become: true
   become_user: "{{ web_container_user }}"
   when:
+    - not ansible_check_mode
     - ansible_facts.getent_passwd.get(web_container_user) is not none
     - not web_checkout_git.results[web_index].stat.exists
 
@@ -130,3 +143,106 @@
   when:
     - ansible_facts.getent_passwd.get(web_container_user) is not none
     - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Read the network
+  ansible.builtin.command:
+    argv: [podman, network, inspect, keepbreath-net]
+  register: web_network
+  check_mode: false
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ web_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[web_container_user][1] }}"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Refuse a network Podman can't read
+  ansible.builtin.fail:
+    msg: >-
+      web: podman network inspect keepbreath-net failed in a way that isn't
+      'network not found', so the role won't create or change the network;
+      fix Podman first: {{ web_network.stderr }}
+  become: true
+  become_user: "{{ web_container_user }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - >-
+      web_network.rc != 0 and not
+      (web_network.rc == 125 and
+       (web_network.stderr | trim).endswith('network not found') and
+       'Error reading network config file' not in web_network.stderr)
+
+- name: Require the network's settings
+  ansible.builtin.assert:
+    that:
+      - "((web_network.stdout | from_json | first).subnets | map(attribute='subnet') | list) == ['10.89.0.0/24']"
+      - "((web_network.stdout | from_json | first).subnets | map(attribute='gateway') | list) == ['10.89.0.1']"
+      - "(web_network.stdout | from_json | first).dns_enabled == true"
+    fail_msg: >-
+      web: keepbreath-net exists with other settings; the role never changes
+      an existing network, so fix it by hand
+      (Ansible configuration management decision 61.4)
+  become: true
+  become_user: "{{ web_container_user }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - web_network.rc == 0
+
+- name: Predict the network's creation
+  ansible.builtin.debug:
+    msg: Would create keepbreath-net
+  changed_when: true
+  become: true
+  become_user: "{{ web_container_user }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - ansible_check_mode
+    - web_network.rc == 125
+
+- name: Create the network
+  ansible.builtin.command:
+    argv: [podman, network, create, --subnet, 10.89.0.0/24, --gateway, 10.89.0.1, keepbreath-net]
+  changed_when: true
+  become: true
+  become_user: "{{ web_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[web_container_user][1] }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode
+    - web_network.rc == 125
+
+- name: Make the account's Quadlet folder
+  ansible.builtin.file:
+    path: "{{ ansible_facts.getent_passwd[web_container_user][4] }}/.config/containers/systemd"
+    state: directory
+    mode: "0700"
+  become: true
+  become_user: "{{ web_container_user }}"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Make the worker's drop-in folder
+  ansible.builtin.file:
+    path: "{{ ansible_facts.getent_passwd[web_container_user][4] }}/.config/containers/systemd/contact-worker.container.d"
+    state: directory
+    mode: "0755"
+  become: true
+  become_user: "{{ web_container_user }}"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Write the worker's relay drop-in
+  ansible.builtin.copy:
+    dest: "{{ ansible_facts.getent_passwd[web_container_user][4] }}/.config/containers/systemd/contact-worker.container.d/50-relay.conf"
+    content: |
+      [Container]
+      Environment=CONTACT_SMTP_HOST={{ web_smtp_host }}
+      Environment=CONTACT_SMTP_PORT={{ web_smtp_port }}
+      Environment=CONTACT_SMTP_USER={{ web_smtp_user }}
+      {% if web_smtp_host_address != '' %}AddHost={{ web_smtp_host }}:{{ web_smtp_host_address }}
+      {% endif %}
+    mode: "0644"
+  register: web_relay_dropin
+  become: true
+  become_user: "{{ web_container_user }}"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none

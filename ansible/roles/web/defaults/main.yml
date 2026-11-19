@@ -1,2 +1,3 @@
 ---
 web_container_user: "{{ baseline_container_user }}"
+web_smtp_host_address: ""

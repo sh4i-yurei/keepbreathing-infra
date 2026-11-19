@@ -15,6 +15,23 @@ argument_specs:
         type: str
         required: true
         description: The commit or branch used when the contact API checkout is missing.
+      web_smtp_host:
+        type: str
+        required: true
+        description: The mail relay name the worker connects to.
+      web_smtp_user:
+        type: str
+        required: true
+        description: The relay login.
+      web_smtp_port:
+        type: int
+        required: true
+        description: The relay port.
+      web_smtp_host_address:
+        type: str
+        required: false
+        default: ""
+        description: The address to pin the relay name to inside the worker, or empty for no pin.
   account:
     short_description: Create the account the site and the contact API run under
     options:

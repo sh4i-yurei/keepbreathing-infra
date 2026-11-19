@@ -44,6 +44,7 @@ undo_mailpit() {
   podman secret rm mailpit-smtp-auth mailpit-tls-cert mailpit-tls-key >/dev/null 2>&1 || true
 }
 undo_install
+runner_save_environment
 useradd -m "$user"
 loginctl enable-linger "$user"
 systemctl start "user@$(id -u "$user").service"
@@ -253,9 +254,9 @@ play relabel-second
 test "$(changed "$last_log" zero)" = 0
 printf 'PASS the next run: changed=0\n'
 
-HOME=/root play kept-home -e 'ansible_become_flags=-E -S -n'
+HOME=/root XDG_CONFIG_HOME=/root/.config play kept-home -e 'ansible_become_flags=-E -S -n'
 test "$(changed "$last_log" zero)" = 0
-printf "PASS a run whose sudo keeps the caller's HOME: changed=0\n"
+printf "PASS a run whose sudo keeps the caller's HOME and XDG_CONFIG_HOME: changed=0\n"
 
 podman secret rm mailpit-tls-key >/dev/null
 play missing-secret-check --check --diff

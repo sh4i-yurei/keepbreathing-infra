@@ -1,0 +1,165 @@
+---
+- name: Mailpit | Check the source files
+  ansible.builtin.stat:
+    path: "/etc/staging/{{ item }}"
+    get_checksum: false
+  loop:
+    - smtp-password
+    - mailpit.crt
+    - mailpit.key
+  register: staging_mailpit_source_stats
+  become: true
+
+- name: Mailpit | Read existing source files
+  ansible.builtin.slurp:
+    src: "/etc/staging/{{ item }}"
+  loop:
+    - smtp-password
+    - mailpit.crt
+    - mailpit.key
+  loop_control:
+    index_var: staging_mailpit_source_index
+  register: staging_mailpit_source_values
+  no_log: true
+  become: true
+  when: staging_mailpit_source_stats.results[staging_mailpit_source_index].stat.exists
+
+- name: Mailpit | Keep root's Podman secrets
+  when: staging_mailpit_source_values.results | selectattr('content', 'defined') | list | length == 3
+  block:
+    - name: Mailpit | Assemble secret values in memory
+      ansible.builtin.set_fact:
+        staging_mailpit_secrets:
+          - name: mailpit-smtp-auth
+            value: "staging:{{ staging_mailpit_source_values.results[0].content | b64decode }}"
+          - name: mailpit-tls-cert
+            value: "{{ staging_mailpit_source_values.results[1].content | b64decode }}"
+          - name: mailpit-tls-key
+            value: "{{ staging_mailpit_source_values.results[2].content | b64decode }}"
+      no_log: true
+
+    - name: Mailpit | Inspect root's Podman secrets without their values
+      ansible.builtin.command:
+        argv: [podman, secret, inspect, "{{ item.name }}"]
+      loop: "{{ staging_mailpit_secrets }}"
+      register: staging_mailpit_secret_inspects
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      no_log: true
+      become: true
+
+    - name: Mailpit | Collect names of secrets needing replacement
+      ansible.builtin.set_fact:
+        staging_mailpit_changed_names: >-
+          {{ (staging_mailpit_changed_names | default([])) + [item.0.name] }}
+      loop: "{{ staging_mailpit_secrets | zip(staging_mailpit_secret_inspects.results) | list }}"
+      when: >-
+        item.1.rc != 0 or
+        ((item.1.stdout | from_json | first).Spec.Labels.sha256 | default('')) != (item.0.value | hash('sha256'))
+      no_log: true
+
+    - name: Mailpit | Replace changed Podman secrets
+      ansible.builtin.command:
+        argv:
+          - podman
+          - secret
+          - create
+          - --replace
+          - --label
+          - "sha256={{ item.value | hash('sha256') }}"
+          - "{{ item.name }}"
+          - '-'
+        stdin: "{{ item.value }}"
+        stdin_add_newline: false
+      loop: "{{ staging_mailpit_secrets }}"
+      changed_when: true
+      when: item.name in staging_mailpit_changed_names | default([])
+      no_log: true
+      become: true
+
+    - name: Mailpit | Predict changed root Podman secrets
+      ansible.builtin.debug:
+        msg: "Would replace root's Podman secret {{ item }}"
+      loop: "{{ staging_mailpit_changed_names | default([]) }}"
+      changed_when: true
+      when: ansible_check_mode
+
+- name: Mailpit | Make root's Quadlet folder
+  ansible.builtin.file:
+    path: /etc/containers/systemd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Mailpit | Write the private network unit
+  ansible.builtin.copy:
+    dest: /etc/containers/systemd/staging-mail.network
+    content: |
+      [Network]
+      NetworkName=staging-mail
+      Subnet=10.89.200.0/24
+    owner: root
+    group: root
+    mode: "0644"
+  register: staging_mailpit_network_unit
+  become: true
+
+- name: Mailpit | Write the container unit
+  ansible.builtin.copy:
+    dest: /etc/containers/systemd/mailpit.container
+    content: |
+      [Container]
+      Image={{ staging_mailpit_image }}
+      ContainerName=mailpit
+      Network=staging-mail.network
+      IP=10.89.200.10
+      Environment=MP_UI_BIND_ADDR=127.0.0.1:8025
+      Environment=MP_SMTP_REQUIRE_STARTTLS=true
+      Environment=MP_SMTP_TLS_CERT=/run/secrets/mailpit-tls-cert
+      Environment=MP_SMTP_TLS_KEY=/run/secrets/mailpit-tls-key
+      Secret=mailpit-tls-cert,type=mount
+      Secret=mailpit-tls-key,type=mount
+      Secret=mailpit-smtp-auth,type=env,target=MP_SMTP_AUTH
+      [Service]
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: "0644"
+  register: staging_mailpit_container_unit
+  become: true
+
+- name: Mailpit | Reload systemd after unit changes
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode and (staging_mailpit_network_unit.changed or staging_mailpit_container_unit.changed)
+  become: true
+
+- name: Mailpit | Check whether the container unit exists
+  ansible.builtin.stat:
+    path: /etc/containers/systemd/mailpit.container
+  register: staging_mailpit_unit_stat
+  become: true
+
+- name: Mailpit | Keep the service running with current units and secrets
+  ansible.builtin.systemd_service:
+    name: mailpit.service
+    state: >-
+      {{ 'restarted' if staging_mailpit_network_unit.changed or
+         staging_mailpit_container_unit.changed or
+         staging_mailpit_changed_names | default([]) | length > 0 else 'started' }}
+  when: not ansible_check_mode or staging_mailpit_unit_stat.stat.exists
+  become: true
+
+- name: Mailpit | Check the running service
+  ansible.builtin.command:
+    argv: [systemctl, is-active, mailpit.service]
+  register: staging_mailpit_active
+  changed_when: false
+  failed_when: staging_mailpit_active.stdout != 'active'
+  when: not ansible_check_mode
+  become: true

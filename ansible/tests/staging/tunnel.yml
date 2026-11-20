@@ -1,0 +1,10 @@
+---
+- name: Exercise staging's tunnel on localhost
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Run the staging tunnel entry
+      ansible.builtin.import_role:
+        name: staging
+        tasks_from: tunnel

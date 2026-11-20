@@ -8,3 +8,12 @@ web_checkouts:
     path: /srv/keepbreath-contact-api
     repo: https://github.com/sh4i-yurei/keepbreath-contact-api.git
     ref: "{{ web_contact_api_ref }}"
+web_secrets:
+  kb-redis-conf: "{{ 'requirepass ' ~ web_redis_password ~ '\n' }}"
+  kb-rediscli-auth: "{{ web_redis_password }}"
+  kb-broker-url: "{{ 'redis://:' ~ web_redis_password ~ '@keepbreath-redis:6379/0' }}"
+  kb-altcha-key: "{{ web_altcha_hmac_key }}"
+  kb-smtp-pass: "{{ web_smtp_password }}"
+web_secret_stored: >-
+  {{ dict(web_secret_hashes.results | selectattr('stdout', 'defined') | map(attribute='item.item')
+  | zip(web_secret_hashes.results | selectattr('stdout', 'defined') | map(attribute='stdout'))) }}

@@ -32,6 +32,23 @@ argument_specs:
         required: false
         default: ""
         description: The address to pin the relay name to inside the worker, or empty for no pin.
+      web_redis_password:
+        type: str
+        required: true
+        no_log: true
+        description: >-
+          The Redis password, stored in kb-redis-conf, kb-rediscli-auth and kb-broker-url. It may hold only
+          A-Z, a-z, 0-9 and . _ ~ - because it is embedded in the broker URL.
+      web_altcha_hmac_key:
+        type: str
+        required: true
+        no_log: true
+        description: The contact API's ALTCHA HMAC key, stored in kb-altcha-key.
+      web_smtp_password:
+        type: str
+        required: true
+        no_log: true
+        description: The relay password the worker logs in with, stored in kb-smtp-pass.
   account:
     short_description: Create the account the site and the contact API run under
     options:

@@ -12,6 +12,14 @@ Podman cannot read, and writes the worker's relay drop-in at
 leaves every other drop-in alone and registers `web_relay_dropin` for W5. A check
 run predicts missing clones and network creation without making them.
 
-Decision 67 divides the remaining work into W3 through W6: secrets, unit links
-and candidate contact API deploy, port boundary and deployment credentials,
-then live-state and relay verification.
+W3 writes the account's five Podman secrets: `kb-redis-conf`, `kb-rediscli-auth`,
+`kb-broker-url`, `kb-altcha-key` and `kb-smtp-pass`. It compares each stored
+secret with its wanted value by SHA-256 and writes only a missing or differing
+one, from standard input; no value is shown in its output. Before anything else,
+the role refuses a Redis password holding anything but A-Z, a-z, 0-9 and
+`. _ ~ -`, because the password goes into the broker URL unencoded. It sets
+`web_secrets_written` to the names it wrote, for W5. A check run predicts each
+write by name without making it.
+
+Decision 68.1 orders the remaining work: W4 the host's pieces, W5 the units, and
+W6 the verify.

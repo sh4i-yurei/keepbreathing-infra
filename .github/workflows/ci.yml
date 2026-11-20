@@ -1006,7 +1006,12 @@ jobs:
           path: ~/.ansible/collections
           key: ${{ runner.os }}-ansible-collections-${{ hashFiles('ansible/collections/requirements.yml') }}
       - run: ansible-galaxy collection install -r collections/requirements.yml
-      - run: sudo apt-get update && sudo apt-get install -y podman passt libpam-systemd dbus-user-session python3-apt
+      - run: sudo apt-get update && sudo apt-get install -y podman passt libpam-systemd dbus-user-session python3-apt firewalld
+      - name: Start firewalld
+        run: |
+          sudo systemctl reload dbus
+          sudo systemctl start firewalld
+          sysctl -n net.ipv4.ip_unprivileged_port_start > /tmp/web-port-start
       - name: Existing account and folders are preserved
         run: |
           sudo useradd -m webtest
@@ -1053,9 +1058,17 @@ jobs:
           fi
       - name: Full driver cleans up
         run: |
-          for thing in webtest /home/webtest /srv/keepbreathing /srv/keepbreath-contact-api; do
+          for thing in webtest /home/webtest /srv/keepbreathing /srv/keepbreath-contact-api /etc/sysctl.d/99-podman-ports.conf /usr/local/bin/deploy-site /etc/ssh/authorized_keys/webtest; do
             if { test "$thing" = webtest && id webtest >/dev/null 2>&1; } || { test "$thing" != webtest && { test -e "$thing" || test -L "$thing"; }; }; then
               echo "ASSERTION FAILED: full driver left $thing"; exit 1
+            fi
+          done
+          if test "$(sysctl -n net.ipv4.ip_unprivileged_port_start)" != "$(cat /tmp/web-port-start)"; then
+            echo 'ASSERTION FAILED: full driver left the port boundary changed'; exit 1
+          fi
+          for service in http https; do
+            if sudo firewall-cmd --zone=public --query-service="$service" >/dev/null || sudo firewall-cmd --permanent --zone=public --query-service="$service" >/dev/null; then
+              echo "ASSERTION FAILED: full driver left $service open"; exit 1
             fi
           done
 

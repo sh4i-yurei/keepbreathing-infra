@@ -319,3 +319,118 @@
   ansible.builtin.set_fact:
     web_secrets_written: "{{ web_secret_writes.results | selectattr('changed') | map(attribute='item') | list }}"
   when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Install the Python cryptography library
+  ansible.builtin.package:
+    name: python3-cryptography
+    state: present
+  become: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Read the origin certificate
+  community.crypto.x509_certificate_info:
+    content: "{{ web_origin_certificate }}"
+  register: web_origin_certificate_info
+  no_log: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Read the origin key
+  community.crypto.openssl_privatekey_info:
+    content: "{{ web_origin_key }}"
+  register: web_origin_key_info
+  no_log: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Require the key to belong to the certificate
+  ansible.builtin.assert:
+    that: web_origin_certificate_info.public_key == web_origin_key_info.public_key
+    quiet: true
+    fail_msg: "web: web_origin_key doesn't belong to web_origin_certificate; nothing was written"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Set the unprivileged port boundary
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_unprivileged_port_start
+    value: "80"
+    sysctl_file: /etc/sysctl.d/99-podman-ports.conf
+    sysctl_set: true
+    state: present
+  become: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Open the listed firewall services
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ web_firewall_services }}"
+  become: true
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Make the origin certificate folder
+  ansible.builtin.file:
+    path: /srv/keepbreathing/deploy/certs
+    state: directory
+    owner: "{{ web_container_user }}"
+    group: "{{ web_container_user }}"
+    mode: "0750"
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Write the origin certificate and key
+  ansible.builtin.copy:
+    dest: "/srv/keepbreathing/deploy/certs/{{ item }}"
+    content: "{{ {'origin.pem': web_origin_certificate, 'origin.key': web_origin_key}[item] }}"
+    owner: "{{ web_container_user }}"
+    group: "{{ web_container_user }}"
+    mode: "{{ {'origin.pem': '0644', 'origin.key': '0600'}[item] }}"
+  loop:
+    - origin.pem
+    - origin.key
+  register: web_origin_written
+  no_log: true
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Install deploy-site from the site checkout
+  ansible.builtin.copy:
+    src: /srv/keepbreathing/deploy/deploy-site.sh
+    dest: /usr/local/bin/deploy-site
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Make the root-owned key folder
+  ansible.builtin.file:
+    path: /etc/ssh/authorized_keys
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - web_deploy_key != ''
+
+- name: Write the deploy key
+  ansible.builtin.copy:
+    dest: "/etc/ssh/authorized_keys/{{ web_container_user }}"
+    content: "{{ web_deploy_key }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - web_deploy_key != ''

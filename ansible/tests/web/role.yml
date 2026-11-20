@@ -20,3 +20,7 @@
     - name: Apply the web role
       ansible.builtin.import_role:
         name: web
+
+    - name: Show which secrets the role wrote
+      ansible.builtin.debug:
+        msg: "written: {{ web_secrets_written | join(',') if web_secrets_written is defined else 'undefined' }}"

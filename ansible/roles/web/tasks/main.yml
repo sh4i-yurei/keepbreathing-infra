@@ -100,6 +100,7 @@
     src: /srv/keepbreathing/deploy/quadlet/keepbreath.container
   register: web_site_unit
   become: true
+  become_user: "{{ web_container_user }}"
   when:
     - ansible_facts.getent_passwd.get(web_container_user) is not none
     - not ansible_check_mode or web_checkout_git.results[0].stat.exists
@@ -373,10 +374,9 @@
   ansible.builtin.file:
     path: /srv/keepbreathing/deploy/certs
     state: directory
-    owner: "{{ web_container_user }}"
-    group: "{{ web_container_user }}"
     mode: "0750"
   become: true
+  become_user: "{{ web_container_user }}"
   when:
     - ansible_facts.getent_passwd.get(web_container_user) is not none
     - not ansible_check_mode or web_checkout_git.results[0].stat.exists
@@ -385,8 +385,6 @@
   ansible.builtin.copy:
     dest: "/srv/keepbreathing/deploy/certs/{{ item }}"
     content: "{{ {'origin.pem': web_origin_certificate, 'origin.key': web_origin_key}[item] }}"
-    owner: "{{ web_container_user }}"
-    group: "{{ web_container_user }}"
     mode: "{{ {'origin.pem': '0644', 'origin.key': '0600'}[item] }}"
   loop:
     - origin.pem
@@ -394,15 +392,25 @@
   register: web_origin_written
   no_log: true
   become: true
+  become_user: "{{ web_container_user }}"
+  when:
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - not ansible_check_mode or web_checkout_git.results[0].stat.exists
+
+- name: Read deploy-site from the site checkout as the container account
+  ansible.builtin.slurp:
+    src: /srv/keepbreathing/deploy/deploy-site.sh
+  register: web_deploy_site_source
+  become: true
+  become_user: "{{ web_container_user }}"
   when:
     - ansible_facts.getent_passwd.get(web_container_user) is not none
     - not ansible_check_mode or web_checkout_git.results[0].stat.exists
 
 - name: Install deploy-site from the site checkout
   ansible.builtin.copy:
-    src: /srv/keepbreathing/deploy/deploy-site.sh
+    content: "{{ web_deploy_site_source.content | b64decode }}"
     dest: /usr/local/bin/deploy-site
-    remote_src: true
     owner: root
     group: root
     mode: "0755"

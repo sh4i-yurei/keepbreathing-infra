@@ -21,7 +21,9 @@ the role refuses a Redis password holding anything but A-Z, a-z, 0-9 and
 `web_secrets_written` to the names it wrote, for W5. A check run predicts each
 write by name without making it.
 
-W4 sets up the host's pieces, as root. It first installs `python3-cryptography`,
+W4 sets up the host's pieces, as root, except that the certificate folder and files
+are written as the account and `deploy-site` is read as the account, because root
+never follows a path inside the checkout. It first installs `python3-cryptography`,
 which `community.crypto`'s modules need on the managed machine. It then reads the
 origin certificate and key from `web_origin_certificate` and `web_origin_key`, and
 refuses a key that doesn't belong to the certificate before writing either. It sets
@@ -31,8 +33,9 @@ It opens each service in `web_firewall_services` in zone `public`, at runtime an
 permanently, and never closes one, so an empty list changes nothing. It writes the
 pair into the site checkout's `deploy/certs/`: the folder 0750, `origin.pem` 0644 and
 `origin.key` 0600, all owned by the account, with no value in the output. It
-registers `web_origin_written` for W5. It installs `/usr/local/bin/deploy-site` from
-the checkout's `deploy/deploy-site.sh`, root's and 0755. When `web_deploy_key` isn't
+registers `web_origin_written` for W5. It reads the checkout's `deploy/deploy-site.sh`
+as the account and installs that content as `/usr/local/bin/deploy-site`, root's and
+0755. When `web_deploy_key` isn't
 empty, it writes that line to `/etc/ssh/authorized_keys/<account>`, root's and 0644,
 in a root-owned 0755 folder. An empty `web_deploy_key` writes and removes nothing. A
 check run skips the steps that read the site checkout while the checkout is missing.

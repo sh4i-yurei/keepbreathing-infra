@@ -461,6 +461,39 @@ if ! play deploy-key-again 949b89f 0c856b9; then tail -45 "$last_log"; fail 'dep
 cmp -s "$key_file" "$work/deploy-key.line" || fail 'deploy key was not written again'
 printf 'PASS empty deploy key: none written, none removed\n'
 
+root_folder=$work/root-folder
+mkdir -m 755 "$root_folder"
+rm -rf -- "$certs"
+as_user ln -s "$root_folder" "$certs" || fail 'webtest could not plant a link at deploy/certs'
+if play planted-certs 949b89f 0c856b9; then fail 'a planted link at deploy/certs was followed without failing'; fi
+test "$(stat -c '%a %U:%G' "$root_folder")" = '755 root:root' || fail 'a planted link at deploy/certs changed the root-owned folder'
+test -z "$(ls -A "$root_folder")" || fail 'a planted link at deploy/certs wrote into the root-owned folder'
+as_user rm -- "$certs" || fail 'webtest could not remove the link at deploy/certs'
+printf 'PASS planted link at deploy/certs: nothing root-owned changed\n'
+
+root_only=$work/root-only
+printf 'secret-marker\n' >"$root_only"
+chmod 600 "$root_only"
+deploy_site_hash=$(sha "$deploy_site")
+as_user ln -sf "$root_only" "$site/deploy/deploy-site.sh" || fail 'webtest could not plant a link at deploy-site.sh'
+if play planted-deploy-site 949b89f 0c856b9; then fail 'a planted link at deploy-site.sh was followed without failing'; fi
+test "$(sha "$deploy_site")" = "$deploy_site_hash" || fail 'a planted link at deploy-site.sh changed deploy-site'
+if grep -F 'secret-marker' "$deploy_site" >/dev/null; then fail 'a planted link at deploy-site.sh copied the root-only file'; fi
+as_user git -C "$site" checkout -- deploy/deploy-site.sh || fail 'webtest could not restore deploy-site.sh'
+if ! play after-planted 949b89f 0c856b9; then tail -45 "$last_log"; fail 'clean run after the planted links failed'; fi
+test "$(sha "$certs/origin.key")" = "$key_hash" || fail 'origin.key differs after the planted links'
+test "$(stat -c '%a %U:%G' "$certs")" = '750 webtest:webtest' || fail 'certificate folder not rebuilt after the planted link'
+test "$(stat -c '%a %U:%G' "$certs/origin.pem")" = '644 webtest:webtest' || fail 'origin.pem metadata differs after the planted links'
+test "$(stat -c '%a %U:%G' "$certs/origin.key")" = '600 webtest:webtest' || fail 'origin.key metadata differs after the planted links'
+printf 'PASS planted link at deploy-site.sh: nothing root-only copied\n'
+
+unit=$site/deploy/quadlet/keepbreath.container
+as_user ln -sf "$root_only" "$unit" || fail 'webtest could not plant a link at keepbreath.container'
+if play planted-unit 949b89f 0c856b9 -v; then fail 'a planted link at keepbreath.container was followed without failing'; fi
+no_copies "$last_log" 'secret-marker' 'c2VjcmV0LW1hcmtlcgo='
+as_user git -C "$site" checkout -- deploy/quadlet/keepbreath.container || fail 'webtest could not restore keepbreath.container'
+printf 'PASS planted link at keepbreath.container: nothing root-only read\n'
+
 as_user podman network rm keepbreath-net >"$work/network-rm.log"
 as_user podman network create --subnet 10.90.0.0/24 keepbreath-net >"$work/network-wrong.log"
 if play wrong-network 949b89f 0c856b9; then fail 'mismatched network was accepted'; fi

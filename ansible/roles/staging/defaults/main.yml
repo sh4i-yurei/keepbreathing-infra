@@ -1,2 +1,3 @@
 ---
 staging_mailpit_image: docker.io/axllent/mailpit@sha256:5040a9c533087d25dcb8f2ac748f45c9be5f7bc1d9fe5b860afb9597a2471d57
+staging_cloudflared_image: docker.io/cloudflare/cloudflared@sha256:28b1b51bc44446fafe254b37cd12b024f417a4e48a4b3c136620c2b93cdb0064

@@ -1,0 +1,111 @@
+---
+- name: Tunnel | Inspect root's Podman secret without its value
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, cloudflared-tunnel-token]
+  register: staging_tunnel_secret_inspect
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become: true
+
+- name: Tunnel | Decide whether root's Podman secret needs replacement
+  ansible.builtin.set_fact:
+    staging_tunnel_secret_changed: >-
+      {{ staging_tunnel_secret_inspect.rc != 0 or
+         ((staging_tunnel_secret_inspect.stdout | from_json | first).Spec.Labels.sha256 | default('')) != (staging_tunnel_token | hash('sha256')) }}
+  become: true
+
+- name: Tunnel | Pull the pinned image before writing the unit
+  containers.podman.podman_image:
+    name: "{{ staging_cloudflared_image }}"
+  become: true
+
+- name: Tunnel | Make root's Quadlet folder
+  ansible.builtin.file:
+    path: /etc/containers/systemd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Tunnel | Write the container unit
+  ansible.builtin.copy:
+    dest: /etc/containers/systemd/cloudflared.container
+    content: |
+      [Container]
+      Image={{ staging_cloudflared_image }}
+      ContainerName=cloudflared
+      Network=host
+      Exec=tunnel --metrics 127.0.0.1:20241 run
+      Secret=cloudflared-tunnel-token,type=env,target=TUNNEL_TOKEN
+      [Service]
+      Restart=always
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: "0644"
+  register: staging_tunnel_container_unit
+  become: true
+
+- name: Tunnel | Reload systemd after unit changes
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not ansible_check_mode and staging_tunnel_container_unit.changed
+  become: true
+
+- name: Tunnel | Replace the changed Podman secret
+  ansible.builtin.command:
+    argv:
+      - podman
+      - secret
+      - create
+      - --replace
+      - --label
+      - "sha256={{ staging_tunnel_token | hash('sha256') }}"
+      - cloudflared-tunnel-token
+      - '-'
+    stdin: "{{ staging_tunnel_token }}"
+    stdin_add_newline: false
+  changed_when: true
+  when: staging_tunnel_secret_changed and not ansible_check_mode
+  no_log: true
+  become: true
+
+- name: Tunnel | Predict changed root Podman secret
+  ansible.builtin.debug:
+    msg: "Would replace root's Podman secret cloudflared-tunnel-token"
+  changed_when: true
+  when: staging_tunnel_secret_changed and ansible_check_mode
+  become: true
+
+- name: Tunnel | Check whether the container unit exists
+  ansible.builtin.stat:
+    path: /etc/containers/systemd/cloudflared.container
+  register: staging_tunnel_unit_stat
+  become: true
+
+- name: Tunnel | Keep the service running with current unit and secret
+  ansible.builtin.systemd_service:
+    name: cloudflared.service
+    state: "{{ 'restarted' if staging_tunnel_container_unit.changed or staging_tunnel_secret_changed else 'started' }}"
+  when: not ansible_check_mode or staging_tunnel_unit_stat.stat.exists
+  become: true
+
+- name: Tunnel | Check readiness
+  when: not ansible_check_mode
+  become: true
+  block:
+    - name: Tunnel | Wait for a connected edge
+      ansible.builtin.uri:
+        url: http://127.0.0.1:20241/ready
+        status_code: 200
+      register: staging_tunnel_ready
+      until: staging_tunnel_ready.status == 200
+      retries: 30
+      delay: 2
+  rescue:
+    - name: Tunnel | Report a failed connection
+      ansible.builtin.fail:
+        msg: "cloudflared did not connect to Cloudflare: http://127.0.0.1:20241/ready answered {{ staging_tunnel_ready.status }} instead of 200 for 60 seconds"

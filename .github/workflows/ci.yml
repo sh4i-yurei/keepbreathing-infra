@@ -952,6 +952,15 @@ jobs:
           grep -Fx 'ASSERTION FAILED: /etc/staging already exists' /tmp/staging-existing.log
           test "$(sudo cat /etc/staging/redis-password)" = keep
           sudo rm -rf /etc/staging
+      - name: Existing tunnel secret is preserved
+        run: |
+          printf keep | sudo podman secret create cloudflared-tunnel-token - >/dev/null
+          if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/staging/run.sh > /tmp/staging-tunnel-existing.log 2>&1; then
+            echo 'ASSERTION FAILED: pre-existing tunnel secret was accepted'; exit 1
+          fi
+          grep -Fx 'ASSERTION FAILED: cloudflared-tunnel-token already exists' /tmp/staging-tunnel-existing.log
+          test "$(sudo podman secret inspect --showsecret cloudflared-tunnel-token --format '{{ .SecretData }}')" = keep
+          sudo podman secret rm cloudflared-tunnel-token
       - name: Staging role integration cases
         run: |
           if sudo env "PATH=$PATH" "ANSIBLE_COLLECTIONS_PATH=$HOME/.ansible/collections" bash tests/staging/run.sh > /tmp/staging-full.log 2>&1; then
@@ -977,6 +986,12 @@ jobs:
               echo "ASSERTION FAILED: full driver left $unit"; exit 1
             fi
           done
+          if test -e /etc/containers/systemd/cloudflared.container || test -L /etc/containers/systemd/cloudflared.container; then
+            echo 'ASSERTION FAILED: full driver left cloudflared.container'; exit 1
+          fi
+          if sudo podman container exists cloudflared || sudo podman secret exists cloudflared-tunnel-token; then
+            echo 'ASSERTION FAILED: full driver left cloudflared container or secret'; exit 1
+          fi
           if sudo podman network exists staging-mail || sudo podman container exists mailpit; then
             echo 'ASSERTION FAILED: full driver left Mailpit container or network'; exit 1
           fi

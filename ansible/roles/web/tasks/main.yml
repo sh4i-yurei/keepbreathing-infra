@@ -1,4 +1,12 @@
 ---
+- name: Require a URL-safe Redis password
+  ansible.builtin.assert:
+    that: web_redis_password is match('^[A-Za-z0-9._~-]+\Z')
+    quiet: true
+    fail_msg: >-
+      web: web_redis_password may hold only A-Z, a-z, 0-9 and . _ ~ -, because it goes
+      into the broker URL unencoded (Ansible configuration management decision 69.4)
+
 - name: Find the web container account
   ansible.builtin.getent:
     database: passwd
@@ -245,4 +253,69 @@
   register: web_relay_dropin
   become: true
   become_user: "{{ web_container_user }}"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Find which secrets exist
+  ansible.builtin.command:
+    argv: [podman, secret, exists, "{{ item }}"]
+  loop: "{{ web_secrets | list }}"
+  register: web_secret_exists
+  check_mode: false
+  changed_when: false
+  failed_when: web_secret_exists.rc not in [0, 1]
+  become: true
+  become_user: "{{ web_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[web_container_user][1] }}"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Hash each stored secret
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail;
+      podman secret inspect --showsecret {{ item.item | quote }}
+      | python3 -c 'import hashlib, json, sys; print(hashlib.sha256(json.load(sys.stdin)[0]["SecretData"].encode()).hexdigest())'
+    executable: /bin/bash
+  loop: "{{ web_secret_exists.results | selectattr('rc', 'defined') | selectattr('rc', 'eq', 0) | list }}"
+  register: web_secret_hashes
+  check_mode: false
+  changed_when: false
+  no_log: true
+  become: true
+  become_user: "{{ web_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[web_container_user][1] }}"
+  when: ansible_facts.getent_passwd.get(web_container_user) is not none
+
+- name: Predict each secret write
+  ansible.builtin.debug:
+    msg: "Would write {{ item }}"
+  loop: "{{ web_secrets | list }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - web_secret_stored.get(item) != (web_secrets[item] | hash('sha256'))
+
+- name: Write each missing or differing secret
+  ansible.builtin.command:
+    argv: [podman, secret, create, --replace, "{{ item }}", "-"]
+    stdin: "{{ web_secrets[item] }}"
+    stdin_add_newline: false
+  loop: "{{ web_secrets | list }}"
+  register: web_secret_writes
+  changed_when: true
+  no_log: true
+  become: true
+  become_user: "{{ web_container_user }}"
+  environment:
+    XDG_RUNTIME_DIR: "/run/user/{{ ansible_facts.getent_passwd[web_container_user][1] }}"
+  when:
+    - not ansible_check_mode
+    - ansible_facts.getent_passwd.get(web_container_user) is not none
+    - web_secret_stored.get(item) != (web_secrets[item] | hash('sha256'))
+
+- name: Record which secrets were written
+  ansible.builtin.set_fact:
+    web_secrets_written: "{{ web_secret_writes.results | selectattr('changed') | map(attribute='item') | list }}"
   when: ansible_facts.getent_passwd.get(web_container_user) is not none

@@ -49,6 +49,9 @@ as_user() {
   )
 }
 
+secret_inputs=(-e 'web_redis_password=Rp4ss-w0rd.x' -e 'web_altcha_hmac_key=altcha-key-1'
+  -e '{"web_smtp_password": "smtp p@ss"}')
+
 play() {
   local label=$1 site_ref=$2 api_ref=$3
   shift 3
@@ -58,7 +61,39 @@ play() {
     -e "web_contact_api_ref=$api_ref" \
     -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587' \
     -e 'web_smtp_user=contact@keepbreath.ing' \
-    -e 'web_smtp_host_address=10.128.0.4' "$@" >"$last_log" 2>&1
+    -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" "$@" >"$last_log" 2>&1
+}
+no_copies() {
+  local log=$1 value
+  shift
+  for value in "$@"; do
+    if grep -F -- "$value" "$log" >/dev/null; then fail "$log holds a copy of $value"; fi
+  done
+}
+expect_secret() {
+  as_user podman secret inspect --showsecret "$1" >"$work/secret.json" || fail "$1 could not be inspected"
+  python3 - "$work/secret.json" "$2" <<'PY' || fail "$1 stored value differs"
+import json, sys
+assert json.load(open(sys.argv[1]))[0]['SecretData'] == sys.argv[2]
+PY
+  rm -f -- "$work/secret.json"
+}
+expect_five() {
+  expect_secret kb-redis-conf $'requirepass Rp4ss-w0rd.x\n'
+  expect_secret kb-rediscli-auth 'Rp4ss-w0rd.x'
+  expect_secret kb-broker-url 'redis://:Rp4ss-w0rd.x@keepbreath-redis:6379/0'
+  expect_secret kb-altcha-key "$1"
+  expect_secret kb-smtp-pass 'smtp p@ss'
+}
+written_is() {
+  python3 - "$last_log" "$1" <<'PY' || fail "web_secrets_written was not [$1]"
+import json, pathlib, re, sys
+log, want = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2]
+task = re.search(r'TASK \[Show which secrets the role wrote\][^\n]*\n(.*?)(?=\nTASK \[|\nPLAY RECAP)', log, re.S)
+assert task, 'no debug task'
+messages = re.findall(r'^\s*"msg": (".*")$', task.group(1), re.M)
+assert [json.loads(message) for message in messages] == ['written: ' + want], messages
+PY
 }
 recap() {
   grep -Eq "localhost[[:space:]]+:.*changed=$2 .*failed=0" "$1" || {
@@ -89,7 +124,7 @@ if ansible localhost -i localhost, -c local --playbook-dir tests/web \
   -e 'web_contact_api_ref=0c856b9' \
   -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587' \
   -e 'web_smtp_user=contact@keepbreath.ing' \
-  -e 'web_smtp_host_address=10.128.0.4' >"$work/missing-account.log" 2>&1; then
+  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" >"$work/missing-account.log" 2>&1; then
   fail 'missing account was accepted'
 fi
 grep -F 'web: the account webabsent does not exist; run the web role'"'"'s account entry point before baseline' "$work/missing-account.log" >/dev/null || fail 'missing account message differs'
@@ -110,7 +145,7 @@ for entry in 'name=web tasks_from=account' 'name=baseline tasks_from=container-a
   extra=(-e "web_container_user=$user" -e "baseline_container_user=$user"
     -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587'
     -e 'web_smtp_user=contact@keepbreath.ing'
-    -e 'web_smtp_host_address=10.128.0.4')
+    -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}")
   if ! ansible localhost -i localhost, -c local --playbook-dir tests/web \
     -m ansible.builtin.include_role -a "$entry" "${extra[@]}" \
     >"$work/account-setup.log" 2>&1; then
@@ -125,9 +160,12 @@ fi
 for prediction in \
   'Would clone https://github.com/sh4i-yurei/keepbreathing.git at 949b89f into /srv/keepbreathing' \
   'Would clone https://github.com/sh4i-yurei/keepbreath-contact-api.git at 0c856b9 into /srv/keepbreath-contact-api' \
-  'Would create keepbreath-net'; do
+  'Would create keepbreath-net' \
+  'Would write kb-redis-conf' 'Would write kb-rediscli-auth' 'Would write kb-broker-url' \
+  'Would write kb-altcha-key' 'Would write kb-smtp-pass'; do
   grep -F "$prediction" "$last_log" >/dev/null || fail "missing prediction: $prediction"
 done
+no_copies "$last_log" 'Rp4ss-w0rd.x' 'altcha-key-1' 'smtp p@ss'
 for task in "Make the account's Quadlet folder" "Make the worker's drop-in folder" "Write the worker's relay drop-in"; do
   changed_task "$last_log" "$task"
 done
@@ -138,6 +176,8 @@ else
   test "$?" = 125 || fail 'missing network inspect did not exit 125'
 fi
 test ! -e "$home/.config/containers/systemd/contact-worker.container.d" || fail 'account check created the drop-in folder'
+as_user podman secret ls --quiet >"$work/secrets-after-check.log" || fail 'podman secret ls failed after the account check'
+test ! -s "$work/secrets-after-check.log" || fail 'account check created a secret'
 printf 'PASS account check: clones, network and drop-in predicted without writes\n'
 
 as_user podman network create --subnet 10.89.0.0/24 --gateway 10.89.0.1 keepbreath-net >"$work/network-create.log"
@@ -165,6 +205,15 @@ test "$(stat -c '%a %U:%G' "$home/.config/containers/systemd/contact-worker.cont
 test "$(stat -c '%a %U:%G' "$home/.config/containers/systemd/contact-worker.container.d/50-relay.conf")" = '644 webtest:webtest' || fail 'relay drop-in metadata differs'
 cmp -s "$home/.config/containers/systemd/contact-worker.container.d/50-relay.conf" <(printf '[Container]\nEnvironment=CONTACT_SMTP_HOST=mail.keepbreath.ing\nEnvironment=CONTACT_SMTP_PORT=2587\nEnvironment=CONTACT_SMTP_USER=contact@keepbreath.ing\nAddHost=mail.keepbreath.ing:10.128.0.4\n') || fail 'relay drop-in bytes differ'
 printf 'PASS first run: account, subordinate IDs, paths and refs\n'
+expect_five 'altcha-key-1'
+for name in kb-redis-conf kb-rediscli-auth kb-broker-url kb-altcha-key kb-smtp-pass; do
+  as_user podman secret inspect "$name" >"$work/secret-meta.json" || fail "$name could not be inspected"
+  python3 - "$work/secret-meta.json" <<'PY' || fail "$name driver is not file"
+import json, sys
+assert json.load(open(sys.argv[1]))[0]['Spec']['Driver']['Name'] == 'file'
+PY
+done
+printf 'PASS first run: five secrets stored byte for byte with the file driver\n'
 
 mkdir "$work/quadlet"
 cp -a "$api/deploy/quadlet/." "$work/quadlet/"
@@ -218,6 +267,56 @@ test "$(stat -c '%a %U:%G' "$home/.config/containers/systemd/contact-worker.cont
 test "$(sha256sum "$other_dropin" | cut -d' ' -f1)" = "$other_hash" || fail 'other drop-in changed'
 printf 'PASS empty address: pin removed and other drop-in preserved\n'
 
+relay_dropin="$home/.config/containers/systemd/contact-worker.container.d/50-relay.conf"
+relay_hash=$(sha256sum "$relay_dropin" | cut -d' ' -f1)
+redis_rule='web: web_redis_password may hold only A-Z, a-z, 0-9 and . _ ~ -, because it goes into the broker URL unencoded (Ansible configuration management decision 69.4)'
+if play unsafe-password 949b89f 0c856b9 -e 'web_redis_password=has/slash'; then fail 'unsafe Redis password was accepted'; fi
+grep -F "$redis_rule" "$last_log" >/dev/null || fail 'unsafe Redis password message differs'
+no_copies "$last_log" 'has/slash'
+expect_five 'altcha-key-1'
+test "$(sha256sum "$relay_dropin" | cut -d' ' -f1)" = "$relay_hash" || fail 'unsafe Redis password run wrote the relay drop-in'
+printf 'PASS unsafe Redis password: refused before any write\n'
+
+if play newline-password 949b89f 0c856b9 -e '{"web_redis_password": "Rp4ss-w0rd.x\n"}'; then
+  fail 'Redis password ending in a newline was accepted'
+fi
+grep -F "$redis_rule" "$last_log" >/dev/null || fail 'Redis password ending in a newline message differs'
+no_copies "$last_log" 'Rp4ss-w0rd.x'
+expect_five 'altcha-key-1'
+test "$(sha256sum "$relay_dropin" | cut -d' ' -f1)" = "$relay_hash" || fail 'Redis password ending in a newline run wrote the relay drop-in'
+printf 'PASS Redis password ending in a newline: refused before any write\n'
+
+as_user podman secret rm kb-redis-conf kb-rediscli-auth >"$work/secret-rm.log" || fail 'could not remove the two Redis secrets'
+printf 'requirepass Rp4ss-w0rd.x\n' | as_user podman secret create kb-redis-conf - >"$work/secret-hand.log" || fail 'could not make kb-redis-conf by hand'
+printf %s 'Rp4ss-w0rd.x' | as_user podman secret create kb-rediscli-auth - >>"$work/secret-hand.log" || fail 'could not make kb-rediscli-auth by hand'
+if ! play hand-made 949b89f 0c856b9; then tail -45 "$last_log"; fail 'run over secrets made by hand failed'; fi
+written_is ''
+expect_five 'altcha-key-1'
+printf 'PASS secrets made by hand: none written\n'
+
+if ! play changed-key-check 949b89f 0c856b9 --check --diff -e 'web_altcha_hmac_key=altcha-key-2'; then
+  tail -45 "$last_log"
+  fail 'changed key check failed'
+fi
+python3 - "$last_log" <<'PY' || fail 'changed key check predicted other writes'
+import pathlib, re, sys
+predicted = re.findall(r'Would write ([^"\s]+)', pathlib.Path(sys.argv[1]).read_text())
+assert predicted == ['kb-altcha-key'], predicted
+PY
+expect_secret kb-altcha-key 'altcha-key-1'
+no_copies "$last_log" 'Rp4ss-w0rd.x' 'altcha-key-1' 'altcha-key-2' 'smtp p@ss'
+printf 'PASS changed key in check mode: predicted alone, not written\n'
+
+if ! play changed-key 949b89f 0c856b9 -e 'web_altcha_hmac_key=altcha-key-2'; then tail -45 "$last_log"; fail 'changed key run failed'; fi
+written_is 'kb-altcha-key'
+expect_five 'altcha-key-2'
+printf 'PASS changed key: written alone\n'
+
+if ! play verbose 949b89f 0c856b9 -vvv -e 'web_altcha_hmac_key=altcha-key-3'; then tail -45 "$last_log"; fail '-vvv run failed'; fi
+no_copies "$last_log" 'Rp4ss-w0rd.x' 'altcha-key-3' 'smtp p@ss'
+expect_secret kb-altcha-key 'altcha-key-3'
+printf 'PASS -vvv: no secret value in the log\n'
+
 as_user podman network rm keepbreath-net >"$work/network-rm.log"
 as_user podman network create --subnet 10.90.0.0/24 keepbreath-net >"$work/network-wrong.log"
 if play wrong-network 949b89f 0c856b9; then fail 'mismatched network was accepted'; fi
@@ -263,7 +362,7 @@ printf 'PASS stray site folder: refused before either clone\n'
 if ansible-playbook -i localhost, tests/web/role.yml -e "web_container_user=$user" \
   -e 'web_contact_api_ref=0c856b9' -e 'web_smtp_host=mail.keepbreath.ing' \
   -e 'web_smtp_port=2587' -e 'web_smtp_user=contact@keepbreath.ing' \
-  -e 'web_smtp_host_address=10.128.0.4' >"$work/missing-ref.log" 2>&1; then
+  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" >"$work/missing-ref.log" 2>&1; then
   fail 'missing site ref was accepted'
 fi
 grep -F 'missing required arguments: web_site_ref' "$work/missing-ref.log" >/dev/null || fail 'missing site ref message differs'
@@ -272,10 +371,22 @@ printf 'PASS required site ref: argument validation fails\n'
 if ansible-playbook -i localhost, tests/web/role.yml -e "web_container_user=$user" \
   -e 'web_site_ref=949b89f' -e 'web_contact_api_ref=0c856b9' \
   -e 'web_smtp_port=2587' -e 'web_smtp_user=contact@keepbreath.ing' \
-  -e 'web_smtp_host_address=10.128.0.4' >"$work/missing-smtp-host.log" 2>&1; then
+  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" >"$work/missing-smtp-host.log" 2>&1; then
   fail 'missing SMTP host was accepted'
 fi
 grep -F 'missing required arguments: web_smtp_host' "$work/missing-smtp-host.log" >/dev/null || fail 'missing SMTP host message differs'
 printf 'PASS required SMTP host: argument validation fails\n'
+
+if ansible-playbook -i localhost, tests/web/role.yml -e "web_container_user=$user" \
+  -e 'web_site_ref=949b89f' -e 'web_contact_api_ref=0c856b9' \
+  -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587' \
+  -e 'web_smtp_user=contact@keepbreath.ing' -e 'web_smtp_host_address=10.128.0.4' \
+  -e 'web_altcha_hmac_key=altcha-key-1' -e '{"web_smtp_password": "smtp p@ss"}' \
+  >"$work/missing-redis-password.log" 2>&1; then
+  fail 'missing Redis password was accepted'
+fi
+grep -F 'missing required arguments: web_redis_password' "$work/missing-redis-password.log" >/dev/null || fail 'missing Redis password message differs'
+no_copies "$work/missing-redis-password.log" 'altcha-key-1' 'smtp p@ss'
+printf 'PASS required Redis password: argument validation fails without printing the others\n'
 
 printf 'web driver: all cases passed\n'

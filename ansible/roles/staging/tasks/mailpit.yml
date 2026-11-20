@@ -59,31 +59,10 @@
         ((item.1.stdout | from_json | first).Spec.Labels.sha256 | default('')) != (item.0.value | hash('sha256'))
       no_log: true
 
-    - name: Mailpit | Replace changed Podman secrets
-      ansible.builtin.command:
-        argv:
-          - podman
-          - secret
-          - create
-          - --replace
-          - --label
-          - "sha256={{ item.value | hash('sha256') }}"
-          - "{{ item.name }}"
-          - '-'
-        stdin: "{{ item.value }}"
-        stdin_add_newline: false
-      loop: "{{ staging_mailpit_secrets }}"
-      changed_when: true
-      when: item.name in staging_mailpit_changed_names | default([])
-      no_log: true
-      become: true
-
-    - name: Mailpit | Predict changed root Podman secrets
-      ansible.builtin.debug:
-        msg: "Would replace root's Podman secret {{ item }}"
-      loop: "{{ staging_mailpit_changed_names | default([]) }}"
-      changed_when: true
-      when: ansible_check_mode
+- name: Mailpit | Pull the pinned image before writing the units
+  containers.podman.podman_image:
+    name: "{{ staging_mailpit_image }}"
+  become: true
 
 - name: Mailpit | Make root's Quadlet folder
   ansible.builtin.file:
@@ -138,6 +117,35 @@
     daemon_reload: true
   when: not ansible_check_mode and (staging_mailpit_network_unit.changed or staging_mailpit_container_unit.changed)
   become: true
+
+- name: Mailpit | Replace root's Podman secrets after the units
+  when: staging_mailpit_source_values.results | selectattr('content', 'defined') | list | length == 3
+  block:
+    - name: Mailpit | Replace changed Podman secrets
+      ansible.builtin.command:
+        argv:
+          - podman
+          - secret
+          - create
+          - --replace
+          - --label
+          - "sha256={{ item.value | hash('sha256') }}"
+          - "{{ item.name }}"
+          - '-'
+        stdin: "{{ item.value }}"
+        stdin_add_newline: false
+      loop: "{{ staging_mailpit_secrets }}"
+      changed_when: true
+      when: item.name in staging_mailpit_changed_names | default([])
+      no_log: true
+      become: true
+
+    - name: Mailpit | Predict changed root Podman secrets
+      ansible.builtin.debug:
+        msg: "Would replace root's Podman secret {{ item }}"
+      loop: "{{ staging_mailpit_changed_names | default([]) }}"
+      changed_when: true
+      when: ansible_check_mode
 
 - name: Mailpit | Check whether the container unit exists
   ansible.builtin.stat:

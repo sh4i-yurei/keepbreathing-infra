@@ -112,6 +112,7 @@ fresh_changed=$(changed "$last_log" positive)
 test ! -e /etc/staging || fail 'fresh check created /etc/staging'
 test ! -e /etc/containers/systemd/mailpit.container || fail 'fresh check created Mailpit unit'
 test ! -e /etc/containers/systemd/staging-mail.network || fail 'fresh check created Mailpit network unit'
+! podman image exists docker.io/axllent/mailpit@sha256:5040a9c533087d25dcb8f2ac748f45c9be5f7bc1d9fe5b860afb9597a2471d57 || fail 'fresh check pulled the Mailpit image'
 test ! -e "$home/.config/containers/systemd/contact-worker.container.d" || fail 'fresh check created worker drop-in folder'
 printf 'PASS check mode on a fresh machine: changed=%s, nothing created\n' "$fresh_changed"
 
@@ -319,6 +320,20 @@ test "$(systemctl show -P InvocationID mailpit.service)" != "$before_restart" ||
 podman secret exists mailpit-tls-key || fail 'missing secret was not restored'
 test "$(send login yes)" = 'login: SENT' || fail 'login failed after secret restoration'
 printf 'PASS a missing Mailpit secret: the dry run finishes and a run restores it: changed=%s\n' "$missing_changed"
+
+printf wrong | podman secret create --replace --label sha256=wrong mailpit-smtp-auth - >/dev/null
+rm /etc/containers/systemd/mailpit.container
+systemctl daemon-reload
+bad_mailpit_image=localhost:1/staging/no-such-mailpit@sha256:$(printf '0%.0s' {1..64})
+if ansible-playbook -i localhost, tests/staging/role.yml -e "inputs_path=$work/inputs.json" -e "staging_container_user=$user" -e "staging_mailpit_image=$bad_mailpit_image" >"$work/mailpit-bad-image.log" 2>&1; then fail 'an unpullable Mailpit image was accepted'; fi
+test ! -e /etc/containers/systemd/mailpit.container || fail 'the Mailpit unit was written before its image was pulled'
+grep -F "$bad_mailpit_image" "$work/mailpit-bad-image.log" >/dev/null || fail 'the Mailpit pull failure does not name the image'
+test "$(podman secret inspect mailpit-smtp-auth --format '{{ index .Spec.Labels "sha256" }}')" = wrong || fail 'a Mailpit secret was replaced before the image was pulled'
+play mailpit-bad-image-restore
+bad_mailpit_image_changed=$(changed "$last_log" positive)
+test -e /etc/containers/systemd/mailpit.container || fail 'the Mailpit unit was not restored'
+test "$(send login yes)" = 'login: SENT' || fail 'login failed after the unpullable Mailpit image run'
+printf 'PASS an image that cannot be pulled stops the run before the Mailpit unit and secrets change, and the next run restores them: changed=%s\n' "$bad_mailpit_image_changed"
 
 if ansible-playbook -i localhost, tests/staging/role.yml -e "inputs_path=$work/inputs.json" -e staging_container_user=nosuchuser >"$work/missing-account.log" 2>&1; then fail 'missing account was accepted'; fi
 grep -F 'staging_container_user nosuchuser must exist' "$work/missing-account.log" >/dev/null || fail 'missing account message differs'

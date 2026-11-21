@@ -13,6 +13,20 @@ fail() { printf 'ASSERTION FAILED: %s\n' "$*" >&2; exit 1; }
 if id -u "$user" >/dev/null 2>&1; then fail 'webtest already exists'; fi
 if test -e "$site" || test -L "$site"; then fail '/srv/keepbreathing already exists'; fi
 if test -e "$api" || test -L "$api"; then fail '/srv/keepbreath-contact-api already exists'; fi
+sysctl_file=/etc/sysctl.d/99-podman-ports.conf
+deploy_site=/usr/local/bin/deploy-site
+keys_dir=/etc/ssh/authorized_keys
+key_file=$keys_dir/$user
+for path in "$sysctl_file" "$deploy_site" "$key_file"; do
+  if test -e "$path" || test -L "$path"; then fail "$path already exists"; fi
+done
+for service in http https; do
+  if firewall-cmd --zone=public --query-service="$service" >/dev/null 2>&1; then fail "firewalld already allows $service"; fi
+  if firewall-cmd --permanent --zone=public --query-service="$service" >/dev/null 2>&1; then fail "firewalld already allows $service permanently"; fi
+done
+port_start=$(sysctl -n net.ipv4.ip_unprivileged_port_start)
+keys_dir_existed=false
+if test -e "$keys_dir" || test -L "$keys_dir"; then keys_dir_existed=true; fi
 
 work=$(mktemp -d)
 created_account=false
@@ -37,6 +51,16 @@ undo_add 'remove driver-created site checkout' undo_site
 undo_site() { if $created_site; then rm -rf -- "$site"; fi; }
 undo_add 'remove driver-created contact API checkout' undo_api
 undo_api() { if $created_api; then rm -rf -- "$api"; fi; }
+undo_add 'remove the web host pieces' undo_host
+undo_host() {
+  rm -f -- "$sysctl_file" "$deploy_site" "$key_file"
+  if ! $keys_dir_existed; then rm -rf -- "$keys_dir"; fi
+  sysctl -q -w "net.ipv4.ip_unprivileged_port_start=$port_start"
+  for service in http https; do
+    firewall-cmd --zone=public --remove-service="$service" >/dev/null 2>&1
+    firewall-cmd --permanent --zone=public --remove-service="$service" >/dev/null 2>&1
+  done
+}
 undo_install
 runner_save_environment
 
@@ -49,8 +73,55 @@ as_user() {
   )
 }
 
+python3 - "$work" <<'PY' || fail 'could not make the test pairs and deploy key'
+import datetime, json, pathlib, sys
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
+from cryptography.x509.oid import NameOID
+
+work = pathlib.Path(sys.argv[1])
+now = datetime.datetime.now(datetime.timezone.utc)
+pairs = {}
+for label in ('a', 'b'):
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f'web-test-{label}')])
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=30))
+        .sign(key, hashes.SHA256())
+    )
+    pem = certificate.public_bytes(serialization.Encoding.PEM).decode()
+    key_pem = key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    ).decode()
+    (work / f'{label}.pem').write_text(pem)
+    (work / f'{label}.key').write_text(key_pem)
+    pairs[label] = (pem, key_pem)
+public = ed25519.Ed25519PrivateKey.generate().public_key().public_bytes(
+    serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH
+).decode()
+line = f'from="10.128.0.5",restrict,command="/usr/local/bin/deploy-site" {public} deploy-test'
+(work / 'deploy-key.line').write_text(line + '\n')
+for label, (pem, key_pem) in (('a', pairs['a']), ('b', pairs['b']), ('mixed', (pairs['a'][0], pairs['b'][1]))):
+    (work / f'inputs-{label}.json').write_text(json.dumps({
+        'web_origin_certificate': pem,
+        'web_origin_key': key_pem,
+        'web_firewall_services': ['http', 'https'],
+        'web_deploy_key': line,
+    }))
+PY
+key_a_line=$(sed -n 2p "$work/a.key")
+key_b_line=$(sed -n 2p "$work/b.key")
+
 secret_inputs=(-e 'web_redis_password=Rp4ss-w0rd.x' -e 'web_altcha_hmac_key=altcha-key-1'
   -e '{"web_smtp_password": "smtp p@ss"}')
+pair_inputs=(-e "@$work/inputs-a.json")
 
 play() {
   local label=$1 site_ref=$2 api_ref=$3
@@ -61,7 +132,7 @@ play() {
     -e "web_contact_api_ref=$api_ref" \
     -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587' \
     -e 'web_smtp_user=contact@keepbreath.ing' \
-    -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" "$@" >"$last_log" 2>&1
+    -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" "${pair_inputs[@]}" "$@" >"$last_log" 2>&1
 }
 no_copies() {
   local log=$1 value
@@ -117,6 +188,22 @@ expect_head() {
   actual=$(head_at "$1")
   test "$actual" = "$2" || fail "$1 HEAD was $actual, expected $2"
 }
+service_open() {
+  local name=$1
+  shift
+  firewall-cmd "$@" --zone=public --query-service="$name" >/dev/null 2>&1
+}
+expect_host_untouched() {
+  test "$(sysctl -n net.ipv4.ip_unprivileged_port_start)" = "$port_start" || fail "$1 changed the live port boundary"
+  for path in "$sysctl_file" "$deploy_site" "$key_file"; do
+    if test -e "$path" || test -L "$path"; then fail "$1 created $path"; fi
+  done
+  for service in http https; do
+    if service_open "$service"; then fail "$1 opened $service at runtime"; fi
+    if service_open "$service" --permanent; then fail "$1 opened $service permanently"; fi
+  done
+}
+sha() { sha256sum "$1" | cut -d' ' -f1; }
 
 if ansible localhost -i localhost, -c local --playbook-dir tests/web \
   -m ansible.builtin.include_role -a name=web \
@@ -124,7 +211,7 @@ if ansible localhost -i localhost, -c local --playbook-dir tests/web \
   -e 'web_contact_api_ref=0c856b9' \
   -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587' \
   -e 'web_smtp_user=contact@keepbreath.ing' \
-  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" >"$work/missing-account.log" 2>&1; then
+  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" "${pair_inputs[@]}" >"$work/missing-account.log" 2>&1; then
   fail 'missing account was accepted'
 fi
 grep -F 'web: the account webabsent does not exist; run the web role'"'"'s account entry point before baseline' "$work/missing-account.log" >/dev/null || fail 'missing account message differs'
@@ -145,7 +232,7 @@ for entry in 'name=web tasks_from=account' 'name=baseline tasks_from=container-a
   extra=(-e "web_container_user=$user" -e "baseline_container_user=$user"
     -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587'
     -e 'web_smtp_user=contact@keepbreath.ing'
-    -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}")
+    -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" "${pair_inputs[@]}")
   if ! ansible localhost -i localhost, -c local --playbook-dir tests/web \
     -m ansible.builtin.include_role -a "$entry" "${extra[@]}" \
     >"$work/account-setup.log" 2>&1; then
@@ -166,9 +253,11 @@ for prediction in \
   grep -F "$prediction" "$last_log" >/dev/null || fail "missing prediction: $prediction"
 done
 no_copies "$last_log" 'Rp4ss-w0rd.x' 'altcha-key-1' 'smtp p@ss'
-for task in "Make the account's Quadlet folder" "Make the worker's drop-in folder" "Write the worker's relay drop-in"; do
+for task in "Make the account's Quadlet folder" "Make the worker's drop-in folder" "Write the worker's relay drop-in" \
+  'Set the unprivileged port boundary' 'Open the listed firewall services' 'Write the deploy key'; do
   changed_task "$last_log" "$task"
 done
+expect_host_untouched 'account check'
 test ! -e "$site" && test ! -e "$api" || fail 'account check created a checkout'
 if as_user podman network inspect keepbreath-net >"$work/missing-network.json" 2>&1; then
   fail 'account check created the network'
@@ -214,6 +303,25 @@ assert json.load(open(sys.argv[1]))[0]['Spec']['Driver']['Name'] == 'file'
 PY
 done
 printf 'PASS first run: five secrets stored byte for byte with the file driver\n'
+
+test "$(sysctl -n net.ipv4.ip_unprivileged_port_start)" = 80 || fail 'live port boundary is not 80'
+grep -Fx 'net.ipv4.ip_unprivileged_port_start=80' "$sysctl_file" >/dev/null || fail "$sysctl_file lacks the port boundary line"
+for service in http https; do
+  service_open "$service" || fail "$service is not open"
+  service_open "$service" --permanent || fail "$service is not open permanently"
+done
+certs=$site/deploy/certs
+test "$(stat -c '%a %U:%G' "$certs")" = '750 webtest:webtest' || fail 'certificate folder metadata differs'
+test "$(stat -c '%a %U:%G' "$certs/origin.pem")" = '644 webtest:webtest' || fail 'origin.pem metadata differs'
+test "$(stat -c '%a %U:%G' "$certs/origin.key")" = '600 webtest:webtest' || fail 'origin.key metadata differs'
+cmp -s "$certs/origin.pem" "$work/a.pem" || fail 'origin.pem differs from pair a'
+cmp -s "$certs/origin.key" "$work/a.key" || fail 'origin.key differs from pair a'
+test "$(stat -c '%a %U:%G' "$deploy_site")" = '755 root:root' || fail 'deploy-site metadata differs'
+cmp -s "$deploy_site" "$site/deploy/deploy-site.sh" || fail 'deploy-site differs from the checkout'
+test "$(stat -c '%a %U:%G' "$keys_dir")" = '755 root:root' || fail 'key folder metadata differs'
+test "$(stat -c '%a %U:%G' "$key_file")" = '644 root:root' || fail 'deploy key file metadata differs'
+cmp -s "$key_file" "$work/deploy-key.line" || fail 'deploy key file differs from the line'
+printf 'PASS first run: port boundary, firewall, certificate, deploy-site and deploy key\n'
 
 mkdir "$work/quadlet"
 cp -a "$api/deploy/quadlet/." "$work/quadlet/"
@@ -317,6 +425,75 @@ no_copies "$last_log" 'Rp4ss-w0rd.x' 'altcha-key-3' 'smtp p@ss'
 expect_secret kb-altcha-key 'altcha-key-3'
 printf 'PASS -vvv: no secret value in the log\n'
 
+pem_hash=$(sha "$certs/origin.pem")
+key_hash=$(sha "$certs/origin.key")
+if ! play new-pair-check 949b89f 0c856b9 --check --diff -e "@$work/inputs-b.json"; then
+  tail -45 "$last_log"
+  fail 'new pair check failed'
+fi
+changed_task "$last_log" 'Write the origin certificate and key'
+no_copies "$last_log" "$key_b_line" "$key_a_line"
+test "$(sha "$certs/origin.pem")" = "$pem_hash" || fail 'new pair check wrote the certificate'
+test "$(sha "$certs/origin.key")" = "$key_hash" || fail 'new pair check wrote the key'
+printf 'PASS new pair in check mode with --diff: predicted, no key in the log\n'
+
+if play mixed-pair 949b89f 0c856b9 -e "@$work/inputs-mixed.json"; then fail 'mismatched pair was accepted'; fi
+grep -F "web: web_origin_key doesn't belong to web_origin_certificate; nothing was written" "$last_log" >/dev/null || fail 'mismatched pair message differs'
+no_copies "$last_log" "$key_b_line"
+test "$(sha "$certs/origin.pem")" = "$pem_hash" || fail 'mismatched pair wrote the certificate'
+test "$(sha "$certs/origin.key")" = "$key_hash" || fail 'mismatched pair wrote the key'
+printf 'PASS mismatched pair: refused, both files unchanged\n'
+
+if ! play empty-services 949b89f 0c856b9 -e '{"web_firewall_services": []}'; then tail -45 "$last_log"; fail 'empty service list run failed'; fi
+for service in http https; do
+  service_open "$service" || fail "empty list closed $service at runtime"
+  service_open "$service" --permanent || fail "empty list closed $service permanently"
+done
+printf 'PASS empty service list: nothing closed\n'
+
+key_file_hash=$(sha "$key_file")
+if ! play empty-key 949b89f 0c856b9 -e 'web_deploy_key='; then tail -45 "$last_log"; fail 'empty deploy key run failed'; fi
+test "$(sha "$key_file")" = "$key_file_hash" || fail 'empty deploy key changed the key file'
+rm -f -- "$key_file"
+if ! play empty-key-absent 949b89f 0c856b9 -e 'web_deploy_key='; then tail -45 "$last_log"; fail 'empty deploy key run without a key file failed'; fi
+test ! -e "$key_file" || fail 'empty deploy key wrote the key file'
+if ! play deploy-key-again 949b89f 0c856b9; then tail -45 "$last_log"; fail 'deploy key run failed'; fi
+cmp -s "$key_file" "$work/deploy-key.line" || fail 'deploy key was not written again'
+printf 'PASS empty deploy key: none written, none removed\n'
+
+root_folder=$work/root-folder
+mkdir -m 755 "$root_folder"
+rm -rf -- "$certs"
+as_user ln -s "$root_folder" "$certs" || fail 'webtest could not plant a link at deploy/certs'
+if play planted-certs 949b89f 0c856b9; then fail 'a planted link at deploy/certs was followed without failing'; fi
+test "$(stat -c '%a %U:%G' "$root_folder")" = '755 root:root' || fail 'a planted link at deploy/certs changed the root-owned folder'
+test -z "$(ls -A "$root_folder")" || fail 'a planted link at deploy/certs wrote into the root-owned folder'
+as_user rm -- "$certs" || fail 'webtest could not remove the link at deploy/certs'
+printf 'PASS planted link at deploy/certs: nothing root-owned changed\n'
+
+root_only=$work/root-only
+printf 'secret-marker\n' >"$root_only"
+chmod 600 "$root_only"
+deploy_site_hash=$(sha "$deploy_site")
+as_user ln -sf "$root_only" "$site/deploy/deploy-site.sh" || fail 'webtest could not plant a link at deploy-site.sh'
+if play planted-deploy-site 949b89f 0c856b9; then fail 'a planted link at deploy-site.sh was followed without failing'; fi
+test "$(sha "$deploy_site")" = "$deploy_site_hash" || fail 'a planted link at deploy-site.sh changed deploy-site'
+if grep -F 'secret-marker' "$deploy_site" >/dev/null; then fail 'a planted link at deploy-site.sh copied the root-only file'; fi
+as_user git -C "$site" checkout -- deploy/deploy-site.sh || fail 'webtest could not restore deploy-site.sh'
+if ! play after-planted 949b89f 0c856b9; then tail -45 "$last_log"; fail 'clean run after the planted links failed'; fi
+test "$(sha "$certs/origin.key")" = "$key_hash" || fail 'origin.key differs after the planted links'
+test "$(stat -c '%a %U:%G' "$certs")" = '750 webtest:webtest' || fail 'certificate folder not rebuilt after the planted link'
+test "$(stat -c '%a %U:%G' "$certs/origin.pem")" = '644 webtest:webtest' || fail 'origin.pem metadata differs after the planted links'
+test "$(stat -c '%a %U:%G' "$certs/origin.key")" = '600 webtest:webtest' || fail 'origin.key metadata differs after the planted links'
+printf 'PASS planted link at deploy-site.sh: nothing root-only copied\n'
+
+unit=$site/deploy/quadlet/keepbreath.container
+as_user ln -sf "$root_only" "$unit" || fail 'webtest could not plant a link at keepbreath.container'
+if play planted-unit 949b89f 0c856b9 -v; then fail 'a planted link at keepbreath.container was followed without failing'; fi
+no_copies "$last_log" 'secret-marker' 'c2VjcmV0LW1hcmtlcgo='
+as_user git -C "$site" checkout -- deploy/quadlet/keepbreath.container || fail 'webtest could not restore keepbreath.container'
+printf 'PASS planted link at keepbreath.container: nothing root-only read\n'
+
 as_user podman network rm keepbreath-net >"$work/network-rm.log"
 as_user podman network create --subnet 10.90.0.0/24 keepbreath-net >"$work/network-wrong.log"
 if play wrong-network 949b89f 0c856b9; then fail 'mismatched network was accepted'; fi
@@ -362,7 +539,7 @@ printf 'PASS stray site folder: refused before either clone\n'
 if ansible-playbook -i localhost, tests/web/role.yml -e "web_container_user=$user" \
   -e 'web_contact_api_ref=0c856b9' -e 'web_smtp_host=mail.keepbreath.ing' \
   -e 'web_smtp_port=2587' -e 'web_smtp_user=contact@keepbreath.ing' \
-  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" >"$work/missing-ref.log" 2>&1; then
+  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" "${pair_inputs[@]}" >"$work/missing-ref.log" 2>&1; then
   fail 'missing site ref was accepted'
 fi
 grep -F 'missing required arguments: web_site_ref' "$work/missing-ref.log" >/dev/null || fail 'missing site ref message differs'
@@ -371,7 +548,7 @@ printf 'PASS required site ref: argument validation fails\n'
 if ansible-playbook -i localhost, tests/web/role.yml -e "web_container_user=$user" \
   -e 'web_site_ref=949b89f' -e 'web_contact_api_ref=0c856b9' \
   -e 'web_smtp_port=2587' -e 'web_smtp_user=contact@keepbreath.ing' \
-  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" >"$work/missing-smtp-host.log" 2>&1; then
+  -e 'web_smtp_host_address=10.128.0.4' "${secret_inputs[@]}" "${pair_inputs[@]}" >"$work/missing-smtp-host.log" 2>&1; then
   fail 'missing SMTP host was accepted'
 fi
 grep -F 'missing required arguments: web_smtp_host' "$work/missing-smtp-host.log" >/dev/null || fail 'missing SMTP host message differs'
@@ -381,7 +558,7 @@ if ansible-playbook -i localhost, tests/web/role.yml -e "web_container_user=$use
   -e 'web_site_ref=949b89f' -e 'web_contact_api_ref=0c856b9' \
   -e 'web_smtp_host=mail.keepbreath.ing' -e 'web_smtp_port=2587' \
   -e 'web_smtp_user=contact@keepbreath.ing' -e 'web_smtp_host_address=10.128.0.4' \
-  -e 'web_altcha_hmac_key=altcha-key-1' -e '{"web_smtp_password": "smtp p@ss"}' \
+  -e 'web_altcha_hmac_key=altcha-key-1' -e '{"web_smtp_password": "smtp p@ss"}' "${pair_inputs[@]}" \
   >"$work/missing-redis-password.log" 2>&1; then
   fail 'missing Redis password was accepted'
 fi

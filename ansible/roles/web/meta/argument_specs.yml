@@ -49,6 +49,32 @@ argument_specs:
         required: true
         no_log: true
         description: The relay password the worker logs in with, stored in kb-smtp-pass.
+      web_origin_certificate:
+        type: str
+        required: true
+        no_log: true
+        description: The origin certificate in PEM form, written to deploy/certs/origin.pem in the site checkout.
+      web_origin_key:
+        type: str
+        required: true
+        no_log: true
+        description: >-
+          The origin certificate's private key in PEM form, written to deploy/certs/origin.key in the site
+          checkout. It must belong to web_origin_certificate.
+      web_firewall_services:
+        type: list
+        elements: str
+        required: true
+        description: >-
+          The firewalld services the role opens in zone public, at runtime and permanently. An empty list
+          opens none and closes none.
+      web_deploy_key:
+        type: str
+        required: false
+        default: ""
+        description: >-
+          The site deploy key's authorized_keys line, written to /etc/ssh/authorized_keys/<account>, or empty
+          to write none.
   account:
     short_description: Create the account the site and the contact API run under
     options:

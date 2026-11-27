@@ -66,11 +66,27 @@
 			"ip":  ["443"],
 		},
 
+		// EngineServ, the workflow engine's backend VM: OpenBao for the engine's sign-ins, and the
+		// backup server for its nightly dump. EngineServ decisions 5, 9 and 10; Backups decision 85.
+		{
+			"src": ["tag:engine"],
+			"dst": ["svc:openbao", "svc:backup"],
+			"ip":  ["443"],
+		},
+
+		// EngineServ's PostgreSQL, forwarded by Tailscale to its loopback port: my own devices,
+		// where the laptop program runs. EngineServ decision 10.
+		{
+			"src": ["autogroup:member"],
+			"dst": ["tag:engine"],
+			"ip":  ["5432"],
+		},
+
 		// node_exporter: the hub scrapes port 9100 on every machine with host metrics.
 		// Monitoring and alerting decisions #26 and #30.
 		{
 			"src": ["tag:hub"],
-			"dst": ["tag:vault", "tag:bastion", "100.116.219.6", "10.128.0.3", "10.128.0.4"],
+			"dst": ["tag:vault", "tag:bastion", "tag:engine", "100.116.219.6", "10.128.0.3", "10.128.0.4"],
 			"ip":  ["9100"],
 		},
 
@@ -78,7 +94,7 @@
 		// Monitoring and alerting decisions #36 and #56.
 		{
 			"src": ["tag:hub"],
-			"dst": ["tag:vault", "tag:bastion", "100.116.219.6", "10.128.0.3", "10.128.0.4"],
+			"dst": ["tag:vault", "tag:bastion", "tag:engine", "100.116.219.6", "10.128.0.3", "10.128.0.4"],
 			"ip":  ["19531"],
 		},
 
@@ -86,7 +102,7 @@
 		// Monitoring and alerting decision #55.
 		{
 			"src": ["tag:hub"],
-			"dst": ["tag:vault", "tag:bastion", "10.128.0.3"],
+			"dst": ["tag:vault", "tag:bastion", "tag:engine", "10.128.0.3"],
 			"ip":  ["9882"],
 		},
 
@@ -147,6 +163,12 @@
 			"users":  ["keepbreath0"],
 			"action": "check",
 		},
+		{
+			"src":    ["autogroup:member"],
+			"dst":    ["tag:engine"],
+			"users":  ["keepbreath0"],
+			"action": "check",
+		},
 	],
 
 	"tagOwners": {
@@ -158,6 +180,9 @@
 
 		// bastion-server
 		"tag:bastion": ["autogroup:admin"],
+
+		// engine-server: EngineServ, the workflow engine's backend VM.
+		"tag:engine": ["autogroup:admin"],
 
 		// Infrastructure as code's job runners. OpenBao on the hub decision #70.
 		"tag:iac-runner": ["autogroup:admin"],
@@ -189,12 +214,13 @@
 		},
 	],
 
-	// Test access rules every time they're saved.
-	// "tests": [
-	//   {
-	//       "src": "alice@example.com",
-	//       "accept": ["tag:example"],
-	//       "deny": ["100.101.102.103:443"],
-	//   },
-	// ],
+	// Test access rules every time they're saved. While the first grant allows every connection,
+	// a test that something is refused can't pass, so these check only what must work. The refusal
+	// tests come with the grant that replaces allow-all.
+	"tests": [
+		{
+			"src":    "tag:hub",
+			"accept": ["tag:engine:9100", "tag:engine:19531", "tag:engine:9882"],
+		},
+	],
 }
